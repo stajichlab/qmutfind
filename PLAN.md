@@ -436,6 +436,20 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Notes: BWA-MEM2 without `-R` gives the sample name `unknown` in the VCF. `vcfallelicprimitives`
      in vcflib 1.0.15 has `-k` (keep INFO) and no `-g`; it says `vcfwave` is preferred. My first run
      used `-g` and failed; the post-processing was redone.
+   - CLI BACKENDS on the ART reads (2026-11-12; `qmutfind call` release build, mates joined into one file
+     and mapped as single-end reads, `--threads 3`; same truth set, tested comparison tool, outputs
+     normalized with `bcftools norm`; thresholds depth >= 5 and fraction >= 0.5 in the tool):
+     `bwa-mem2` + built-in: SNP 2,986 of 3,000 (11 false), small indel 580 of 600 (11 false), large 0 of 100.
+     `bwa-mem2` + FreeBayes: SNP 2,979 (0 false), small indel 580 (10 false), large 2 of 100.
+     `rammap` + built-in (v3, same reads): SNP 2,985 (7 false), small indel 582 (12 false), large 4.
+     Pairing matters for FreeBayes: the earlier PAIRED `bwa-mem2` + FreeBayes run had small indels 587 found
+     and 3 false, against 580 and 10 false single-end. One seed; an observation only.
+     `bcftools norm` realigned 592 of 3,571 FreeBayes records and 0 records from the built-in caller, so
+     the FreeBayes output of the CLI is not left-aligned. Known gap: normalize it in the tool.
+     Wall time (rough, 3 threads, one run each): `bwa-mem2` + built-in 1:52, `bwa-mem2` + FreeBayes 4:31.
+     Peak memory printed by `time -v` (largest child process, not identified): 1.25 GB and 2.36 GB.
+     Not built: `--reads2` for paired input; `.zst` reads are passed to `bwa-mem2` unconverted, which it
+     cannot read (untested).
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
