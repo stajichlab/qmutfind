@@ -8,6 +8,8 @@ use crate::{Annotation, Transcript};
 const WIDTH: f64 = 1000.0;
 const LEFT: f64 = 60.0;
 const PLOT: f64 = 880.0;
+/// The width of one character of a label, in pixels at font size 10 (an estimate for the label placement).
+const LABEL_CHAR_WIDTH: f64 = 6.0;
 
 /// A genomic range, 1-based and inclusive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +76,15 @@ pub(crate) fn escape(text: &str) -> String {
 }
 
 /// A colour-blind-safe palette (Okabe and Ito). Effects without a colour are grey.
+/// The short text next to a variant: its protein change (such as `D304G`), else the effect in plain words
+/// (`intron`, `frameshift`, `5UTR`). A record with no annotation is `unannotated`.
+fn impact_label(v: &ReportVariant) -> String {
+    match &v.aa {
+        Some(aa) => aa.clone(),
+        None => v.effect.trim_end_matches("_derived").replace('_', " "),
+    }
+}
+
 fn colour(effect: &str) -> &'static str {
     match effect {
         "missense" => "#E69F00",
@@ -188,10 +199,10 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
 
     // The axis, with the first, middle and last positions.
     body.push_str(&format!("<line x1=\"{LEFT}\" y1=\"30\" x2=\"{:.1}\" y2=\"30\" style=\"stroke:var(--fg,#222)\"/>", LEFT + PLOT));
-    for pos in [region.start, region.start + (region.end - region.start) / 2, region.end] {
+    for (pos, anchor) in [(region.start, "start"), (region.start + (region.end - region.start) / 2, "middle"), (region.end, "end")] {
         let x = scale.centre(pos);
         body.push_str(&format!(
-            "<line x1=\"{x:.1}\" y1=\"26\" x2=\"{x:.1}\" y2=\"34\" style=\"stroke:var(--fg,#222)\"/><text x=\"{x:.1}\" y=\"18\" font-size=\"11\" text-anchor=\"middle\" style=\"fill:var(--fg,#222)\">{}:{}</text>",
+            "<line x1=\"{x:.1}\" y1=\"26\" x2=\"{x:.1}\" y2=\"34\" style=\"stroke:var(--fg,#222)\"/><text x=\"{x:.1}\" y=\"18\" font-size=\"11\" text-anchor=\"{anchor}\" style=\"fill:var(--fg,#222)\">{}:{}</text>",
             escape(&region.contig),
             group(pos)
         ));
@@ -213,10 +224,19 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
     inside.sort_by_key(|v| v.pos);
     let mut level_last_x = [f64::NEG_INFINITY; 4];
     let mut used_effects: Vec<String> = Vec::new();
-    for v in &inside {
-        let x = scale.centre(v.pos);
-        let level = (0..4).find(|&l| x - level_last_x[l] >= 12.0).unwrap_or(3);
-        level_last_x[level] = x;
+    // First place every circle (x, level), then draw them and the labels. A label needs the places of the others.
+    let placed: Vec<(&ReportVariant, f64, usize)> = inside
+        .iter()
+        .map(|v| {
+            let x = scale.centre(v.pos);
+            let level = (0..4).find(|&l| x - level_last_x[l] >= 12.0).unwrap_or(3);
+            level_last_x[level] = x;
+            (*v, x, level)
+        })
+        .collect();
+    let mut label_end = [f64::NEG_INFINITY; 4]; // the right end of the last label drawn on each level
+    for (i, (v, x, level)) in placed.iter().enumerate() {
+        let (x, level) = (*x, *level);
         let cy = baseline - 14.0 - level as f64 * 16.0;
         let mut tip = format!("{}:{} {}>{} {}", v.contig, v.pos, v.reference, v.alt, v.effect);
         for extra in [&v.aa, &v.gene].into_iter().flatten() {
@@ -233,6 +253,26 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
         ));
         if !used_effects.contains(&v.effect) {
             used_effects.push(v.effect.clone());
+        }
+
+        // The impact label (the protein change, else a short effect name) goes to the right of the circle, or to
+        // the left near the right edge. It is left out when it would cover another label or another circle of its
+        // level; the tooltip and the table on the page still give it.
+        let text = impact_label(v);
+        let width = text.chars().count() as f64 * LABEL_CHAR_WIDTH;
+        let to_left = x + 8.0 + width > WIDTH - 4.0;
+        let (lo, hi) = if to_left { (x - 8.0 - width, x - 8.0) } else { (x + 8.0, x + 8.0 + width) };
+        let covers_a_circle = placed.iter().enumerate().any(|(j, (_, x2, l2))| j != i && *l2 == level && *x2 + 5.0 > lo - 2.0 && *x2 - 5.0 < hi + 2.0);
+        if lo > label_end[level] + 2.0 && !covers_a_circle {
+            label_end[level] = hi;
+            body.push_str(&format!(
+                "<text class=\"variant-label\" data-pos=\"{}\" x=\"{:.1}\" y=\"{:.1}\" font-size=\"10\" text-anchor=\"{}\" style=\"fill:var(--fg,#222)\">{}</text>",
+                v.pos,
+                if to_left { x - 8.0 } else { x + 8.0 },
+                cy + 3.5,
+                if to_left { "end" } else { "start" },
+                escape(&text)
+            ));
         }
     }
 
@@ -261,12 +301,17 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
 
 /// Wrap the SVG in a self-contained HTML page with light and dark colours and a summary table.
 pub fn render_report_html(title: &str, svg: &str, summary: &[(String, String)]) -> String {
+    render_report_html_with_table(title, svg, summary, "")
+}
+
+/// The same page with `table_html` (a ready HTML table) after the summary.
+pub fn render_report_html_with_table(title: &str, svg: &str, summary: &[(String, String)], table_html: &str) -> String {
     let rows: String = summary
         .iter()
         .map(|(k, v)| format!("<tr><th scope=\"row\">{}</th><td>{}</td></tr>", escape(k), escape(v)))
         .collect();
     format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{t}</title>\n<style>\n:root {{ --bg: #ffffff; --fg: #1c1c1c; --cds: #3d5a80; --utr: #98a8bc; --line: #d0d0d0; }}\n@media (prefers-color-scheme: dark) {{ :root {{ --bg: #16181d; --fg: #e8e8e8; --cds: #8fb0d8; --utr: #5a6778; --line: #3a3d44; }} }}\nbody {{ background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1040px; padding: 16px; }}\nh1 {{ font-size: 1.2rem; }}\ntable {{ border-collapse: collapse; margin-top: 12px; }}\nth, td {{ border-bottom: 1px solid var(--line); padding: 4px 12px; text-align: left; }}\n</style></head>\n<body>\n<h1>{t}</h1>\n{svg}\n<table>{rows}</table>\n</body></html>\n",
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>{t}</title>\n<style>\n:root {{ --bg: #ffffff; --fg: #1c1c1c; --cds: #3d5a80; --utr: #98a8bc; --line: #d0d0d0; }}\n@media (prefers-color-scheme: dark) {{ :root {{ --bg: #16181d; --fg: #e8e8e8; --cds: #8fb0d8; --utr: #5a6778; --line: #3a3d44; }} }}\nbody {{ background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1040px; padding: 16px; }}\nh1 {{ font-size: 1.2rem; }}\ntable {{ border-collapse: collapse; margin-top: 12px; }}\nth, td {{ border-bottom: 1px solid var(--line); padding: 4px 12px; text-align: left; }}\n</style></head>\n<body>\n<h1>{t}</h1>\n{svg}\n<table>{rows}</table>\n{table_html}\n</body></html>\n",
         t = escape(title)
     )
 }
@@ -292,5 +337,27 @@ pub fn report_page(vcf: &str, gff: Option<&[u8]>, region: &str, title: &str) -> 
         ("Variants in the file".to_string(), variants.len().to_string()),
         ("Genes in the region".to_string(), genes.to_string()),
     ];
-    Ok(render_report_html(title, &svg, &summary))
+    let mut inside: Vec<&ReportVariant> = variants.iter().filter(|v| v.contig == region.contig && v.pos >= region.start && v.pos <= region.end).collect();
+    inside.sort_by_key(|v| v.pos);
+    let table = if inside.is_empty() {
+        String::new()
+    } else {
+        let rows: String = inside
+            .iter()
+            .map(|v| {
+                format!(
+                    "<tr><td>{}:{}</td><td>{} &gt; {}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    escape(&v.contig),
+                    group(v.pos),
+                    escape(&v.reference),
+                    escape(&v.alt),
+                    escape(&v.effect),
+                    escape(v.gene.as_deref().unwrap_or("")),
+                    escape(v.aa.as_deref().unwrap_or(""))
+                )
+            })
+            .collect();
+        format!("<table class=\"variants\"><thead><tr><th>Position</th><th>Change</th><th>Effect</th><th>Gene</th><th>Protein change</th></tr></thead><tbody>{rows}</tbody></table>")
+    };
+    Ok(render_report_html_with_table(title, &svg, &summary, &table))
 }

@@ -272,6 +272,7 @@ def test_pressing_draw_on_a_variant_shows_the_cli_locus_page_for_the_window_arou
     assert driver.find_element(By.ID, "report-status").text == f"Drawn: {LOCUS}"
     assert driver.find_element(By.ID, "region").get_attribute("value") == LOCUS
     assert driver.find_element(By.ID, "report").get_attribute("srcdoc") == expected["report"]
+    assert 'class="variant-label"' in expected["report"] and '<table class="variants">' in expected["report"]
 
 
 def test_a_region_can_also_be_typed(driver, server, inputs):
@@ -522,3 +523,141 @@ def test_the_real_manifest_lists_https_files_on_ncbi_and_ena_and_a_site_file_of_
     local = [r for e in manifest["examples"] for r in e["reads"] if not r["url"].startswith("http")]
     assert local and all((ROOT / "site" / "example" / r["url"]).stat().st_size == r["bytes"] for r in local)
     assert [e["id"] for e in manifest["examples"]] == ["small", "full"]
+
+
+# The genome menu: NCBI genomes load in the page; FungiDB genomes only show the command that downloads them
+
+GENOME_DIR = ROOT / "dist-site" / "_test_genomes"
+
+
+@pytest.fixture
+def genome_site(inputs):
+    GENOME_DIR.mkdir(parents=True, exist_ok=True)
+    for name in ("ref.fa.gz", "genes.gff3"):
+        _shutil.copy(inputs / name, GENOME_DIR / name)
+    size = lambda n: (GENOME_DIR / n).stat().st_size
+
+    def write(fasta_bytes=None):
+        entry = lambda acc, label, genome_size, fa_url: {
+            "accession": acc, "label": label, "organism": label.split(" (")[0], "level": "Chromosome", "genome_size": genome_size,
+            "genes": 100, "fasta": {"name": "ref.fa.gz", "url": fa_url, "bytes": fasta_bytes or size("ref.fa.gz")},
+            "gff": {"name": "genes.gff3", "url": "genes.gff3", "bytes": size("genes.gff3")}}
+        (GENOME_DIR / "genomes.json").write_text(json.dumps({"genomes": [
+            entry("GCF_1.1", "Aspergillus testii (strain A)", 120_000, "ref.fa.gz"),
+            entry("GCF_2.1", "Candida testii", 80_000_000, "ref.fa.gz"),
+        ]}))
+        (GENOME_DIR / "fungidb.json").write_text(json.dumps({"release": "FungiDB-71", "organisms": [
+            {"name": "Aspergillus fakeii X1", "species": "Aspergillus fakeii", "genes": 5000},
+            {"name": "Zymo fakeii", "species": "Zymo fakeii", "genes": 4000},
+        ]}))
+
+    write()
+    yield write
+    _shutil.rmtree(GENOME_DIR, ignore_errors=True)
+
+
+def open_menu(driver, server):
+    driver.get(f"{server}/{SITE}?genomes=_test_genomes/genomes.json%3Fv%3D{time.time_ns()}")
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-section").is_displayed())
+
+
+def options(driver):
+    return [o.text for o in driver.find_elements(By.CSS_SELECTOR, "#genome-menu option")]
+
+
+def choose_genome(driver, value_prefix):
+    driver.find_element(By.CSS_SELECTOR, f"#genome-menu option[value^='{value_prefix}']").click()
+    driver.find_element(By.ID, "genome-load").click()
+
+
+def test_the_menu_lists_ncbi_genomes_and_fungidb_organisms_in_two_groups(driver, server, genome_site):
+    open_menu(driver, server)
+
+    groups = [g.get_attribute("label") for g in driver.find_elements(By.CSS_SELECTOR, "#genome-menu optgroup")]
+    assert len(groups) == 2 and groups[0].startswith("NCBI") and groups[1].startswith("FungiDB"), groups
+    texts = options(driver)
+    assert any("Aspergillus testii" in t and "0.1 Mb" in t for t in texts), texts
+    assert any("Zymo fakeii" in t for t in texts)
+
+
+def test_the_filter_narrows_the_menu_to_matching_names(driver, server, genome_site):
+    open_menu(driver, server)
+
+    driver.find_element(By.ID, "genome-filter").send_keys("aspergillus")
+
+    texts = options(driver)
+    assert len(texts) == 2 and all("Aspergillus" in t for t in texts), texts
+
+
+def test_loading_an_ncbi_genome_fills_in_the_reference_and_genes_and_step_1_then_runs_with_chosen_reads(driver, server, inputs, genome_site):
+    expected = cli_results(inputs)
+    open_menu(driver, server)
+
+    choose_genome(driver, "ncbi:GCF_1.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded"), driver.find_element(By.ID, "genome-status").text
+    choose(driver, "reads", inputs / "reads.fq")
+    driver.find_element(By.ID, "sample").clear()
+    driver.find_element(By.ID, "sample").send_keys("s1")
+    assert press(driver, "run", "status").startswith("Done")
+    assert download_text(driver, "download-vcf") == expected["vcf"]
+
+    assert press(driver, "annotate", "annotate-status").startswith("1 of 1")  # the genome's gene file was loaded too
+
+
+def test_a_large_genome_gets_a_warning_that_it_was_not_tested(driver, server, genome_site):
+    open_menu(driver, server)
+
+    choose_genome(driver, "ncbi:GCF_2.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    assert "not been tested" in driver.find_element(By.ID, "genome-status").text
+
+
+def test_a_fungidb_entry_shows_the_fetch_command_and_downloads_nothing(driver, server, inputs, genome_site):
+    open_menu(driver, server)
+
+    choose_genome(driver, "fungidb:")
+
+    command = driver.find_element(By.ID, "genome-command").text
+    assert command.startswith('qmutfind fetch --organism "Aspergillus fakeii X1"') and "--out-dir" in command, command
+    assert driver.find_element(By.ID, "genome-fungidb").is_displayed()
+    assert "Choose a reference" in press(driver, "run", "status")  # nothing was loaded
+
+
+def test_a_wrong_download_size_is_an_error_and_loads_nothing(driver, server, inputs, genome_site):
+    genome_site(fasta_bytes=777)
+    open_menu(driver, server)
+
+    choose_genome(driver, "ncbi:GCF_1.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Error") and "incomplete" in driver.find_element(By.ID, "genome-status").text
+
+
+def test_the_real_genome_lists_are_complete_and_point_at_https_ncbi_files():
+    from urllib.parse import urlparse
+    document = json.loads((ROOT / "site" / "genomes" / "genomes.json").read_text())
+    genomes = document["genomes"]
+    assert 45 <= len(genomes) <= 60
+    assert len({g["accession"] for g in genomes}) == len(genomes)
+    for g in genomes:
+        assert g["accession"].startswith("GCF_") and g["genes"] > 0 and g["genome_size"] > 0, g["accession"]
+        for key in ("fasta", "gff"):
+            assert urlparse(g[key]["url"]).scheme == "https" and urlparse(g[key]["url"]).netloc == "ftp.ncbi.nlm.nih.gov"
+            assert g[key]["bytes"] > 0 and "//_" not in g[key]["url"]
+    fungidb = json.loads((ROOT / "site" / "genomes" / "fungidb.json").read_text())
+    assert fungidb["release"].startswith("FungiDB-") and len(fungidb["organisms"]) > 100
+
+
+def test_choosing_a_genome_after_loading_an_example_drops_the_examples_reads(driver, server, inputs, example_site, genome_site):
+    driver.get(f"{server}/{SITE}?example=_test_example/manifest.json%3Fv%3D{time.time_ns()}&genomes=_test_genomes/genomes.json%3Fv%3D{time.time_ns()}")
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "example-section").is_displayed() and d.find_element(By.ID, "genome-section").is_displayed())
+    driver.find_element(By.CSS_SELECTOR, "[data-example=small]").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "example-status").text.startswith("Loaded"))
+
+    choose_genome(driver, "ncbi:GCF_1.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Loaded"))
+
+    # The example's reads belong to another genome, so step 1 must ask for reads again.
+    assert "Choose a reference FASTA and at least one reads file" in press(driver, "run", "status")

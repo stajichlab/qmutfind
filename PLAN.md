@@ -875,6 +875,28 @@ neighbourhood. NOT done: the window is a fixed size around the variant, not the 
 thousands of calls was not tried in the browser; Chrome and Safari were not tried. `examples/browser` was removed:
 `site/` is the only browser UI now.
 
+## 12c. Genome menu, impact labels and where the browser can download from (2026-11-12)
+
+- Impact labels: the locus drawing now prints the protein change (for example D304G) next to each variant, or a short
+  effect name (`frameshift`, `intron`, `5UTR`) when there is none. A label that would cover another label or circle on
+  its level is left out of the drawing. The page under the drawing lists every variant of the region in a table, so
+  nothing is lost. The axis labels at both ends are anchored inside the plot.
+- Genome menu (`site/genomes/genomes.json`, made by `bench/make_genome_list.py` from the NCBI RefSeq fungi table of
+  2026-11-12): 50 hand-chosen RefSeq genomes with annotation, 9.0 to 64.9 Mb, each with FASTA and GFF3 sizes from HEAD
+  requests (all with `Access-Control-Allow-Origin`). The page downloads them in the browser and checks the sizes.
+  Genomes above 50 Mb carry a warning: browser memory was measured only on a 29.75 Mb genome (about 0.7 GB in Node).
+  Live check in Firefox: S. pombe (GCF_000002945.2) loaded in 1.1 s.
+- FungiDB: MEASURED 2026-11-12 with a real key (key read from the key file, never printed). A GET with
+  `Authorization: Bearer <key>` returns 200 but with no `Access-Control-Allow-Origin` header, and the preflight (OPTIONS)
+  that a browser sends for an Authorization header returns 401 with no CORS headers. A web page therefore cannot download
+  from FungiDB, with or without the key. The menu lists the 317 FungiDB organisms (FungiDB-71, public organism search,
+  `site/genomes/fungidb.json` by `bench/make_fungidb_list.py`) and shows the `qmutfind fetch` command instead. A proxy
+  would have to carry the user's key, which I did not build.
+- Reads: the page downloads from ENA (HTTPS FASTQ, CORS `*`; 0.75 MB/s from the cluster). Alternatives tested: NCBI's
+  on-the-fly FASTQ service (`trace.ncbi.nlm.nih.gov/Traces/sra-reads-be/fastq`) sends no allow-origin header; the AWS
+  copy (`sra-pub-run-odp.s3.amazonaws.com`) is a `.sra` file (96 MB for SRR6277229, not FASTQ) with no CORS header. ENA is
+  the only browser-readable source found. DDBJ was not tested.
+
 ## 13. Planned work (2026-11-12, agreed with the user)
 
 1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.

@@ -275,7 +275,7 @@ describeSource();
 const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
 let loading = false;
 
-async function download(item, base, label) {
+async function download(item, base, label, statusId = 'example-status') {
   const url = new URL(item.url, base);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
@@ -287,7 +287,7 @@ async function download(item, base, label) {
     if (done) break;
     parts.push(value);
     got += value.length;
-    show('example-status', `Downloading ${label}: ${mb(got)} of ${mb(item.bytes)}`);
+    show(statusId, `Downloading ${label}: ${mb(got)} of ${mb(item.bytes)}`);
   }
   if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
   return new File(parts, item.name);
@@ -344,3 +344,104 @@ async function setupExamples() {
 }
 
 setupExamples();
+
+
+// ---- The genome menu ------------------------------------------------------------------------------------------
+// genomes/genomes.json lists NCBI RefSeq genomes (the page downloads them: NCBI allows that). genomes/fungidb.json lists
+// FungiDB organisms. FungiDB blocks downloads from web pages and needs an API key, so for those the page only shows the
+// `qmutfind fetch` command. ?genomes=PATH uses another list, but only a path on this site.
+const LARGE_GENOME = 50e6;
+let genomeList = [];
+let genomesBase = location.href; // file addresses in the list are relative to the list
+let fungidbList = [];
+
+function fillMenu() {
+  const filter = $('genome-filter').value.trim().toLowerCase();
+  const menu = $('genome-menu');
+  menu.replaceChildren();
+  const group = (label) => { const g = document.createElement('optgroup'); g.label = label; return g; };
+  const ncbi = group('NCBI RefSeq (loads in this page)');
+  for (const g of genomeList) {
+    if (filter && !`${g.label} ${g.accession}`.toLowerCase().includes(filter)) continue;
+    ncbi.appendChild(new Option(`${g.label} (${(g.genome_size / 1e6).toFixed(1)} Mb, ${g.genes.toLocaleString()} genes, ${g.level})`, `ncbi:${g.accession}`));
+  }
+  const fungidb = group('FungiDB (needs the command line and a key)');
+  for (const o of fungidbList) {
+    if (filter && !o.name.toLowerCase().includes(filter)) continue;
+    fungidb.appendChild(new Option(`${o.name} (${o.genes.toLocaleString()} genes)`, `fungidb:${o.name}`));
+  }
+  if (ncbi.children.length) menu.appendChild(ncbi);
+  if (fungidb.children.length) menu.appendChild(fungidb);
+}
+
+async function loadGenome() {
+  if (loading || busy) return;
+  const value = $('genome-menu').value;
+  if (!value) { show('genome-status', 'Choose a genome in the list.'); return; }
+  $('genome-fungidb').hidden = true;
+  if (value.startsWith('fungidb:')) {
+    const name = value.slice('fungidb:'.length);
+    show('genome-status', `${name} is in FungiDB.`);
+    $('genome-command').textContent = `qmutfind fetch --organism "${name}" --out-dir genome --eupathdb-key-file ~/.eupathdb_keys`;
+    $('genome-fungidb').hidden = false;
+    return;
+  }
+  const entry = genomeList.find((g) => `ncbi:${g.accession}` === value);
+  if (!entry) return;
+  loading = true;
+  $('genome-load').disabled = true;
+  try {
+    const base = genomesBase;
+    const reference = await download(entry.fasta, base, 'the genome', 'genome-status');
+    const gff = await download(entry.gff, base, 'the gene models', 'genome-status');
+    // A new genome replaces the example, whose reads belong to another genome.
+    example.reference = reference;
+    example.gff = gff;
+    example.reads = [];
+    example.expectedReads = null;
+    show('example-status', '');
+    let note = ` Choose your reads in step 1.`;
+    if (entry.genome_size > LARGE_GENOME) {
+      note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
+    }
+    show('genome-status', `Loaded: ${entry.label} (${entry.accession}).${note}`);
+  } catch (error) {
+    show('genome-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
+  } finally {
+    loading = false;
+    $('genome-load').disabled = false;
+  }
+}
+
+async function setupGenomes() {
+  const asked = new URLSearchParams(location.search).get('genomes');
+  const path = asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/') ? asked : 'genomes/genomes.json';
+  const base = new URL(path, location.href);
+  genomesBase = base;
+  try {
+    const response = await fetch(base, { cache: 'no-cache' });
+    if (!response.ok) return;
+    genomeList = (await response.json()).genomes || [];
+  } catch (error) {
+    return;
+  }
+  try {
+    const response = await fetch(new URL('fungidb.json', base), { cache: 'no-cache' });
+    if (response.ok) {
+      const document_ = await response.json();
+      fungidbList = document_.organisms || [];
+      $('genome-text').textContent = `${genomeList.length} NCBI RefSeq genomes with gene models download in this page. ` +
+        `${fungidbList.length} FungiDB organisms (${document_.release || 'FungiDB'}) are listed too; they need the command line.`;
+    }
+  } catch (error) {
+    // The FungiDB list is optional.
+  }
+  if (!$('genome-text').textContent) $('genome-text').textContent = `${genomeList.length} NCBI RefSeq genomes with gene models download in this page.`;
+  fillMenu();
+  $('genome-filter').addEventListener('input', fillMenu);
+  $('genome-load').addEventListener('click', loadGenome);
+  $('genome-menu').addEventListener('dblclick', loadGenome);
+  $('genome-section').hidden = false;
+}
+
+setupGenomes();

@@ -109,3 +109,106 @@ fn the_html_page_wraps_the_svg_supports_dark_mode_and_escapes_the_title() {
     assert!(!html.contains("<b>"));
     assert!(html.contains("calls") && html.contains(">4<"));
 }
+
+// ---- Impact labels next to each variant, and a table of all variants on the page ----
+
+fn svg_for(vcf: &str, region: &str) -> String {
+    let ann = Annotation::from_gff(GFF.as_bytes()).unwrap();
+    let variants = read_report_variants(vcf.as_bytes()).unwrap();
+    render_locus_svg(&ann, &variants, &parse_region(region).unwrap())
+}
+
+/// The text of the label element that has `data-pos="pos"`.
+fn label_text(svg: &str, pos: u64) -> Option<String> {
+    let marker = format!("class=\"variant-label\" data-pos=\"{pos}\"");
+    let start = svg.find(&marker)?;
+    let open_end = start + svg[start..].find('>')? + 1;
+    Some(svg[open_end..open_end + svg[open_end..].find("</text>")?].to_string())
+}
+
+#[test]
+fn a_variant_with_a_protein_change_is_labelled_with_it_next_to_its_circle() {
+    let s = svg("c1:1-200");
+
+    assert_eq!(label_text(&s, 28).as_deref(), Some("A2D"));
+    let circle_x: f64 = attr(&s, "class=\"variant\" data-effect=\"missense\"", "cx").parse().unwrap();
+    let label_x: f64 = attr(&s, "class=\"variant-label\" data-pos=\"28\"", "x").parse().unwrap();
+    assert!(label_x > circle_x, "{label_x} {circle_x}");
+    assert_eq!(attr(&s, "class=\"variant-label\" data-pos=\"28\"", "text-anchor"), "start");
+}
+
+#[test]
+fn a_variant_without_a_protein_change_is_labelled_with_a_short_effect_name() {
+    let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+c1\t60\t.\tA\tC\t.\tPASS\tEFFECT=intron_derived\n\
+c1\t90\t.\tA\tC\t.\tPASS\tEFFECT=frameshift;GENE=G1\n\
+c1\t150\t.\tA\tC\t.\tPASS\tEFFECT=5UTR_derived\n\
+c1\t180\t.\tA\tC\t.\tPASS\t.\n";
+
+    let s = svg_for(vcf, "c1:1-200");
+
+    assert_eq!(label_text(&s, 60).as_deref(), Some("intron"));
+    assert_eq!(label_text(&s, 90).as_deref(), Some("frameshift"));
+    assert_eq!(label_text(&s, 150).as_deref(), Some("5UTR"));
+    assert_eq!(label_text(&s, 180).as_deref(), Some("unannotated"));
+}
+
+#[test]
+fn a_label_that_would_overlap_the_label_before_it_on_the_same_level_is_left_out_but_its_circle_stays() {
+    // In 1,000 bases each base is 0.88 px wide, so positions 28 and 44 are 14 px apart: one level, but the labels are wider.
+    let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+c1\t28\t.\tC\tA\t.\tPASS\tEFFECT=missense;AA=A2D\n\
+c1\t44\t.\tC\tA\t.\tPASS\tEFFECT=missense;AA=L10P\n";
+
+    let s = svg_for(vcf, "c1:1-1000");
+
+    assert_eq!(count(&s, "class=\"variant\""), 2);
+    // The first label would cross the second circle, which is on the same level, so only the second is drawn.
+    assert_eq!(count(&s, "class=\"variant-label\""), 1);
+    assert_eq!(label_text(&s, 44).as_deref(), Some("L10P"));
+    assert_eq!(label_text(&s, 28), None);
+}
+
+#[test]
+fn a_label_near_the_right_edge_is_drawn_to_the_left_of_its_circle() {
+    let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+c1\t199\t.\tC\tA\t.\tPASS\tEFFECT=missense;AA=A2DELTAXXXX\n";
+
+    let s = svg_for(vcf, "c1:1-200");
+
+    assert_eq!(attr(&s, "class=\"variant-label\" data-pos=\"199\"", "text-anchor"), "end");
+    let circle_x: f64 = attr(&s, "class=\"variant\"", "cx").parse().unwrap();
+    let label_x: f64 = attr(&s, "class=\"variant-label\" data-pos=\"199\"", "x").parse().unwrap();
+    assert!(label_x < circle_x);
+}
+
+#[test]
+fn the_page_lists_every_variant_in_the_region_in_a_table_even_when_its_label_was_left_out() {
+    let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+c1\t28\t.\tC\tA\t.\tPASS\tEFFECT=missense;GENE=G1;AA=A2D\n\
+c1\t44\t.\tC\tA\t.\tPASS\tEFFECT=missense;GENE=G1;AA=L10P\n\
+c1\t5000\t.\tC\tA\t.\tPASS\tEFFECT=missense;GENE=G1;AA=Q9R\n";
+
+    let page = qmutfind_core::report_page(vcf, Some(GFF.as_bytes()), "c1:1-1000", "t").unwrap();
+
+    assert!(page.contains("<table class=\"variants\">"));
+    for needle in ["c1:28", "A2D", "c1:44", "L10P", "G1", "missense"] {
+        assert!(page.contains(needle), "{needle}");
+    }
+    assert!(!page.contains("Q9R"), "a variant outside the region is not listed");
+}
+
+#[test]
+fn the_first_and_last_axis_labels_are_anchored_inside_the_plot_so_they_are_not_cut_off() {
+    let s = svg("c1:1-200");
+
+    let anchors: Vec<String> = s
+        .match_indices("font-size=\"11\" text-anchor=\"")
+        .map(|(i, m)| {
+            let rest = &s[i + m.len()..];
+            rest[..rest.find('"').unwrap()].to_string()
+        })
+        .collect();
+
+    assert_eq!(anchors, vec!["start", "middle", "end"]);
+}

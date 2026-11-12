@@ -1,0 +1,1592 @@
+{
+ "source": "FungiDB organism search (https://fungidb.org/fungidb/service/record-types/organism/searches/GenomeDataTypes/reports/standard)",
+ "release": "FungiDB-71",
+ "generated": "2026-11-12",
+ "organisms": [
+  {
+   "name": "Albugo candida 2VRR",
+   "species": "Albugo candida",
+   "genes": 15892
+  },
+  {
+   "name": "Albugo laibachii Nc14",
+   "species": "Albugo laibachii",
+   "genes": 14629
+  },
+  {
+   "name": "Allomyces macrogynus ATCC 38327",
+   "species": "Allomyces macrogynus",
+   "genes": 19333
+  },
+  {
+   "name": "Alternaria alternata SRC1lrK2f",
+   "species": "Alternaria alternata",
+   "genes": 13577
+  },
+  {
+   "name": "Alternaria dauci A2016",
+   "species": "Alternaria dauci",
+   "genes": 10158
+  },
+  {
+   "name": "Aphanomyces astaci strain APO3",
+   "species": "Aphanomyces astaci",
+   "genes": 19584
+  },
+  {
+   "name": "Aphanomyces euteiches MF1",
+   "species": "Aphanomyces euteiches",
+   "genes": 21894
+  },
+  {
+   "name": "Aphanomyces invadans NJM9701",
+   "species": "Aphanomyces invadans",
+   "genes": 15416
+  },
+  {
+   "name": "Arthrobotrys flagrans CBS H-5679",
+   "species": "Arthrobotrys flagrans",
+   "genes": 9927
+  },
+  {
+   "name": "Ascosphaera apis ARSEF 7405",
+   "species": "Ascosphaera apis",
+   "genes": 6442
+  },
+  {
+   "name": "Aspergillus aculeatus ATCC 16872",
+   "species": "Aspergillus aculeatus",
+   "genes": 11165
+  },
+  {
+   "name": "Aspergillus brasiliensis CBS 101740",
+   "species": "Aspergillus brasiliensis",
+   "genes": 13263
+  },
+  {
+   "name": "Aspergillus campestris IBT 28561",
+   "species": "Aspergillus campestris",
+   "genes": 9929
+  },
+  {
+   "name": "Aspergillus carbonarius ITEM 5010",
+   "species": "Aspergillus carbonarius",
+   "genes": 11735
+  },
+  {
+   "name": "Aspergillus clavatus NRRL 1",
+   "species": "Aspergillus clavatus",
+   "genes": 9428
+  },
+  {
+   "name": "Aspergillus cristatus GZAAS20.1005",
+   "species": "Aspergillus cristatus",
+   "genes": 10344
+  },
+  {
+   "name": "Aspergillus ellipticus CBS 707.79",
+   "species": "Aspergillus ellipticus",
+   "genes": 13179
+  },
+  {
+   "name": "Aspergillus eucalypticola CBS 122712",
+   "species": "Aspergillus eucalypticola",
+   "genes": 12207
+  },
+  {
+   "name": "Aspergillus fijiensis CBS 313.89",
+   "species": "Aspergillus fijiensis",
+   "genes": 12336
+  },
+  {
+   "name": "Aspergillus fischeri NRRL 181",
+   "species": "Aspergillus fischeri",
+   "genes": 10668
+  },
+  {
+   "name": "Aspergillus flavus NRRL3357",
+   "species": "Aspergillus flavus",
+   "genes": 14313
+  },
+  {
+   "name": "Aspergillus flavus NRRL3357 2020",
+   "species": "Aspergillus flavus",
+   "genes": 13958
+  },
+  {
+   "name": "Aspergillus fumigatus A1160",
+   "species": "Aspergillus fumigatus",
+   "genes": 10095
+  },
+  {
+   "name": "Aspergillus fumigatus A1163",
+   "species": "Aspergillus fumigatus",
+   "genes": 10106
+  },
+  {
+   "name": "Aspergillus fumigatus Af293",
+   "species": "Aspergillus fumigatus",
+   "genes": 10130
+  },
+  {
+   "name": "Aspergillus glaucus CBS 516.65",
+   "species": "Aspergillus glaucus",
+   "genes": 11429
+  },
+  {
+   "name": "Aspergillus heteromorphus CBS 117.55",
+   "species": "Aspergillus heteromorphus",
+   "genes": 11436
+  },
+  {
+   "name": "Aspergillus homomorphus CBS 101889",
+   "species": "Aspergillus homomorphus",
+   "genes": 11663
+  },
+  {
+   "name": "Aspergillus ibericus CBS 121593",
+   "species": "Aspergillus ibericus",
+   "genes": 11989
+  },
+  {
+   "name": "Aspergillus lentulus strain IFM 54703",
+   "species": "Aspergillus lentulus",
+   "genes": 9916
+  },
+  {
+   "name": "Aspergillus luchuensis CBS 106.47",
+   "species": "Aspergillus luchuensis",
+   "genes": 13784
+  },
+  {
+   "name": "Aspergillus luchuensis IFO 4308",
+   "species": "Aspergillus luchuensis",
+   "genes": 11755
+  },
+  {
+   "name": "Aspergillus nidulans FGSC A4",
+   "species": "Aspergillus nidulans",
+   "genes": 10988
+  },
+  {
+   "name": "Aspergillus niger ATCC 1015",
+   "species": "Aspergillus niger",
+   "genes": 11910
+  },
+  {
+   "name": "Aspergillus niger ATCC 13496",
+   "species": "Aspergillus niger",
+   "genes": 12468
+  },
+  {
+   "name": "Aspergillus niger CBS 513.88",
+   "species": "Aspergillus niger",
+   "genes": 14403
+  },
+  {
+   "name": "Aspergillus niger strain N402 (ATCC64974)",
+   "species": "Aspergillus niger",
+   "genes": 11187
+  },
+  {
+   "name": "Aspergillus novofumigatus IBT 16806",
+   "species": "Aspergillus novofumigatus",
+   "genes": 11729
+  },
+  {
+   "name": "Aspergillus ochraceoroseus IBT 24754",
+   "species": "Aspergillus ochraceoroseus",
+   "genes": 9070
+  },
+  {
+   "name": "Aspergillus oryzae RIB40",
+   "species": "Aspergillus oryzae",
+   "genes": 12364
+  },
+  {
+   "name": "Aspergillus parasiticus CBS 117618",
+   "species": "Aspergillus parasiticus",
+   "genes": 14005
+  },
+  {
+   "name": "Aspergillus sclerotiicarbonarius CBS 121057",
+   "species": "Aspergillus sclerotiicarbonarius",
+   "genes": 12893
+  },
+  {
+   "name": "Aspergillus steynii IBT 23096",
+   "species": "Aspergillus steynii",
+   "genes": 13430
+  },
+  {
+   "name": "Aspergillus sydowii CBS 593.65",
+   "species": "Aspergillus sydowii",
+   "genes": 13717
+  },
+  {
+   "name": "Aspergillus tanneri NIH1004",
+   "species": "Aspergillus tanneri",
+   "genes": 13590
+  },
+  {
+   "name": "Aspergillus terreus NIH2624",
+   "species": "Aspergillus terreus",
+   "genes": 10551
+  },
+  {
+   "name": "Aspergillus thermomutatus strain HMR AF 39",
+   "species": "Aspergillus thermomutatus",
+   "genes": 9702
+  },
+  {
+   "name": "Aspergillus tubingensis CBS 134.48",
+   "species": "Aspergillus tubingensis",
+   "genes": 12592
+  },
+  {
+   "name": "Aspergillus uvarum CBS 121591",
+   "species": "Aspergillus uvarum",
+   "genes": 12347
+  },
+  {
+   "name": "Aspergillus versicolor CBS 583.65",
+   "species": "Aspergillus versicolor",
+   "genes": 13364
+  },
+  {
+   "name": "Aspergillus wentii DTO 134E9",
+   "species": "Aspergillus wentii",
+   "genes": 12659
+  },
+  {
+   "name": "Batrachochytrium dendrobatidis JEL423",
+   "species": "Batrachochytrium dendrobatidis",
+   "genes": 8763
+  },
+  {
+   "name": "Batrachochytrium salamandrivorans BS",
+   "species": "Batrachochytrium salamandrivorans",
+   "genes": 10186
+  },
+  {
+   "name": "Bipolaris maydis C4",
+   "species": "Bipolaris maydis",
+   "genes": 11399
+  },
+  {
+   "name": "Bipolaris sorokiniana ND90Pr",
+   "species": "Bipolaris sorokiniana",
+   "genes": 12308
+  },
+  {
+   "name": "Blastomyces dermatitidis ATCC 26199",
+   "species": "Blastomyces dermatitidis",
+   "genes": 9560
+  },
+  {
+   "name": "Blastomyces dermatitidis ER-3",
+   "species": "Blastomyces dermatitidis",
+   "genes": 10081
+  },
+  {
+   "name": "Blastomyces gilchristii SLH14081",
+   "species": "Blastomyces gilchristii",
+   "genes": 10148
+  },
+  {
+   "name": "Blastomyces percursus strain EI222",
+   "species": "Blastomyces percursus",
+   "genes": 10384
+  },
+  {
+   "name": "Blumeria graminis f. sp. triticale THUN-12",
+   "species": "Blumeria graminis",
+   "genes": 7993
+  },
+  {
+   "name": "Blumeria graminis f. sp. tritici 96224",
+   "species": "Blumeria graminis",
+   "genes": 8470
+  },
+  {
+   "name": "Blumeria hordei strain RACE1",
+   "species": "Blumeria hordei",
+   "genes": 7150
+  },
+  {
+   "name": "Botrytis cinerea B05.10",
+   "species": "Botrytis cinerea",
+   "genes": 12073
+  },
+  {
+   "name": "Bremia lactucae strain SF5",
+   "species": "Bremia lactucae",
+   "genes": 9767
+  },
+  {
+   "name": "Candida albicans SC5314",
+   "species": "Candida albicans",
+   "genes": 6468
+  },
+  {
+   "name": "Candida albicans SC5314_B",
+   "species": "Candida albicans",
+   "genes": 6415
+  },
+  {
+   "name": "Candida albicans WO-1",
+   "species": "Candida albicans",
+   "genes": 6160
+  },
+  {
+   "name": "Candida auris strain 6684",
+   "species": "Candidozyma auris",
+   "genes": 8301
+  },
+  {
+   "name": "Candida auris strain B11220",
+   "species": "Candidozyma auris",
+   "genes": 5494
+  },
+  {
+   "name": "Candida auris strain B11221",
+   "species": "Candidozyma auris",
+   "genes": 5715
+  },
+  {
+   "name": "Candida auris strain B11243",
+   "species": "Candidozyma auris",
+   "genes": 5595
+  },
+  {
+   "name": "Candida auris strain B11245",
+   "species": "Candidozyma auris",
+   "genes": 5675
+  },
+  {
+   "name": "Candida auris strain B8441",
+   "species": "Candidozyma auris",
+   "genes": 5584
+  },
+  {
+   "name": "Candida dubliniensis CD36",
+   "species": "Candida dubliniensis",
+   "genes": 6095
+  },
+  {
+   "name": "Candida duobushaemulonis strain B09383",
+   "species": "Candidozyma duobushaemuli",
+   "genes": 5329
+  },
+  {
+   "name": "Candida haemulonis B11899",
+   "species": "Candidozyma haemuli",
+   "genes": 5409
+  },
+  {
+   "name": "Candida metapsilosis BP57",
+   "species": "Candida metapsilosis",
+   "genes": 5743
+  },
+  {
+   "name": "Candida parapsilosis CDC317",
+   "species": "Candida parapsilosis",
+   "genes": 5984
+  },
+  {
+   "name": "Candida pseudohaemulonii strain B12108",
+   "species": "Candidozyma pseudohaemuli",
+   "genes": 5285
+  },
+  {
+   "name": "Candida tropicalis MYA-3404",
+   "species": "Candida tropicalis",
+   "genes": 6441
+  },
+  {
+   "name": "Candida tropicalis MYA-3404 2020",
+   "species": "Candida tropicalis",
+   "genes": 6136
+  },
+  {
+   "name": "Cenococcum geophilum 1.58",
+   "species": "Cenococcum geophilum",
+   "genes": 14745
+  },
+  {
+   "name": "Cercospora beticola Cb09-40",
+   "species": "Cercospora beticola",
+   "genes": 13212
+  },
+  {
+   "name": "Cercospora kikuchii MAFF 305040",
+   "species": "Cercospora kikuchii",
+   "genes": 13124
+  },
+  {
+   "name": "Chaetomium globosum CBS 148.51",
+   "species": "Chaetomium globosum",
+   "genes": 11232
+  },
+  {
+   "name": "Chaetothyriales sp. CBS 132003",
+   "species": "Chaetothyriales sp.",
+   "genes": 5727
+  },
+  {
+   "name": "Cladophialophora bantiana CBS 173.52",
+   "species": "Cladophialophora bantiana",
+   "genes": 12817
+  },
+  {
+   "name": "Cladophialophora carrionii CBS 160.54",
+   "species": "Cladophialophora carrionii",
+   "genes": 10428
+  },
+  {
+   "name": "Cladophialophora carrionii KSF",
+   "species": "Cladophialophora carrionii",
+   "genes": 11240
+  },
+  {
+   "name": "Cladophialophora immunda strain CBS 83496",
+   "species": "Cladophialophora immunda",
+   "genes": 12879
+  },
+  {
+   "name": "Cladophialophora psammophila CBS 110553",
+   "species": "Cladophialophora psammophila",
+   "genes": 13421
+  },
+  {
+   "name": "Cladophialophora yegresii CBS 114405",
+   "species": "Cladophialophora yegresii",
+   "genes": 10118
+  },
+  {
+   "name": "Claviceps purpurea 20.1",
+   "species": "Claviceps purpurea",
+   "genes": 8979
+  },
+  {
+   "name": "Clavispora lusitaniae ATCC 42720",
+   "species": "Clavispora lusitaniae",
+   "genes": 6153
+  },
+  {
+   "name": "Coccidioides immitis H538.4",
+   "species": "Coccidioides immitis",
+   "genes": 10724
+  },
+  {
+   "name": "Coccidioides immitis RS",
+   "species": "Coccidioides immitis",
+   "genes": 9905
+  },
+  {
+   "name": "Coccidioides immitis WA_211",
+   "species": "Coccidioides immitis",
+   "genes": 7936
+  },
+  {
+   "name": "Coccidioides posadasii C735 delta SOWgp",
+   "species": "Coccidioides posadasii",
+   "genes": 7255
+  },
+  {
+   "name": "Coccidioides posadasii RMSCC 3488",
+   "species": "Coccidioides posadasii",
+   "genes": 10016
+  },
+  {
+   "name": "Coccidioides posadasii str. Silveira",
+   "species": "Coccidioides posadasii",
+   "genes": 10379
+  },
+  {
+   "name": "Coccidioides posadasii strain Silveira 2022",
+   "species": "Coccidioides posadasii",
+   "genes": 8438
+  },
+  {
+   "name": "Colletotrichum graminicola M1.001",
+   "species": "Colletotrichum graminicola",
+   "genes": 12400
+  },
+  {
+   "name": "Colletotrichum higginsianum IMI 349063",
+   "species": "Colletotrichum higginsianum",
+   "genes": 14651
+  },
+  {
+   "name": "Coprinopsis cinerea #326",
+   "species": "Coprinopsis cinerea",
+   "genes": 15250
+  },
+  {
+   "name": "Coprinopsis cinerea okayama7#130",
+   "species": "Coprinopsis cinerea",
+   "genes": 13657
+  },
+  {
+   "name": "Cordyceps militaris ATCC 34164",
+   "species": "Cordyceps militaris",
+   "genes": 9362
+  },
+  {
+   "name": "Cordyceps militaris CM01",
+   "species": "Cordyceps militaris",
+   "genes": 9651
+  },
+  {
+   "name": "Cryptococcus bacillisporus CA1873",
+   "species": "Cryptococcus bacillisporus",
+   "genes": 6782
+  },
+  {
+   "name": "Cryptococcus cf. gattii MF34",
+   "species": "Cryptococcus cf. gattii",
+   "genes": 6321
+  },
+  {
+   "name": "Cryptococcus deneoformans B-3501A",
+   "species": "Cryptococcus deneoformans",
+   "genes": 6608
+  },
+  {
+   "name": "Cryptococcus deneoformans JEC21",
+   "species": "Cryptococcus deneoformans",
+   "genes": 7004
+  },
+  {
+   "name": "Cryptococcus depauperatus CBS 7841",
+   "species": "Cryptococcus depauperatus",
+   "genes": 6687
+  },
+  {
+   "name": "Cryptococcus depauperatus CBS 7855",
+   "species": "Cryptococcus depauperatus",
+   "genes": 6521
+  },
+  {
+   "name": "Cryptococcus deuterogattii R265",
+   "species": "Cryptococcus deuterogattii",
+   "genes": 6705
+  },
+  {
+   "name": "Cryptococcus gattii EJB2",
+   "species": "Cryptococcus gattii",
+   "genes": 6908
+  },
+  {
+   "name": "Cryptococcus gattii NT-10",
+   "species": "Cryptococcus gattii",
+   "genes": 6987
+  },
+  {
+   "name": "Cryptococcus gattii WM276",
+   "species": "Cryptococcus gattii",
+   "genes": 6580
+  },
+  {
+   "name": "Cryptococcus neoformans H99",
+   "species": "Cryptococcus neoformans",
+   "genes": 8338
+  },
+  {
+   "name": "Cryptococcus neoformans KN99",
+   "species": "Cryptococcus neoformans",
+   "genes": 6967
+  },
+  {
+   "name": "Cryptococcus neoformans strain:VNII",
+   "species": "Cryptococcus neoformans",
+   "genes": 6698
+  },
+  {
+   "name": "Cryptococcus tetragattii IND107",
+   "species": "Cryptococcus tetragattii",
+   "genes": 6843
+  },
+  {
+   "name": "Curvularia clavata yc1106",
+   "species": "Curvularia clavata",
+   "genes": 10292
+  },
+  {
+   "name": "Cyberlindnera fabianii 65",
+   "species": "Cyberlindnera fabianii",
+   "genes": 5509
+  },
+  {
+   "name": "Cyphellophora europaea CBS 101466",
+   "species": "Cyphellophora europaea",
+   "genes": 11153
+  },
+  {
+   "name": "Debaryomyces fabryi CBS 789",
+   "species": "Debaryomyces fabryi",
+   "genes": 6025
+  },
+  {
+   "name": "Debaryomyces hansenii CBS767",
+   "species": "Debaryomyces hansenii",
+   "genes": 6698
+  },
+  {
+   "name": "Diutina rugosa CBS 613",
+   "species": "Diutina rugosa",
+   "genes": 5819
+  },
+  {
+   "name": "Emergomyces africanus CBS 136260",
+   "species": "Emergomyces africanus",
+   "genes": 8860
+  },
+  {
+   "name": "Emergomyces pasteurianus Ep9510",
+   "species": "Emergomyces pasteurianus",
+   "genes": 9078
+  },
+  {
+   "name": "Emmonsia crescens UAMH 3008",
+   "species": "[Emmonsia] crescens",
+   "genes": 9558
+  },
+  {
+   "name": "Erysiphe necator EnFRAME01",
+   "species": "Erysiphe necator",
+   "genes": 7285
+  },
+  {
+   "name": "Exophiala aquamarina CBS 119918",
+   "species": "Exophiala aquamarina",
+   "genes": 13118
+  },
+  {
+   "name": "Exophiala dermatitidis NIH/UT8656",
+   "species": "Exophiala dermatitidis",
+   "genes": 9356
+  },
+  {
+   "name": "Exophiala mesophila strain CBS 40295",
+   "species": "Exophiala mesophila",
+   "genes": 9237
+  },
+  {
+   "name": "Exophiala oligosperma strain CBS 72588",
+   "species": "Exophiala oligosperma",
+   "genes": 11938
+  },
+  {
+   "name": "Exophiala spinifera CBS 89968",
+   "species": "Exophiala spinifera",
+   "genes": 12110
+  },
+  {
+   "name": "Fonsecaea multimorphosa CBS 102226",
+   "species": "Fonsecaea multimorphosa",
+   "genes": 12405
+  },
+  {
+   "name": "Fonsecaea pedrosoi CBS 271.37",
+   "species": "Fonsecaea pedrosoi",
+   "genes": 12573
+  },
+  {
+   "name": "Fulvia fulva Race5_Kim",
+   "species": "Fulvia fulva",
+   "genes": 15104
+  },
+  {
+   "name": "Fusarium circinatum NRRL 25331",
+   "species": "Fusarium circinatum",
+   "genes": 13905
+  },
+  {
+   "name": "Fusarium fujikuroi IMI 58289",
+   "species": "Fusarium fujikuroi",
+   "genes": 15099
+  },
+  {
+   "name": "Fusarium graminearum PH-1",
+   "species": "Fusarium graminearum",
+   "genes": 14484
+  },
+  {
+   "name": "Fusarium mangiferae MRC7560",
+   "species": "Fusarium mangiferae",
+   "genes": 16149
+  },
+  {
+   "name": "Fusarium napiforme NRRL 25196",
+   "species": "Fusarium napiforme",
+   "genes": 13896
+  },
+  {
+   "name": "Fusarium odoratissimum NRRL 54006",
+   "species": "Fusarium odoratissimum",
+   "genes": 16975
+  },
+  {
+   "name": "Fusarium odoratissimum strain race 4",
+   "species": "Fusarium odoratissimum",
+   "genes": 14596
+  },
+  {
+   "name": "Fusarium oxysporum f. sp. conglutinans Fo5176",
+   "species": "Fusarium oxysporum",
+   "genes": 17912
+  },
+  {
+   "name": "Fusarium oxysporum f. sp. cubense race 1",
+   "species": "Fusarium oxysporum",
+   "genes": 15626
+  },
+  {
+   "name": "Fusarium oxysporum f. sp. lycopersici 4287",
+   "species": "Fusarium oxysporum",
+   "genes": 21354
+  },
+  {
+   "name": "Fusarium oxysporum f. sp. melonis 26406",
+   "species": "Fusarium oxysporum",
+   "genes": 20033
+  },
+  {
+   "name": "Fusarium oxysporum Fo47",
+   "species": "Fusarium oxysporum",
+   "genes": 18556
+  },
+  {
+   "name": "Fusarium oxysporum NRRL 32931",
+   "species": "Fusarium oxysporum",
+   "genes": 17642
+  },
+  {
+   "name": "Fusarium oxysporum Strain Fo47 2020",
+   "species": "Fusarium oxysporum",
+   "genes": 16502
+  },
+  {
+   "name": "Fusarium proliferatum ET1",
+   "species": "Fusarium proliferatum",
+   "genes": 16509
+  },
+  {
+   "name": "Fusarium proliferatum strain NRRL62905",
+   "species": "Fusarium proliferatum",
+   "genes": 15602
+  },
+  {
+   "name": "Fusarium solani FSSC 5 MPI-SDFR-AT-0091",
+   "species": "Fusarium solani",
+   "genes": 17940
+  },
+  {
+   "name": "Fusarium vanettenii 77-13-4",
+   "species": "Fusarium vanettenii",
+   "genes": 15708
+  },
+  {
+   "name": "Fusarium verticillioides 7600",
+   "species": "Fusarium verticillioides",
+   "genes": 16240
+  },
+  {
+   "name": "Gaeumannomyces tritici R3-111a-1",
+   "species": "Gaeumannomyces tritici",
+   "genes": 14749
+  },
+  {
+   "name": "Globisporangium irregulare DAOM BR486",
+   "species": "Globisporangium irregulare",
+   "genes": 13869
+  },
+  {
+   "name": "Globisporangium iwayamae DAOM BR242034",
+   "species": "Globisporangium iwayamae",
+   "genes": 14874
+  },
+  {
+   "name": "Globisporangium ultimum DAOM BR144",
+   "species": "Globisporangium ultimum",
+   "genes": 15430
+  },
+  {
+   "name": "Globisporangium ultimum var. sporangiiferum BR650",
+   "species": "Globisporangium ultimum",
+   "genes": 14086
+  },
+  {
+   "name": "Hanseniaspora guilliermondii strain UTAD222",
+   "species": "Hanseniaspora guilliermondii",
+   "genes": 4152
+  },
+  {
+   "name": "Hanseniaspora uvarum strain AWRI3580",
+   "species": "Hanseniaspora uvarum",
+   "genes": 4061
+  },
+  {
+   "name": "Hemileia vastatrix Race XXXIII",
+   "species": "Hemileia vastatrix",
+   "genes": 12854
+  },
+  {
+   "name": "Histoplasma capsulatum G184AR",
+   "species": "Histoplasma capsulatum",
+   "genes": 12723
+  },
+  {
+   "name": "Histoplasma capsulatum G186AR",
+   "species": "Histoplasma capsulatum",
+   "genes": 12743
+  },
+  {
+   "name": "Histoplasma capsulatum G217B",
+   "species": "Histoplasma capsulatum",
+   "genes": 12363
+  },
+  {
+   "name": "Histoplasma capsulatum H143",
+   "species": "Histoplasma capsulatum",
+   "genes": 9796
+  },
+  {
+   "name": "Histoplasma capsulatum var. duboisii H88",
+   "species": "Histoplasma capsulatum",
+   "genes": 12289
+  },
+  {
+   "name": "Histoplasma capsulatum WU24",
+   "species": "Histoplasma capsulatum",
+   "genes": 9195
+  },
+  {
+   "name": "Histoplasma mississippiense (nom. inval.) NAm1",
+   "species": "Histoplasma mississippiense",
+   "genes": 9402
+  },
+  {
+   "name": "Hortaea werneckii EXF-2000",
+   "species": "Hortaea werneckii",
+   "genes": 15649
+  },
+  {
+   "name": "Hyaloperonospora arabidopsidis Emoy2",
+   "species": "Hyaloperonospora arabidopsidis",
+   "genes": 14267
+  },
+  {
+   "name": "Kluyveromyces lactis NRRL Y-1140",
+   "species": "Kluyveromyces lactis",
+   "genes": 5389
+  },
+  {
+   "name": "Kluyveromyces marxianus DMKU3-1042",
+   "species": "Kluyveromyces marxianus",
+   "genes": 5151
+  },
+  {
+   "name": "Kwoniella bestiolae CBS 10118",
+   "species": "Kwoniella bestiolae",
+   "genes": 9270
+  },
+  {
+   "name": "Kwoniella dejecticola CBS 10117",
+   "species": "Kwoniella dejecticola",
+   "genes": 8724
+  },
+  {
+   "name": "Kwoniella heveanensis CBS 569",
+   "species": "Kwoniella heveanensis",
+   "genes": 8002
+  },
+  {
+   "name": "Kwoniella mangroviensis CBS 8507",
+   "species": "Kwoniella mangrovensis",
+   "genes": 8555
+  },
+  {
+   "name": "Lentinus tigrinus ALCF2SS1-7",
+   "species": "Lentinus tigrinus",
+   "genes": 15670
+  },
+  {
+   "name": "Lichtheimia corymbifera JMRC:FSU:9682",
+   "species": "Lichtheimia corymbifera",
+   "genes": 12379
+  },
+  {
+   "name": "Lodderomyces elongisporus NRRL YB-4239",
+   "species": "Lodderomyces elongisporus",
+   "genes": 5908
+  },
+  {
+   "name": "Lomentospora prolificans JHH-5317",
+   "species": "Lomentospora prolificans",
+   "genes": 8768
+  },
+  {
+   "name": "Macrophomina phaseolina MS6",
+   "species": "Macrophomina phaseolina",
+   "genes": 14712
+  },
+  {
+   "name": "Madurella mycetomatis mm55",
+   "species": "Madurella mycetomatis",
+   "genes": 10707
+  },
+  {
+   "name": "Magnaporthiopsis poae ATCC 64411",
+   "species": "Magnaporthiopsis poae",
+   "genes": 12363
+  },
+  {
+   "name": "Malassezia globosa CBS 7966",
+   "species": "Malassezia globosa",
+   "genes": 4286
+  },
+  {
+   "name": "Malassezia pachydermatis CBS 1879",
+   "species": "Malassezia pachydermatis",
+   "genes": 4202
+  },
+  {
+   "name": "Malassezia restricta CBS 7877",
+   "species": "Malassezia restricta",
+   "genes": 4155
+  },
+  {
+   "name": "Malassezia restricta KCTC 27527",
+   "species": "Malassezia restricta",
+   "genes": 4544
+  },
+  {
+   "name": "Malassezia sympodialis ATCC 42132",
+   "species": "Malassezia sympodialis",
+   "genes": 4618
+  },
+  {
+   "name": "Melampsora larici-populina 98AG31",
+   "species": "Melampsora laricis-populina",
+   "genes": 16380
+  },
+  {
+   "name": "Metarhizium acridum CQMa 102",
+   "species": "Metarhizium acridum",
+   "genes": 9974
+  },
+  {
+   "name": "Metarhizium hybridum ARSEF 549",
+   "species": "Metarhizium hybridum",
+   "genes": 10891
+  },
+  {
+   "name": "Meyerozyma guilliermondii ATCC 6260",
+   "species": "Meyerozyma guilliermondii",
+   "genes": 6062
+  },
+  {
+   "name": "Microsporum canis CBS 113480",
+   "species": "Microsporum canis",
+   "genes": 8847
+  },
+  {
+   "name": "Monilinia fructicola CPMC6",
+   "species": "Monilinia fructicola",
+   "genes": 10085
+  },
+  {
+   "name": "Mucor circinelloides 1006PhL",
+   "species": "Mucor circinelloides",
+   "genes": 12410
+  },
+  {
+   "name": "Mucor lusitanicus CBS 277.49",
+   "species": "Mucor lusitanicus",
+   "genes": 11936
+  },
+  {
+   "name": "Mycosarcoma maydis 521",
+   "species": "Mycosarcoma maydis",
+   "genes": 6910
+  },
+  {
+   "name": "Nakaseomyces glabratus BG2",
+   "species": "Nakaseomyces glabratus",
+   "genes": 5481
+  },
+  {
+   "name": "Nakaseomyces glabratus BG3993",
+   "species": "Nakaseomyces glabratus",
+   "genes": 5487
+  },
+  {
+   "name": "Nakaseomyces glabratus CBS 138",
+   "species": "Nakaseomyces glabratus",
+   "genes": 5615
+  },
+  {
+   "name": "Nakaseomyces glabratus CBS138 2020",
+   "species": "Nakaseomyces glabratus",
+   "genes": 5508
+  },
+  {
+   "name": "Nakaseomyces glabratus DSY562",
+   "species": "Nakaseomyces glabratus",
+   "genes": 5543
+  },
+  {
+   "name": "Nannizzia gypsea CBS 118893",
+   "species": "Nannizzia gypsea",
+   "genes": 9029
+  },
+  {
+   "name": "Neurospora crassa OR74A",
+   "species": "Neurospora crassa",
+   "genes": 10591
+  },
+  {
+   "name": "Neurospora discreta FGSC 8579",
+   "species": "Neurospora discreta",
+   "genes": 10349
+  },
+  {
+   "name": "Neurospora tetrasperma FGSC 2508",
+   "species": "Neurospora tetrasperma",
+   "genes": 10380
+  },
+  {
+   "name": "Ophiostoma piceae UAMH 11346",
+   "species": "Ophiostoma piceae",
+   "genes": 8884
+  },
+  {
+   "name": "Paecilomyces variotii CBS 101075",
+   "species": "Paecilomyces variotii",
+   "genes": 9415
+  },
+  {
+   "name": "Paracoccidioides brasiliensis Pb03",
+   "species": "Paracoccidioides brasiliensis",
+   "genes": 8548
+  },
+  {
+   "name": "Paracoccidioides brasiliensis Pb18",
+   "species": "Paracoccidioides brasiliensis",
+   "genes": 8522
+  },
+  {
+   "name": "Paracoccidioides lutzii Pb01",
+   "species": "Paracoccidioides lutzii",
+   "genes": 8953
+  },
+  {
+   "name": "Parastagonospora nodorum SN15",
+   "species": "Parastagonospora nodorum",
+   "genes": 17580
+  },
+  {
+   "name": "Penicilliopsis zonata CBS 506.65",
+   "species": "Penicilliopsis zonata",
+   "genes": 10027
+  },
+  {
+   "name": "Penicillium digitatum Pd1",
+   "species": "Penicillium digitatum",
+   "genes": 8946
+  },
+  {
+   "name": "Penicillium expansum d1",
+   "species": "Penicillium expansum",
+   "genes": 11023
+  },
+  {
+   "name": "Penicillium rubens Wisconsin 54-1255",
+   "species": "Penicillium rubens",
+   "genes": 14021
+  },
+  {
+   "name": "Peronospora effusa R13",
+   "species": "Peronospora effusa",
+   "genes": 8603
+  },
+  {
+   "name": "Phakopsora pachyrhizi MT2006",
+   "species": "Phakopsora pachyrhizi",
+   "genes": 21343
+  },
+  {
+   "name": "Phanerochaete chrysosporium RP-78",
+   "species": "Phanerodontia chrysosporium",
+   "genes": 13602
+  },
+  {
+   "name": "Phialophora attinorum CBS 131958",
+   "species": "Cyphellophora attinorum",
+   "genes": 11848
+  },
+  {
+   "name": "Phycomyces blakesleeanus NRRL 1555(-)",
+   "species": "Phycomyces blakesleeanus",
+   "genes": 16850
+  },
+  {
+   "name": "Phytophthora cactorum 10300",
+   "species": "Phytophthora cactorum",
+   "genes": 23884
+  },
+  {
+   "name": "Phytophthora cactorum P414",
+   "species": "Phytophthora cactorum",
+   "genes": 30528
+  },
+  {
+   "name": "Phytophthora capsici LT1534",
+   "species": "Phytophthora capsici",
+   "genes": 28579
+  },
+  {
+   "name": "Phytophthora cinnamomi GKB4",
+   "species": "Phytophthora cinnamomi",
+   "genes": 19981
+  },
+  {
+   "name": "Phytophthora infestans T30-4",
+   "species": "Phytophthora infestans",
+   "genes": 19344
+  },
+  {
+   "name": "Phytophthora nicotianae INRA-310",
+   "species": "Phytophthora nicotianae",
+   "genes": 23240
+  },
+  {
+   "name": "Phytophthora palmivora var. palmivora strain sbr112.9",
+   "species": "Phytophthora palmivora",
+   "genes": 28185
+  },
+  {
+   "name": "Phytophthora ramorum 14567",
+   "species": "Phytophthora ramorum",
+   "genes": 15350
+  },
+  {
+   "name": "Phytophthora ramorum strain Pr102",
+   "species": "Phytophthora ramorum",
+   "genes": 15268
+  },
+  {
+   "name": "Phytophthora sojae strain P6497",
+   "species": "Phytophthora sojae",
+   "genes": 28142
+  },
+  {
+   "name": "Phytopythium vexans DAOM BR484",
+   "species": "Phytopythium vexans",
+   "genes": 11991
+  },
+  {
+   "name": "Pichia kudriavzevii strain CBS573",
+   "species": "Pichia kudriavzevii",
+   "genes": 5367
+  },
+  {
+   "name": "Plenodomus lingam CAN1",
+   "species": "Plenodomus lingam",
+   "genes": 12082
+  },
+  {
+   "name": "Plenodomus lingam JN3",
+   "species": "Plenodomus lingam",
+   "genes": 12609
+  },
+  {
+   "name": "Pleurotus ostreatus PC15",
+   "species": "Pleurotus ostreatus",
+   "genes": 12460
+  },
+  {
+   "name": "Pleurotus ostreatus PC9",
+   "species": "Pleurotus ostreatus",
+   "genes": 11897
+  },
+  {
+   "name": "Pneumocystis canis CanA",
+   "species": "Pneumocystis canis",
+   "genes": 3113
+  },
+  {
+   "name": "Pneumocystis carinii B80",
+   "species": "Pneumocystis carinii",
+   "genes": 3695
+  },
+  {
+   "name": "Pneumocystis jirovecii RU7",
+   "species": "Pneumocystis jirovecii",
+   "genes": 3811
+  },
+  {
+   "name": "Pneumocystis jirovecii SE8",
+   "species": "Pneumocystis jirovecii",
+   "genes": 3752
+  },
+  {
+   "name": "Pneumocystis murina B123",
+   "species": "Pneumocystis murina",
+   "genes": 3675
+  },
+  {
+   "name": "Pneumocystis oryctolagi CS1",
+   "species": "Pneumocystis oryctolagi",
+   "genes": 2856
+  },
+  {
+   "name": "Pneumocystis sp. macacae isolate P2C",
+   "species": "Pneumocystis sp. 'macacae'",
+   "genes": 3427
+  },
+  {
+   "name": "Pneumocystis wakefieldiae 2A",
+   "species": "Pneumocystis wakefieldiae",
+   "genes": 3223
+  },
+  {
+   "name": "Podosphaera aphanis DRCT72020",
+   "species": "Podosphaera aphanis",
+   "genes": 17270
+  },
+  {
+   "name": "Podospora anserina S mat+",
+   "species": "Podospora anserina",
+   "genes": 10888
+  },
+  {
+   "name": "Podospora comata strain T mat+",
+   "species": "Podospora comata",
+   "genes": 13100
+  },
+  {
+   "name": "Pseudocercospora fijiensis CIRAD86",
+   "species": "Pseudocercospora fijiensis",
+   "genes": 13131
+  },
+  {
+   "name": "Pseudogymnoascus destructans 20631-21",
+   "species": "Pseudogymnoascus destructans",
+   "genes": 9225
+  },
+  {
+   "name": "Puccinia graminis f. sp. tritici CRL 75-36-700-3",
+   "species": "Puccinia graminis",
+   "genes": 16309
+  },
+  {
+   "name": "Puccinia sorghi strain RO10H11247",
+   "species": "Puccinia sorghi",
+   "genes": 21769
+  },
+  {
+   "name": "Puccinia striiformis 93TX-2",
+   "species": "Puccinia striiformis",
+   "genes": 14629
+  },
+  {
+   "name": "Puccinia striiformis f. sp. tritici PST-130",
+   "species": "Puccinia striiformis",
+   "genes": 18421
+  },
+  {
+   "name": "Puccinia striiformis strain 93-210",
+   "species": "Puccinia striiformis",
+   "genes": 15090
+  },
+  {
+   "name": "Puccinia triticina 1-1 BBBD Race 1",
+   "species": "Puccinia triticina",
+   "genes": 15692
+  },
+  {
+   "name": "Pyricularia oryzae 70-15",
+   "species": "Pyricularia oryzae",
+   "genes": 13184
+  },
+  {
+   "name": "Pyricularia oryzae BR32",
+   "species": "Pyricularia oryzae",
+   "genes": 14781
+  },
+  {
+   "name": "Pyricularia pennisetigena Br36",
+   "species": "Pyricularia pennisetigena",
+   "genes": 11428
+  },
+  {
+   "name": "Pyronema omphalodes CBS 100304",
+   "species": "Pyronema omphalodes",
+   "genes": 11633
+  },
+  {
+   "name": "Pythium aphanidermatum DAOM BR444",
+   "species": "Pythium aphanidermatum",
+   "genes": 12363
+  },
+  {
+   "name": "Pythium arrhenomanes ATCC 12531",
+   "species": "Pythium arrhenomanes",
+   "genes": 13857
+  },
+  {
+   "name": "Pythium insidiosum Pi-s",
+   "species": "Pythium insidiosum",
+   "genes": 14850
+  },
+  {
+   "name": "Raffaelea lauricola RL4",
+   "species": "Harringtonia lauricola",
+   "genes": 10461
+  },
+  {
+   "name": "Rhinocladiella mackenziei CBS 650.93",
+   "species": "Rhinocladiella mackenziei",
+   "genes": 11418
+  },
+  {
+   "name": "Rhizophagus irregularis A1 (DAOM-664342)",
+   "species": "Rhizophagus irregularis",
+   "genes": 26582
+  },
+  {
+   "name": "Rhizophagus irregularis C2",
+   "species": "Rhizophagus irregularis",
+   "genes": 25634
+  },
+  {
+   "name": "Rhizophagus irregularis DAOM 181602=DAOM 197198",
+   "species": "Rhizophagus irregularis",
+   "genes": 26634
+  },
+  {
+   "name": "Rhizopus delemar RA 99-880",
+   "species": "Rhizopus delemar",
+   "genes": 17703
+  },
+  {
+   "name": "Rhizopus microsporus var. microsporus ATCC 52814",
+   "species": "Rhizopus microsporus",
+   "genes": 11554
+  },
+  {
+   "name": "Rhodotorula toruloides NBRC 0880",
+   "species": "Rhodotorula toruloides",
+   "genes": 8609
+  },
+  {
+   "name": "Rickenella mellea Ricmel1",
+   "species": "Rickenella mellea",
+   "genes": 17193
+  },
+  {
+   "name": "Saccharomyces cerevisiae S288C",
+   "species": "Saccharomyces cerevisiae",
+   "genes": 6350
+  },
+  {
+   "name": "Saccharomyces paradoxus CBS432",
+   "species": "Saccharomyces paradoxus",
+   "genes": 5803
+  },
+  {
+   "name": "Saccharomycodes ludwigii UTAD17",
+   "species": "Saccharomycodes ludwigii",
+   "genes": 4017
+  },
+  {
+   "name": "Saprolegnia diclina VS20",
+   "species": "Saprolegnia diclina",
+   "genes": 17448
+  },
+  {
+   "name": "Saprolegnia parasitica CBS 223.65",
+   "species": "Saprolegnia parasitica",
+   "genes": 20435
+  },
+  {
+   "name": "Scedosporium apiospermum IHEM 14462",
+   "species": "Scedosporium apiospermum",
+   "genes": 10920
+  },
+  {
+   "name": "Schizophyllum commune H4-8",
+   "species": "Schizophyllum commune",
+   "genes": 16467
+  },
+  {
+   "name": "Schizosaccharomyces japonicus yFS275",
+   "species": "Schizosaccharomyces japonicus",
+   "genes": 5232
+  },
+  {
+   "name": "Schizosaccharomyces octosporus yFS286",
+   "species": "Schizosaccharomyces octosporus",
+   "genes": 5355
+  },
+  {
+   "name": "Schizosaccharomyces pombe 972h-",
+   "species": "Schizosaccharomyces pombe",
+   "genes": 6995
+  },
+  {
+   "name": "Sclerotinia sclerotiorum 1980 UF-70",
+   "species": "Sclerotinia sclerotiorum",
+   "genes": 11368
+  },
+  {
+   "name": "Sordaria macrospora k-hell",
+   "species": "Sordaria macrospora",
+   "genes": 10407
+  },
+  {
+   "name": "Spizellomyces punctatus DAOM BR117",
+   "species": "Spizellomyces punctatus",
+   "genes": 9169
+  },
+  {
+   "name": "Sporisorium reilianum SRZ2",
+   "species": "Sporisorium reilianum",
+   "genes": 6791
+  },
+  {
+   "name": "Sporothrix brasiliensis 5110",
+   "species": "Sporothrix brasiliensis",
+   "genes": 9231
+  },
+  {
+   "name": "Sporothrix schenckii 1099-18",
+   "species": "Sporothrix schenckii",
+   "genes": 10434
+  },
+  {
+   "name": "Stachybotrys chartarum IBT 40293",
+   "species": "Stachybotrys chartarum",
+   "genes": 11453
+  },
+  {
+   "name": "Synchytrium endobioticum MB42",
+   "species": "Synchytrium endobioticum",
+   "genes": 8031
+  },
+  {
+   "name": "Talaromyces marneffei ATCC 18224",
+   "species": "Talaromyces marneffei",
+   "genes": 10194
+  },
+  {
+   "name": "Talaromyces stipitatus ATCC 10500",
+   "species": "Talaromyces stipitatus",
+   "genes": 12629
+  },
+  {
+   "name": "Taphrina deformans PYCC 5710",
+   "species": "Taphrina deformans",
+   "genes": 4680
+  },
+  {
+   "name": "Thermothelomyces thermophilus ATCC 42464",
+   "species": "Thermothelomyces thermophilus",
+   "genes": 9292
+  },
+  {
+   "name": "Tremella mesenterica DSM 1558",
+   "species": "Tremella mesenterica",
+   "genes": 8309
+  },
+  {
+   "name": "Trichoderma reesei QM6a",
+   "species": "Trichoderma reesei",
+   "genes": 9138
+  },
+  {
+   "name": "Trichoderma reesei QM6a 2017",
+   "species": "Trichoderma reesei",
+   "genes": 10238
+  },
+  {
+   "name": "Trichoderma virens Gv29-8",
+   "species": "Trichoderma virens",
+   "genes": 12405
+  },
+  {
+   "name": "Trichomonascus ciferrii CBS 4856",
+   "species": "Trichomonascus ciferrii",
+   "genes": 6909
+  },
+  {
+   "name": "Trichophyton equinum CBS 127.97",
+   "species": "Trichophyton equinum",
+   "genes": 8785
+  },
+  {
+   "name": "Trichophyton mentagrophytes TIMM 2789",
+   "species": "Trichophyton mentagrophytes",
+   "genes": 7958
+  },
+  {
+   "name": "Trichophyton rubrum CBS 118892",
+   "species": "Trichophyton rubrum",
+   "genes": 8713
+  },
+  {
+   "name": "Trichophyton tonsurans CBS 112818",
+   "species": "Trichophyton tonsurans",
+   "genes": 8625
+  },
+  {
+   "name": "Trichosporon asahii var. asahii CBS 2479",
+   "species": "Trichosporon asahii",
+   "genes": 8834
+  },
+  {
+   "name": "Uncinocarpus reesii 1704",
+   "species": "Uncinocarpus reesii",
+   "genes": 7856
+  },
+  {
+   "name": "Verruconis gallopava strain CBS 43764",
+   "species": "Verruconis gallopava",
+   "genes": 9871
+  },
+  {
+   "name": "Verticillium dahliae JR2",
+   "species": "Verticillium dahliae",
+   "genes": 11637
+  },
+  {
+   "name": "Xylaria arbuscula CBS 124340",
+   "species": "Xylaria arbuscula",
+   "genes": 13122
+  },
+  {
+   "name": "Yarrowia lipolytica CLIB122",
+   "species": "Yarrowia lipolytica",
+   "genes": 7223
+  },
+  {
+   "name": "Yarrowia lipolytica CLIB89 (W29)",
+   "species": "Yarrowia lipolytica",
+   "genes": 8746
+  },
+  {
+   "name": "Zymoseptoria tritici IPO323",
+   "species": "Zymoseptoria tritici",
+   "genes": 13581
+  },
+  {
+   "name": "Zymoseptoria tritici ST99CH_3D1",
+   "species": "Zymoseptoria tritici",
+   "genes": 11991
+  }
+ ]
+}

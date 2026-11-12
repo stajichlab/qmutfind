@@ -110,6 +110,13 @@ result of the one before, or a VCF file you choose. `pixi run test-browser` runs
 synthetic data set and compares every output with the native CLI. Chrome and Safari are not tested. Large real data sets
 have been run only in Firefox (EVOL20_3, 2.9 million reads) in step 1.
 
+### Genome menu
+
+`site/genomes/genomes.json` lists 50 RefSeq fungal genomes with gene models (made by `bench/make_genome_list.py` from the
+NCBI table; the page downloads them from NCBI). `site/genomes/fungidb.json` lists the FungiDB organisms; FungiDB blocks
+downloads from web pages, so for those the page shows the `qmutfind fetch` command. `?genomes=PATH` uses another list,
+but only a path on the site.
+
 ### Example data
 
 `site/example/manifest.json` lists the examples the page can load: the Af293 genome and gene models from NCBI RefSeq

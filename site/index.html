@@ -52,6 +52,23 @@
   file from another tool.</p>
 </section>
 
+<section class="panel" id="genome-section" hidden>
+  <h2>Choose a reference genome</h2>
+  <p id="genome-text"></p>
+  <div class="form">
+    <label for="genome-filter">Filter the list (for example <code>Candida</code> or <code>pombe</code>)</label>
+    <input id="genome-filter" type="search" autocomplete="off">
+    <select id="genome-menu" size="8" aria-label="Reference genomes"></select>
+    <p><button id="genome-load" type="button">Load the genome and genes</button></p>
+  </div>
+  <div id="genome-status" role="status" class="readout"></div>
+  <div id="genome-fungidb" hidden>
+    <p>FungiDB does not let a web page download its files, and it needs your API key. Run this on your computer, then choose
+    the two files it writes (the FASTA and the GFF3) in "Your files".</p>
+    <pre><code id="genome-command"></code></pre>
+  </div>
+</section>
+
 <section class="panel" id="example-section" hidden>
   <h2>Try an example</h2>
   <p id="example-text"></p>

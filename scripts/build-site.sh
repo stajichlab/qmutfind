@@ -10,6 +10,7 @@ cp site/index.html site/style.css site/theme.js dist-site/
 cp site/app.js site/worker.js dist-site/
 cp -r site/vendor dist-site/vendor
 cp -r site/example dist-site/example
+cp -r site/genomes dist-site/genomes
 mkdir -p dist-site/pkg-web
 cp pkg-web/qmutfind_wasm.js pkg-web/qmutfind_wasm_bg.wasm dist-site/pkg-web/
 grep -q "./pkg-web/qmutfind_wasm.js" dist-site/worker.js || { echo "worker.js does not import ./pkg-web/qmutfind_wasm.js" >&2; exit 1; }
