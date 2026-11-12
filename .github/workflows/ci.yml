@@ -6,10 +6,12 @@ on:
   pull_request:
 
 # Action versions are pinned to exact tags (checked on 2026-11-11).
+# The runner image is pinned to Ubuntu 26.04, the version `ubuntu-latest` moves to by 2026-11-19
+# (https://github.com/actions/runner-images/issues/14748). A pin keeps a later move from changing the runs.
 jobs:
   test:
     name: Rust and Python tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.11.3
@@ -21,7 +23,7 @@ jobs:
 
   wasm:
     name: WebAssembly toolchain and build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: prefix-dev/setup-pixi@v0.11.3
@@ -34,3 +36,15 @@ jobs:
       - run: pixi run build-wasm
       # Builds the Node package and the CLI, then checks that the WASM VCF equals the CLI VCF.
       - run: pixi run test-wasm
+
+  browser:
+    name: Example page in Firefox
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: prefix-dev/setup-pixi@v0.11.3
+        with:
+          locked: true
+          cache: true
+      # Builds the web package and the CLI, then runs the page in headless Firefox (Selenium).
+      - run: pixi run test-browser
