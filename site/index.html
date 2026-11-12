@@ -41,8 +41,8 @@
 <section class="hero panel">
   <p class="lede">qmutfind maps sequencing reads to a reference genome, finds SNPs and small insertions and deletions,
   says what each change does to the genes, and draws the result.</p>
-  <p>It runs in this page. The page does not send your files to any server. Use it for one haploid sample, for
-  example an evolved <i>Aspergillus fumigatus</i> strain that you compare with its reference.</p>
+  <p>It runs in this page. The page does not send your files to any server. Use it for one haploid sample, such as a fungal
+  isolate or an evolved strain, compared with a reference genome.</p>
   <ol class="steps">
     <li><b>Call.</b> Map the reads and call the variants. This gives a VCF.</li>
     <li><b>Summarize.</b> Count the variants and plot where they are along the genome.</li>
@@ -116,27 +116,30 @@
 </section>
 
 <section class="panel">
-  <h2>What has been measured</h2>
+  <h2>How it works</h2>
   <ul>
-    <li>The browser build gives the same VCF as the command-line tool. This was checked byte for byte on a real sample
-    (EVOL20_3, 2,854,974 reads). In headless Firefox it took 64 seconds and about 1.5 GB of memory.</li>
-    <li>On simulated reads, short reads at 20x or more found about 99% of SNPs and 97.5% of small indels, with
-    precision of 98.5% or higher. Nanopore reads at 24x found 99.6% of SNPs and 94.8% of small indels.</li>
-    <li>The numbers come from five held-out simulated data sets that were not used to set the thresholds.</li>
+    <li><b>Mapping.</b> Reads are mapped to the reference in WebAssembly, with the Rust aligner <code>rammap</code>
+    (short-read and Nanopore presets).</li>
+    <li><b>Calling.</b> A built-in haploid caller counts bases at each position and reports SNPs and indels that pass
+    depth, allele-fraction and mapping-quality rules. Long reads can also give large indels (50 bp or more).</li>
+    <li><b>Effects.</b> Each variant is judged on the transcript with the longest coding sequence of its gene. Introns and
+    UTRs are worked out from the exons and the coding sequence.</li>
+    <li><b>Output.</b> A VCF, a statistics table (JSON), a genome-wide SVG plot and a locus page for each variant you draw.</li>
   </ul>
 </section>
 
 <section class="panel limits" id="limits">
   <h2>Limits</h2>
   <ul>
-    <li>The accuracy numbers above are from <b>simulated</b> reads. Real reads contain repeats and errors that the
-    simulators do not model. There is no real-data truth set yet.</li>
-    <li>Below about 10x coverage, the default depth rule misses many variants (about half at 5x).</li>
+    <li>Accuracy was measured on <b>simulated</b> reads, which are cleaner than real reads. Repeats and systematic errors
+    in real data can give false calls. Check important variants by eye or with a second method. Results are on the
+    <a href="https://github.com/stajichlab/qmutfind">project page</a>.</li>
+    <li>At low coverage (below about 10x) the default depth rule misses many variants.</li>
     <li>Short reads cannot show large insertions. Large indels are called from long reads only.</li>
     <li>In the browser, a read pair is mapped as two separate reads. The command-line tool can map pairs.</li>
     <li>Only Firefox was tested. Chrome and Safari were not. Large data sets need several GB of memory.</li>
     <li>The tool is for one haploid sample. It is not a diploid or population caller.</li>
-    <li>The gene effects use one transcript per gene (the one with the longest coding sequence).</li>
+    <li>Gene effects use one transcript per gene (the one with the longest coding sequence).</li>
   </ul>
 </section>
 
