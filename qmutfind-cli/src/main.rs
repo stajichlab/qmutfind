@@ -58,7 +58,11 @@ fn call(args: &[String]) -> Result<(), String> {
     let contigs: Vec<(String, usize)> = reference.iter().map(|(n, s)| (n.clone(), s.len())).collect();
 
     let aligner = RammapAligner::new(reference.clone(), kind);
-    let config = CallerConfig { min_depth: DEFAULT_MIN_DEPTH, min_alt_fraction: DEFAULT_MIN_ALT_FRACTION };
+    let config = CallerConfig {
+        min_depth: DEFAULT_MIN_DEPTH,
+        min_alt_fraction: DEFAULT_MIN_ALT_FRACTION,
+        large_indel_min: DEFAULT_LARGE_INDEL_MIN,
+    };
     let mut caller = Caller::new(reference, config);
     for record in FastqReader::new(open_input(reads_path)?) {
         let (name, seq) = record.map_err(|e| format!("{reads_path}: {e}"))?;

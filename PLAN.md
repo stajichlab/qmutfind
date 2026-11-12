@@ -132,6 +132,16 @@ Facts found about other options:
   GPL-3.0 code is not checked). Status: candidate second backend behind the `Aligner`
   trait. Not used in version 1. samtools is not needed in the core, because the caller reads the
   alignment stream and needs no sorted BAM.
+- genomics-wasm (https://github.com/comparativechrono/genomics-wasm, user-supplied link, read
+  2026-11-11 via the GitHub API and raw files): about 30 upstream tools compiled to WASM, created
+  2026-10-10, last push 2026-10-24, 0 stars. Its own `LICENSE` is MIT (GitHub shows NOASSERTION).
+  Relevant tools: minimap2 2.31, BWA 0.7.19, BWA-MEM2 2.2.1 (single-threaded), FreeBayes 1.3.6 and
+  LoFreq 2.1.5 (variant calling), BCFtools and SAMtools 1.16 and 1.21 with plugins, mosdepth.
+  `THIRD_PARTY.md` lists BWA as GPL-3.0 and FreeBayes dependencies with GPL-2.0-or-later code; the
+  effect on our GPL-3.0 project was not analyzed. Stated limits: whole-genome performance is "not
+  established"; FreeBayes heap up to 2 GiB with no promise that whole-genome runs fit; minimap2 works
+  only for inputs that fit in browser memory. Not built or run by us; no speed or accuracy numbers.
+  Possible use: an independent in-browser cross-check (minimap2 then BCFtools). Not used in version 1.
 - biowasm (https://github.com/biowasm/biowasm, MIT, 280 stars, not archived; created 2019, last push
   2026-11-10, checked via the GitHub API on 2026-11-11). It is actively maintained. Its `tools` folder
   lists, among others: bcftools, samtools, htslib, minimap2, bwa, bowtie2, wgsim, fastp, seqtk, ssw,
@@ -372,6 +382,49 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      errors split the evidence across keys. A synthetic test reproduces that failure. The fix groups
      insertions by anchor and length and reports the per-position majority base. The rerun (v2) is
      the check on the real simulated reads.
+   - NANOPORE v2 (2026-11-11, after the insertion-consensus fix; same reads, same thresholds):
+     SNP 2,999 of 3,000 (99.97%), 10 false calls. Small indel 571 of 600 (95.17%), 42 false calls.
+     Large indel 56 of 100 (56.00%), 1 false call. Overall 3,626 of 3,700, 53 false calls.
+     Small insertions improved: 7 to 10 bp from 59.3% to 86.4% (102 of 118), 4 to 6 bp from 92.9% to
+     96.9%. Large insertions are still missed: 1 of 45 found (the shortest). Large deletions 55 of 55.
+     ART v2 is identical to v1 in every cell (no regression). Run times 3:35 (ONT, 1.97 GB peak) and
+     3:13 (ART, 476 MB peak), measured while other jobs shared the CPUs.
+   - NANOPORE v3 (2026-11-11; large insertions reported as symbolic `<INS>` with SVLEN, reads grouped
+     by anchor within 20 bp and length within 10% (at least 5 bp); decision B of 2026-11-11; large
+     indels compared with a tolerance of 50 bp in position and 0.8 in size ratio, both ASSUMED):
+     SNP 2,999 of 3,000 (10 false), small indel 571 of 600 (42 false), large indel 100 of 100
+     (1 false). Overall 3,670 of 3,700, 53 false calls. 45 symbolic records. At the two sites checked
+     by hand: `NC_007194.1:28986` SVLEN 242 (truth 244), AO 26 of DP 29; `NC_007194.1:560432` SVLEN
+     415 (truth 417), AO 23 of DP 25. Run time and memory of v3 were not recorded separately.
+     CAUTION: the fix was designed after studying this same truth set (one seed), so 100 of 100 is a
+     result on the data it was tuned on. It needs a second truth set with a new seed and new reads.
+     The `bcftools` large-indel numbers below used the same tolerant rule.
+   - BCFTOOLS BASELINE (2026-11-11; `minimap2` 2.31, `samtools` 1.25, `bcftools` 1.25; `bcftools call
+     --ploidy 1 -mv`; both outputs normalized with `bcftools norm -f -m -any`; same truth set and the same
+     tested comparison tool). Presets were not tuned. ART used `minimap2 -x sr` with the mates mapped as
+     PAIRS and `mpileup -X illumina`. Nanopore used `minimap2 -x map-ont` and `mpileup -X ont-sup`
+     (the plain `-X ont` profile contains `-I`, which skips indels; `ont-sup` is designed for very
+     accurate reads, and the accuracy of the Badread reads was not checked). "Filtered" keeps
+     `FMT/DP>=5 && FMT/AD[0:1]/FMT/DP>=0.5`, the same thresholds as `qmutfind`.
+     ART, SNP: qmutfind 2,985 found / 7 false; bcftools raw 2,987 / 21; bcftools filtered 2,986 / 0.
+     ART, small indel: qmutfind 582 / 12; bcftools raw 561 / 31; filtered 561 / 31.
+     ART, large indel: qmutfind 4 / 0; bcftools raw 16 / 0; filtered 11 / 0.
+     Nanopore, SNP: qmutfind (v2) 2,999 / 10; bcftools raw 2,999 / 28; filtered 2,999 / 0.
+     Nanopore, small indel: qmutfind (v2) 571 / 42; bcftools raw 565 / 81; filtered 565 / 79.
+     Nanopore, large indel: qmutfind (v2) 56 / 1; bcftools raw 67 / 0; filtered 66 / 0.
+     Reading: SNP sensitivity is tied on both read types; bcftools with the filter makes no false SNP
+     calls and qmutfind makes 7 (ART) and 10 (Nanopore). qmutfind found more small indels with fewer false
+     calls on both read types. bcftools found more large indels than qmutfind v2 on Nanopore reads.
+     Limits: simulated reads, one seed, `qmutfind` single-end vs `bcftools` paired on ART, untuned
+     thresholds on both sides, run times not comparable (jobs shared 4 CPUs). `qmutfind` ignores base
+     quality and mapping quality; this is a known gap that simulated reads may hide.
+   - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
+     at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
+     with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
+     (truth 417 bp) 24 of 29 reads show one, lengths 407 to 420 and one at 492; no length is shared
+     by more than 5 reads. The caller groups reads by exact insertion length, so the support splits
+     and stays under 0.5. Two sites only. Supports the length-spread explanation. Does not prove it
+     for all 44 missed insertions.
    - Bugs found by running on real data, each fixed test-first: (1) the Af293 reference has IUPAC codes
      (for example `M`, `R`); the caller wrote them into the VCF `REF` field and `bcftools norm`
      rejected the file. The caller now skips any variant whose reference footprint is not A, C, G or T.

@@ -61,7 +61,7 @@ fn call_writes_a_vcf_with_the_snp_carried_by_all_reads() {
     let recs = records(&vcf);
     assert_eq!(recs.len(), 1, "{vcf}");
     assert_eq!(recs[0][..5], ["chrA", "30001", ".", &(seq[30_000] as char).to_string(), &(alt as char).to_string()]);
-    assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AC=10;AF=1.0000"), "{}", recs[0][7]);
+    assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AO=10;AF=1.0000"), "{}", recs[0][7]);
 }
 
 fn run_call(dir: &Path, reads: &str) -> std::process::Output {

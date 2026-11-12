@@ -1,7 +1,7 @@
 import gzip
 import math
 
-from compare_calls import compare_variants, load_vcf, main
+from compare_calls import compare_variants, load_svlens, load_vcf, main
 
 # A variant is keyed by (contig, pos, ref, alt). The value is its class.
 TRUTH = {
@@ -113,3 +113,81 @@ def test_main_prints_a_tab_separated_table_with_one_row_per_class_and_a_total(tm
     assert by_class["SNP"] == ["SNP", "2", "1", "1", "2", "1", "0.5000", "0.5000"]
     assert by_class["SMALL_INDEL"] == ["SMALL_INDEL", "0", "0", "0", "0", "0", "NA", "NA"]
     assert by_class["ALL"] == ["ALL", "2", "1", "1", "2", "1", "0.5000", "0.5000"]
+
+
+def _del(pos, size):
+    return ("c", pos, "C" + "A" * size, "C")
+
+
+def _ins(pos, size):
+    return ("c", pos, "C", "C" + "T" * size)
+
+
+def _large(truth_keys, call_keys, **kw):
+    truth = {k: "LARGE_INDEL" for k in truth_keys}
+    calls = {k: "LARGE_INDEL" for k in call_keys}
+    return compare_variants(truth, calls, **kw)["LARGE_INDEL"]
+
+
+def test_a_large_call_that_is_a_few_bases_off_in_position_and_size_matches_the_truth():
+    stats = _large([_del(5000, 100)], [_del(5012, 95)])
+
+    assert (stats["tp"], stats["fn"], stats["fp"]) == (1, 0, 0)
+
+
+def test_a_large_call_too_far_away_or_the_wrong_size_or_the_wrong_type_does_not_match():
+    truth = [_del(5000, 100)]
+
+    assert _large(truth, [_del(5080, 100)])["tp"] == 0   # 80 bp away, limit is 50
+    assert _large(truth, [_del(5000, 60)])["tp"] == 0    # 60/100 is below 0.8
+    assert _large(truth, [_ins(5000, 100)])["tp"] == 0   # insertion, not deletion
+
+
+def test_two_large_calls_near_one_truth_variant_give_one_true_positive_and_one_false_positive():
+    stats = _large([_del(5000, 100)], [_del(5003, 100), _del(5010, 98)])
+
+    assert (stats["tp"], stats["fn"], stats["fp"]) == (1, 0, 1)
+
+
+def test_small_indels_and_snps_still_need_an_exact_match():
+    truth = {("c", 100, "AT", "A"): "SMALL_INDEL", ("c", 200, "A", "G"): "SNP"}
+    calls = {("c", 101, "AT", "A"): "SMALL_INDEL", ("c", 201, "A", "G"): "SNP"}
+
+    stats = compare_variants(truth, calls)
+
+    assert stats["SMALL_INDEL"]["tp"] == 0
+    assert stats["SNP"]["tp"] == 0
+
+
+def test_a_symbolic_insertion_call_matches_an_explicit_truth_insertion_by_its_svlen():
+    truth = {_ins(5000, 100): "LARGE_INDEL"}
+    sym = ("c", 5003, "C", "<INS>")
+    calls = {sym: "LARGE_INDEL"}
+
+    stats = compare_variants(truth, calls, call_svlen={sym: 97})["LARGE_INDEL"]
+
+    assert (stats["tp"], stats["fn"], stats["fp"]) == (1, 0, 0)
+
+
+def test_load_svlens_reads_svlen_from_info_for_symbolic_records_only(tmp_path):
+    path = tmp_path / "x.vcf"
+    path.write_text(
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "c\t10\t.\tA\t<INS>\t.\tPASS\tCLASS=LARGE_INDEL;SVTYPE=INS;SVLEN=120;IMPRECISE\n"
+        "c\t20\t.\tA\tG\t.\tPASS\tCLASS=SNP\n"
+    )
+
+    assert load_svlens(path) == {("c", 10, "A", "<INS>"): 120}
+
+
+def test_main_matches_a_symbolic_large_insertion_call_against_an_explicit_truth_insertion(tmp_path, capsys):
+    header = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+    truth = tmp_path / "truth.vcf"
+    truth.write_text(header + f"c\t5000\t.\tC\tC{'T' * 100}\t.\t.\tCLASS=LARGE_INDEL\n")
+    calls = tmp_path / "calls.vcf"
+    calls.write_text(header + "c\t5004\t.\tC\t<INS>\t.\tPASS\tCLASS=LARGE_INDEL;SVTYPE=INS;SVLEN=96;IMPRECISE\n")
+
+    main(["--truth", str(truth), "--calls", str(calls)])
+
+    rows = {l.split("\t")[0]: l.split("\t") for l in capsys.readouterr().out.splitlines()}
+    assert rows["LARGE_INDEL"] == ["LARGE_INDEL", "1", "1", "0", "1", "0", "1.0000", "1.0000"]

@@ -18,7 +18,7 @@ fn reads_with_alt_at_50000(refs: &[(String, Vec<u8>)], alt: u8, count: usize) ->
 }
 
 fn config() -> CallerConfig {
-    CallerConfig { min_depth: 5, min_alt_fraction: 0.5 }
+    CallerConfig { min_depth: 5, min_alt_fraction: 0.5, large_indel_min: 50 }
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn noisy_long_reads_with_insertion(refs: &[(String, Vec<u8>)]) -> (Vec<Vec<u8>>,
 }
 
 #[test]
-fn a_shared_insertion_is_called_with_the_consensus_sequence_despite_per_read_errors() {
+fn a_shared_large_insertion_is_called_as_a_symbolic_insertion_with_its_length() {
     let refs = reference();
     let (reads, inserted) = noisy_long_reads_with_insertion(&refs);
     let aligner = RammapAligner::new(refs.clone(), ReadKind::Long);
@@ -215,6 +215,96 @@ fn a_shared_insertion_is_called_with_the_consensus_sequence_despite_per_read_err
     assert_eq!(c.pos, 71_501);
     let anchor = (refs[0].1[71_500] as char).to_string();
     assert_eq!(c.reference, anchor);
-    assert_eq!(c.alt, format!("{anchor}{}", String::from_utf8(inserted).unwrap()));
+    assert_eq!(c.alt, "<INS>");
+    assert_eq!(c.svlen, Some(inserted.len()));
     assert_eq!(c.alt_count, 10);
+}
+
+/// Ten 3 kb reads with an 8 bp insertion after 0-based position 71_500, one substitution error
+/// per read inside the inserted bases, at different places.
+fn noisy_long_reads_with_small_insertion(refs: &[(String, Vec<u8>)]) -> (Vec<Vec<u8>>, Vec<u8>) {
+    let mut rng = common::Lcg(11);
+    let mut inserted: Vec<u8> = (0..8).map(|_| rng.base()).collect();
+    if inserted[7] == refs[0].1[71_500] {
+        inserted[7] = other_base(inserted[7]);
+    }
+    let reads = (0..10)
+        .map(|i| {
+            let start = 70_000 + i * 20;
+            let mut read = refs[0].1[start..start + 2_900].to_vec();
+            let mut ins = inserted.clone();
+            let bad = (i * 3 + 1) % 7; // never the last base
+            ins[bad] = other_base(ins[bad]);
+            let at = 71_501 - start;
+            for (k, &b) in ins.iter().enumerate() {
+                read.insert(at + k, b);
+            }
+            read
+        })
+        .collect();
+    (reads, inserted)
+}
+
+#[test]
+fn a_shared_small_insertion_is_called_with_the_consensus_sequence_despite_per_read_errors() {
+    let refs = reference();
+    let (reads, inserted) = noisy_long_reads_with_small_insertion(&refs);
+    let aligner = RammapAligner::new(refs.clone(), ReadKind::Long);
+    let mut caller = Caller::new(refs.clone(), config());
+
+    for (i, read) in reads.iter().enumerate() {
+        for a in aligner.align(&format!("s{i}"), read) {
+            caller.add(&a, read);
+        }
+    }
+    let calls = caller.calls();
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let anchor = (refs[0].1[71_500] as char).to_string();
+    assert_eq!(calls[0].alt, format!("{anchor}{}", String::from_utf8(inserted).unwrap()));
+    assert_eq!(calls[0].svlen, None);
+}
+
+/// Ten 3 kb reads that share one large insertion, but each read shows a slightly different
+/// inserted length (94 to 106 bp), as real long reads do.
+fn long_reads_with_jittered_insertion_lengths(refs: &[(String, Vec<u8>)]) -> Vec<Vec<u8>> {
+    let mut rng = common::Lcg(5);
+    let shared: Vec<u8> = (0..106).map(|_| rng.base()).collect();
+    let lengths = [94usize, 96, 98, 100, 102, 104, 106, 95, 105, 100];
+    lengths
+        .iter()
+        .enumerate()
+        .map(|(i, &len)| {
+            let start = 70_000 + i * 20;
+            let mut read = refs[0].1[start..start + 2_900].to_vec();
+            let at = 71_501 - start;
+            for (k, &b) in shared[..len].iter().enumerate() {
+                read.insert(at + k, b);
+            }
+            read
+        })
+        .collect()
+}
+
+#[test]
+fn reads_with_slightly_different_insertion_lengths_support_one_symbolic_call_with_the_median_length() {
+    let refs = reference();
+    let reads = long_reads_with_jittered_insertion_lengths(&refs);
+    let aligner = RammapAligner::new(refs.clone(), ReadKind::Long);
+    let mut caller = Caller::new(refs.clone(), config());
+
+    for (i, read) in reads.iter().enumerate() {
+        for a in aligner.align(&format!("j{i}"), read) {
+            caller.add(&a, read);
+        }
+    }
+    let calls = caller.calls();
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let c = &calls[0];
+    assert_eq!(c.alt, "<INS>");
+    assert_eq!(c.svlen, Some(100));
+    assert_eq!(c.alt_count, 10);
+    // An aligner can place the same insertion a base or two apart, so allow a small window.
+    assert!((71_497..=71_501).contains(&c.pos), "pos {}", c.pos);
 }

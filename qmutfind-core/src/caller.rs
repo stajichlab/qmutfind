@@ -10,6 +10,8 @@ use crate::{Alignment, CigarOp};
 pub struct CallerConfig {
     pub min_depth: u32,
     pub min_alt_fraction: f64,
+    /// Insertions of this length or more are reported as symbolic `<INS>` calls.
+    pub large_indel_min: usize,
 }
 
 /// One called variant. `pos` is 1-based.
@@ -21,6 +23,8 @@ pub struct Call {
     pub alt: String,
     pub depth: u32,
     pub alt_count: u32,
+    /// Set for a symbolic call (`alt` is `<INS>`): the inserted length.
+    pub svlen: Option<usize>,
 }
 
 /// Reads that support one insertion, with base counts per inserted position.
@@ -125,6 +129,7 @@ impl Caller {
                         alt: (b"ACGT"[best] as char).to_string(),
                         depth,
                         alt_count,
+                        svlen: None,
                     }));
                 }
             }
@@ -145,10 +150,16 @@ impl Caller {
                     alt: (seq[anchor] as char).to_string(),
                     depth,
                     alt_count,
+                    svlen: None,
                 }));
             }
         }
-        for (&(ci, anchor, _len), ev) in &self.insertions {
+        let mut large: Vec<Vec<(usize, usize, u32)>> = vec![Vec::new(); self.reference.len()];
+        for (&(ci, anchor, len), ev) in &self.insertions {
+            if len >= self.config.large_indel_min {
+                large[ci].push((anchor, len, ev.count));
+                continue;
+            }
             let alt_count = ev.count;
             let seq = &self.reference[ci].1;
             if base_index(seq[anchor]).is_none() {
@@ -170,12 +181,87 @@ impl Caller {
                     alt: String::from_utf8_lossy(&alt).into_owned(),
                     depth,
                     alt_count,
+                    svlen: None,
                 }));
+            }
+        }
+        for (ci, events) in large.into_iter().enumerate() {
+            let seq = &self.reference[ci].1;
+            for (anchor, svlen, support) in cluster_large_insertions(events) {
+                if base_index(seq[anchor]).is_none() {
+                    continue; // anchor base is ambiguous
+                }
+                let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
+                if depth >= self.config.min_depth
+                    && support as f64 / depth as f64 >= self.config.min_alt_fraction
+                {
+                    out.push((ci, Call {
+                        contig: self.reference[ci].0.clone(),
+                        pos: anchor as u64 + 1,
+                        reference: (seq[anchor] as char).to_string(),
+                        alt: "<INS>".to_string(),
+                        depth,
+                        alt_count: support,
+                        svlen: Some(svlen),
+                    }));
+                }
             }
         }
         out.sort_by_key(|(ci, c)| (*ci, c.pos));
         out.into_iter().map(|(_, c)| c).collect()
     }
+}
+
+/// Position tolerance, in bases, for events that belong to one large insertion.
+const ANCHOR_TOLERANCE: usize = 20;
+
+/// Length tolerance for events that belong to one large insertion: 10% of the length, at least 5.
+fn length_tolerance(len: usize) -> usize {
+    (len / 10).max(5)
+}
+
+/// Group large insertion events (anchor, length, reads) by position and length.
+/// Returns one (anchor, median length, supporting reads) per group. The anchor is the
+/// most supported one in the group.
+fn cluster_large_insertions(mut events: Vec<(usize, usize, u32)>) -> Vec<(usize, usize, u32)> {
+    events.sort();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        let mut j = i + 1;
+        while j < events.len() && events[j].0 - events[j - 1].0 <= ANCHOR_TOLERANCE {
+            j += 1;
+        }
+        let mut near: Vec<(usize, usize, u32)> = events[i..j].to_vec();
+        near.sort_by_key(|e| e.1);
+        let mut k = 0;
+        while k < near.len() {
+            let mut m = k + 1;
+            while m < near.len() && near[m].1 - near[m - 1].1 <= length_tolerance(near[m - 1].1) {
+                m += 1;
+            }
+            let group = &near[k..m];
+            let support: u32 = group.iter().map(|e| e.2).sum();
+            let anchor = group
+                .iter()
+                .max_by_key(|e| (e.2, std::cmp::Reverse(e.0)))
+                .map(|e| e.0)
+                .unwrap();
+            let mut seen = 0;
+            let mut median = group[0].1;
+            for e in group {
+                seen += e.2;
+                if seen * 2 >= support {
+                    median = e.1;
+                    break;
+                }
+            }
+            out.push((anchor, median, support));
+            k = m;
+        }
+        i = j;
+    }
+    out
 }
 
 /// Size class of a variant.
