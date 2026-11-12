@@ -1,6 +1,7 @@
 //! qmutfind core: pure Rust logic shared by the CLI and the WASM build.
 //! This crate does no file I/O and starts no threads.
 
+mod annotate;
 mod caller;
 mod engine;
 mod freebayes;
@@ -9,6 +10,7 @@ mod parse;
 mod sam;
 mod vcf;
 pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
+pub use annotate::{classify_effect, Annotation, Effect, Genome, Transcript};
 pub use engine::Engine;
 pub use freebayes::calls_from_freebayes_vcf;
 pub use normalize::left_align_calls;
