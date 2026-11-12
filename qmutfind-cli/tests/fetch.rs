@@ -55,8 +55,12 @@ fn mock(bare: bool) -> Mock {
 }
 
 fn run(dir: &Path, base: &str, key: Option<&str>, organism: &str) -> std::process::Output {
+    run_with(dir, base, key, organism, &[])
+}
+
+fn run_with(dir: &Path, base: &str, key: Option<&str>, organism: &str, extra: &[&str]) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_qmutfind"));
-    cmd.args(["fetch", "--organism", organism, "--out-dir", "out", "--base-url", base]).current_dir(dir).env_remove("EUPATHDB_KEY");
+    cmd.args(["fetch", "--organism", organism, "--out-dir", "out", "--base-url", base]).args(extra).current_dir(dir).env_remove("EUPATHDB_KEY");
     if let Some(k) = key { cmd.env("EUPATHDB_KEY", k); }
     cmd.output().unwrap()
 }
@@ -136,4 +140,73 @@ fn an_organism_name_broken_across_lines_by_a_paste_still_matches() {
     let out = run(dir.path(), &m.base, Some(KEY), "  Aspergillus   fumigatus\n  Af293 ");
 
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn key_file(dir: &Path, text: &str, mode: u32) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("keys.txt");
+    fs::write(&path, text).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+    path.display().to_string()
+}
+
+#[test]
+fn a_key_file_with_one_key_is_used_and_the_file_beats_the_environment_variable() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let f = key_file(dir.path(), &format!("# my key\n\n{KEY}\n"), 0o600);
+
+    let out = run_with(dir.path(), &m.base, Some("wrong-key-from-env"), "Aspergillus fumigatus Af293", &["--key-file", &f]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(gunzip(&dir.path().join("out/FungiDB-71_Af_Genome.fasta.gz")), FASTA);
+}
+
+#[test]
+fn a_key_file_can_hold_one_key_per_site_and_the_line_for_the_base_url_host_is_used() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let host = m.base.trim_start_matches("http://");
+    let f = key_file(dir.path(), &format!("default-key-not-valid\nfungidb.org some-other-key\n{host} {KEY}\n"), 0o600);
+
+    let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--key-file", &f]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn a_key_file_with_only_other_sites_gives_a_clear_error_without_printing_keys() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let f = key_file(dir.path(), "fungidb.org other-site-secret\n", 0o600);
+
+    let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--key-file", &f]);
+
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no key for") && err.contains("127.0.0.1"), "{err}");
+    assert!(!err.contains("other-site-secret"));
+}
+
+#[test]
+fn a_missing_key_file_is_an_error_naming_the_path() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+
+    let out = run_with(dir.path(), &m.base, Some(KEY), "Aspergillus fumigatus Af293", &["--key-file", "nope.txt"]);
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("nope.txt"));
+}
+
+#[test]
+fn a_key_file_that_others_can_read_gives_a_warning_but_still_works() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let f = key_file(dir.path(), &format!("{KEY}\n"), 0o644);
+
+    let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--key-file", &f]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("readable by other users"));
 }

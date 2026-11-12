@@ -1,7 +1,7 @@
 //! `qmutfind fetch`: download the genome FASTA and GFF of one organism from FungiDB.
 //!
 //! The organism list (with the file URLs) is public. The FASTA download needs an API key, which is read from the
-//! environment variable `EUPATHDB_KEY`. The key goes only to the host of `--base-url`, and it is never printed.
+//! environment variable `EUPATHDB_KEY`, or from `--key-file` (which wins when both are given). The key goes only to the host of `--base-url`, and it is never printed.
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -152,12 +152,37 @@ fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, base: &str, out_d
     Ok(final_path.display().to_string())
 }
 
+/// Read the key for `host` from a key file. Each line is `KEY` (used for any site) or `HOST KEY` (used for that
+/// site only). A line for the host wins over a line without a host. Blank lines and lines that start with `#` are
+/// ignored. Keys are never printed.
+fn key_from_file(path: &str, host: &str) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::metadata(path).map_err(|e| format!("cannot read key file {path}: {e}"))?;
+    if meta.permissions().mode() & 0o077 != 0 {
+        eprintln!("qmutfind: warning: key file {path} is readable by other users. Run: chmod 600 {path}");
+    }
+    let text = fs::read_to_string(path).map_err(|e| format!("cannot read key file {path}: {e}"))?;
+    let mut default = None;
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let mut words = line.split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(key), None, _) => default = default.or(Some(key)),
+            (Some(h), Some(key), None) if h.eq_ignore_ascii_case(host) => return Ok(key.to_string()),
+            _ => {}
+        }
+    }
+    default.map(str::to_string).ok_or_else(|| format!("no key for {host} in key file {path}"))
+}
+
 pub fn fetch(args: &[String]) -> Result<(), String> {
     let flags = crate::parse_flags(args)?;
     let wanted = crate::required(&flags, "organism")?;
     let out_dir = Path::new(crate::required(&flags, "out-dir")?);
     let base = flags.get("base-url").map(|s| s.trim_end_matches('/')).unwrap_or(DEFAULT_BASE);
-    let key = std::env::var(KEY_VARIABLE).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    let key = match flags.get("key-file") {
+        Some(path) => Some(key_from_file(path, &host_of(base).ok_or_else(|| format!("--base-url must start with http:// or https://, not {base}"))?)?),
+        None => std::env::var(KEY_VARIABLE).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()),
+    };
 
     let agent = ureq::AgentBuilder::new().redirects(0).timeout_connect(std::time::Duration::from_secs(30)).build();
     let organisms = list_organisms(&agent, base)?;
