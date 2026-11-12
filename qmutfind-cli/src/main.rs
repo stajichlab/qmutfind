@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    annotate_vcf, calls_from_freebayes_vcf, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, compute_stats, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -160,6 +160,20 @@ fn call(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{out_path}: {e}"))
 }
 
+/// `qmutfind stats`: summary statistics of a VCF, written as JSON and TSV.
+fn stats(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let vcf_path = required(&flags, "vcf")?;
+    let prefix = required(&flags, "out-prefix")?;
+    let window: u64 = match flags.get("window") {
+        Some(v) => v.parse().map_err(|_| format!("--window must be a whole number, not {v}"))?,
+        None => 100,
+    };
+    let stats = compute_stats(open_input(vcf_path)?, window).map_err(|e| format!("{vcf_path}: {e}"))?;
+    std::fs::write(format!("{prefix}.stats.json"), stats.to_json()).map_err(|e| format!("{prefix}.stats.json: {e}"))?;
+    std::fs::write(format!("{prefix}.stats.tsv"), stats.to_tsv()).map_err(|e| format!("{prefix}.stats.tsv: {e}"))
+}
+
 /// `qmutfind annotate`: add the effect of each variant on the canonical transcript to a VCF.
 fn annotate(args: &[String]) -> Result<(), String> {
     let flags = parse_flags(args)?;
@@ -185,8 +199,9 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("call") => call(&args[1..]),
         Some("annotate") => annotate(&args[1..]),
+        Some("stats") => stats(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

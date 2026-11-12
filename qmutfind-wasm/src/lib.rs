@@ -59,3 +59,11 @@ impl Session {
 pub fn annotate(vcf: &str, reference_fasta: &[u8], gff: Option<Vec<u8>>) -> Result<String, JsError> {
     qmutfind_core::annotate_text(vcf, reference_fasta, gff.as_deref()).map_err(|e| JsError::new(&e))
 }
+
+/// Summary statistics of VCF text as JSON. `window` is the distance in bases for the clustering count.
+#[wasm_bindgen]
+pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {
+    qmutfind_core::compute_stats(vcf.as_bytes(), window as u64)
+        .map(|s| s.to_json())
+        .map_err(|e| JsError::new(&e))
+}

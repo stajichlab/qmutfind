@@ -8,6 +8,7 @@ mod freebayes;
 mod normalize;
 mod parse;
 mod sam;
+mod stats;
 mod vcf;
 pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
@@ -16,6 +17,7 @@ pub use freebayes::calls_from_freebayes_vcf;
 pub use normalize::left_align_calls;
 pub use parse::{read_fasta, FastqChunker, FastqReader};
 pub use sam::{parse_sam_line, SamRecord};
+pub use stats::{compute_stats, ContigStats, Stats};
 pub use vcf::write_vcf;
 
 use rammap::{Preset, Strand};
