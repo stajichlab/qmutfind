@@ -126,3 +126,13 @@ fn an_unknown_organism_lists_close_matches() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("Aspergillus fumigatus Af293") && err.contains("Aspergillus fumigatus A1163"), "{err}");
 }
+
+#[test]
+fn an_organism_name_broken_across_lines_by_a_paste_still_matches() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+
+    let out = run(dir.path(), &m.base, Some(KEY), "  Aspergillus   fumigatus\n  Af293 ");
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}

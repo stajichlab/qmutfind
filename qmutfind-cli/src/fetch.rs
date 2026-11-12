@@ -57,7 +57,7 @@ fn list_organisms(agent: &ureq::Agent, base: &str) -> Result<Vec<Organism>, Stri
 
 /// Pick the organism whose name equals the request (ignoring case). Otherwise list the names that contain it.
 fn choose<'a>(organisms: &'a [Organism], wanted: &str) -> Result<&'a Organism, String> {
-    let w = wanted.to_lowercase();
+    let w = wanted.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     if let Some(o) = organisms.iter().find(|o| o.name.to_lowercase() == w) {
         return Ok(o);
     }
