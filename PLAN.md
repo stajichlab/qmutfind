@@ -529,6 +529,10 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      EVOL20_3 (3.8 KB each; the `hrmA` page shows 3 transcripts and 4 CDS blocks in its window and the one
      variant with the tooltip `NC_007198.1:3852237 A>G missense D304G AFUA_5G14900`). Written to
      `qmutfind_data/reports/`, outside the repository. Not inspected in a browser.
+   - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
+     GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
+     plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and
+     the `hrmA` `report` page are byte-identical to the CLI output too. A one-off script, not part of the tests.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
