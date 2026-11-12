@@ -27,12 +27,19 @@ async function* chunksOf(file) {
   }
 }
 
+// A file that is loaded whole into memory (reference, genes, VCF, coverage) may unpack to at most this many bytes. A
+// small gzip file can unpack to many gigabytes, which would stop the tab. The page sends the limit with each message.
+let maxBytes = 1e9;
+
 async function readAll(file) {
   const parts = [];
   let size = 0;
   for await (const chunk of chunksOf(file)) {
     parts.push(chunk);
     size += chunk.length;
+    if (size > maxBytes) {
+      throw new Error(`${file.name} is too large: it unpacks to more than ${Math.round(maxBytes / 1e6)} MB, which the page does not load into memory.`);
+    }
   }
   const out = new Uint8Array(size);
   let offset = 0;
@@ -115,6 +122,7 @@ const handlers = { run, summarize, annotate: annotateStep, report: reportStep };
 
 self.onmessage = async (event) => {
   const { step } = event.data;
+  if (event.data.limit) maxBytes = event.data.limit;
   try {
     await init();
     await handlers[step](event.data);

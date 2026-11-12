@@ -157,6 +157,13 @@ html[data-theme="quest"] { --plot-snp: #0000AA; --plot-indel: #6B3F00; --plot-la
 #genome-plot svg rect[width="7"]:not([class]) { fill: var(--plot-indel); stroke: var(--panel-fg); }
 #genome-plot svg polygon:not([class]) { fill: var(--plot-large); stroke: var(--panel-fg); }
 
+.source { font-size: .9rem; color: var(--muted); margin: 2px 0 6px; overflow-wrap: anywhere; }
+.source.from-web { color: var(--panel-fg); }
+.source.from-web::before { content: "\2197  "; }
+textarea { font: inherit; background: var(--field-bg); color: var(--panel-fg); border: 1px solid var(--field-line); border-radius: var(--radius); padding: 5px 8px; width: 100%; }
+details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
+#web-section button:not(.primary), #genome-section button:not(.primary) { font: inherit; padding: 3px 12px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
+
 /* Steps, tables and the variant list (all themes) */
 .step h2 .num { display: inline-block; min-width: 1.6em; text-align: center; margin-right: 6px; padding: 0 4px; background: var(--accent); color: var(--accent-fg); border-radius: var(--radius); }
 .hint { color: var(--muted); margin-top: 0; }

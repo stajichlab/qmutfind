@@ -913,6 +913,25 @@ thousands of calls was not tried in the browser; Chrome and Safari were not trie
   theme changes. Category colours are kept, but several are darker or lighter than the printed CLI report's.
   The standalone SVG and HTML files that the CLI writes keep the original palette.
 
+## 12e. Web import and source lines (2026-11-12)
+
+- Each input shows where its data comes from (local file, example, genome menu, ENA run, https address). Before this the
+  inputs said "No file selected" while data from an example was in use.
+- SRA run import: ENA's lookup service (`/ena/portal/api/filereport`, GET, `Access-Control-Allow-Origin: *`; HEAD returns 403)
+  gives file addresses, sizes, MD5 sums, read count, layout, platform and organism; the page checks platform (Illumina or
+  Nanopore only), the presence of FASTQ, the total size (limit 2 GB), the downloaded size and, after mapping, the read count
+  (a paired run gives 2 x read pairs reads, because each mate is mapped separately). Live check in Firefox: SRR6277229 (paired,
+  136.6 MB) and SRR28035789 (Nanopore, 920.7 MB, with a large-download warning) look up correctly; SRR0000000 is "not found";
+  SRX1234567 is refused as a non-run accession.
+- Risks considered. (1) Memory: a download is held whole in memory before mapping, so a large run can stop the tab; limited by
+  the 2 GB cap and a warning above 500 MB; true streaming into the worker was not built. (2) Compression bombs: files loaded
+  whole are capped at 1 GB unpacked; FASTQ is streamed and not capped. (3) Server access: only servers that send CORS headers
+  work; the page says so. (4) Integrity: size and read count are checked; MD5 is not. (5) Privacy: the accession goes to ENA;
+  no data goes to this site; private or access-controlled data is not supported. (6) Unsafe addresses: http, other schemes and
+  addresses with credentials are refused. (7) Wrong data: platform and layout come from ENA's record, but a run of another
+  organism than the reference is not detected. (8) Load on ENA: every user downloads from ENA directly; this site proxies
+  nothing. NOT tested: Cancel during a real download; a download that stalls; Chrome and Safari.
+
 ## 13. Planned work (2026-11-12, agreed with the user)
 
 1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.

@@ -698,6 +698,17 @@ def test_a_genome_from_the_menu_names_its_accession_and_the_ncbi_host_in_the_sou
     assert source_text(driver, "gff").startswith("From the genome menu")
 
 
+_clock = [time.time()]
+
+
+def _write_fresh(path, text):
+    """Write a file and give it a new modification time. The test server answers 304 for a file that was rewritten within
+    the same second, and the browser would then keep the old copy."""
+    path.write_text(text)
+    _clock[0] += 10
+    os.utime(path, (_clock[0], _clock[0]))
+
+
 @pytest.fixture
 def ena_site(inputs):
     ENA_DIR.mkdir(parents=True, exist_ok=True)
@@ -705,11 +716,11 @@ def ena_site(inputs):
     size = (ENA_DIR / "reads.fq.gz").stat().st_size
 
     def write(**changes):
-        record = {"run_accession": "SRR9999991", "fastq_ftp": f"{HOST_PLACEHOLDER}/_test_ena/reads.fq.gz", "fastq_bytes": str(size),
+        record = {"run_accession": "SRR9999991", "fastq_ftp": f"{HOST_PLACEHOLDER}/dist-site/_test_ena/reads.fq.gz", "fastq_bytes": str(size),
                   "read_count": "10", "library_layout": "SINGLE", "instrument_platform": "ILLUMINA", "instrument_model": "Illumina Test",
                   "scientific_name": "Testus fungus", "sample_title": "a test sample"}
         record.update(changes)
-        (ENA_DIR / "filereport").write_text(json.dumps([record]))
+        _write_fresh(ENA_DIR / "filereport", json.dumps([record]))
 
     write()
     yield write
@@ -727,7 +738,7 @@ def open_web(driver, server, ena_dir="_test_ena"):
 def fix_host(server):
     """The mock's file address must point at the test server."""
     path = ENA_DIR / "filereport"
-    path.write_text(path.read_text().replace(HOST_PLACEHOLDER, server))
+    _write_fresh(path, path.read_text().replace(HOST_PLACEHOLDER, server))
 
 
 def sra_lookup(driver, accession):
@@ -799,7 +810,7 @@ def test_an_unknown_run_a_run_without_fastq_an_unsupported_platform_and_a_huge_r
         assert fragment in info, (changes, info)
         assert not driver.find_element(By.ID, "sra-load").is_displayed(), changes
 
-    (ENA_DIR / "filereport").write_text("[]")
+    _write_fresh(ENA_DIR / "filereport", "[]")
     open_web(driver, server)
     assert "not found" in sra_lookup(driver, "SRR9999992")
 
@@ -954,3 +965,25 @@ def test_plot_text_and_marks_are_readable_against_their_background_in_every_them
             if ratio < needed:
                 problems.append(f"{theme}: {name} {ratio:.2f} < {needed} ({what})")
     assert not problems, "\n".join(problems)
+
+
+def test_a_download_larger_than_the_limit_is_refused_from_its_announced_size_before_it_is_read(driver, server, inputs, example_site):
+    driver.get(f"{server}/{SITE}?download_limit_mb=0.001")  # a limit of about 1 KB
+    driver.find_element(By.ID, "url-reference").send_keys(f"{server}/dist-site/_test_example/ref.fa.gz")
+
+    driver.find_element(By.ID, "url-load").click()
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Error", "Loaded")))
+
+    text = driver.find_element(By.ID, "web-status").text
+    # "the limit is" is the message of the check on the announced size, which runs before any byte is read.
+    assert text.startswith("Error") and "too large" in text and "the limit is" in text, text
+    assert source_text(driver, "reference").startswith("Not set")
+
+
+def test_the_web_section_lists_its_limits_and_risks(driver, server):
+    open_site(driver, server)
+
+    text = driver.find_element(By.CSS_SELECTOR, "#web-section details").get_attribute("textContent")
+
+    for needle in ["https", "2 GB", "MD5", "access-controlled", "Nothing is sent to this site"]:
+        assert needle in text, needle

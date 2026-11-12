@@ -52,6 +52,38 @@
   file from another tool.</p>
 </section>
 
+<section class="panel" id="web-section">
+  <h2>Load data from the web</h2>
+  <p class="hint">Public data only. Your browser downloads straight from the data server, so the server must allow that (NCBI and
+  ENA do; many others do not). The page cannot use files that need a password or a key.</p>
+  <div class="form">
+    <label for="sra-accession">Reads from an SRA run (the page looks the run up in ENA). Give a run accession: SRR, ERR or DRR and digits.</label>
+    <input id="sra-accession" type="text" placeholder="SRR6277229" autocomplete="off">
+    <p><button id="sra-lookup" type="button">Look up</button></p>
+    <div id="sra-info" class="readout" role="status"></div>
+    <p><button id="sra-load" type="button" class="primary" hidden>Download the reads</button></p>
+    <label for="url-reference">Or load files from https addresses. Reference genome (FASTA)</label>
+    <input id="url-reference" type="url" placeholder="https://...">
+    <label for="url-gff">Genes (GFF3)</label>
+    <input id="url-gff" type="url" placeholder="https://...">
+    <label for="url-reads">Reads (FASTQ), one address per line</label>
+    <textarea id="url-reads" rows="2" placeholder="https://..."></textarea>
+    <p><button id="url-load" type="button">Download from these addresses</button> <button id="web-cancel" type="button" hidden>Cancel</button></p>
+  </div>
+  <div id="web-status" role="status" class="readout"></div>
+  <details>
+    <summary>Limits and risks of loading from the web</summary>
+    <ul>
+      <li>Only https addresses are accepted, and addresses with a user name or password are refused.</li>
+      <li>A download is limited to 2 GB. The whole file is held in memory (and a large one takes minutes), so a big run can slow or stop your browser tab.</li>
+      <li>A file that unpacks to more than 1 GB is refused for the reference, genes, VCF and coverage files.</li>
+      <li>The page checks the file size, and for an SRA run the read count, against ENA's record. It does not check ENA's MD5 sums.</li>
+      <li>The accession you look up is sent to ENA, and the files come from the data server. Nothing is sent to this site.</li>
+      <li>Do not load private, patient or access-controlled data. The page works on one haploid sample and is not a clinical tool.</li>
+    </ul>
+  </details>
+</section>
+
 <section class="panel" id="genome-section" hidden>
   <h2>Choose a reference genome</h2>
   <p id="genome-text"></p>
@@ -79,11 +111,13 @@
 <section class="panel" id="files-section">
   <h2>Your files</h2>
   <div class="form">
-    <p class="hint">A file you choose here replaces the same file of the example.</p>
+    <p class="hint">Under each input the page says where its data comes from: a file on your computer, an example, the genome menu or the web import. A file you choose here replaces the same data from any of the others.</p>
     <label for="reference">Reference genome (FASTA, <code>.gz</code> allowed). All three steps use it.</label>
     <input id="reference" type="file">
+    <div class="source" id="source-reference" role="status"></div>
     <label for="gff">Genes (GFF3, optional). Step 3 needs it.</label>
     <input id="gff" type="file">
+    <div class="source" id="source-gff" role="status"></div>
     <label for="vcf-file">A VCF file (optional). Choose one to skip step 1. It replaces the result of step 1.</label>
     <input id="vcf-file" type="file">
     <label for="depth-file">A coverage file (optional): a <code>mosdepth</code> regions BED (<code>.bed.gz</code> is fine). Step 1 makes one for you.</label>
@@ -99,6 +133,7 @@
   <div class="form">
     <label for="reads">Reads (FASTQ, <code>.gz</code> allowed; select several files if you have them)</label>
     <input id="reads" type="file" multiple>
+    <div class="source" id="source-reads" role="status"></div>
     <label for="kind">Read type</label>
     <select id="kind"><option value="short">Short reads (Illumina)</option><option value="long">Long reads (Nanopore)</option></select>
     <p><button id="run" type="button" class="primary">Run</button></p>

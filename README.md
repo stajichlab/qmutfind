@@ -110,6 +110,17 @@ result of the one before, or a VCF file you choose. `pixi run test-browser` runs
 synthetic data set and compares every output with the native CLI. Chrome and Safari are not tested. Large real data sets
 have been run only in Firefox (EVOL20_3, 2.9 million reads) in step 1.
 
+### Loading data from the web, and where it came from
+
+Under each input the page says where the data comes from: `Local file: name (size)`, or `From the example`, `From the
+genome menu`, `From ENA run SRR...` or `From the address ...` for downloads. A file chosen in an input replaces a download.
+"Load data from the web" takes a run accession (SRR, ERR or DRR; the page looks it up in ENA's lookup service, shows the
+organism, platform, layout, read count and size, and downloads the FASTQ files) or https addresses of a reference, a GFF3 and
+reads. Both work only when the data server allows browser downloads (NCBI and ENA do; FungiDB does not). Limits: https only,
+no user name or password in an address, 2 GB per download, a file loaded whole into memory (reference, genes, VCF, coverage)
+may unpack to at most 1 GB, a Cancel button, and a check of the file size and (for a run) the read count. ENA's MD5 sums
+are not checked. `?limit_mb=N` and `?download_limit_mb=N` lower the two limits.
+
 ### Genome menu
 
 `site/genomes/genomes.json` lists 50 RefSeq fungal genomes with gene models (made by `bench/make_genome_list.py` from the

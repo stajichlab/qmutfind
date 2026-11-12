@@ -6,6 +6,11 @@ const worker = new Worker('worker.js', { type: 'module' });
 const state = { vcf: null, annotated: null, depth: null };
 let busy = false;
 const MAX_ROWS = 500;
+// How far a file may unpack when it is loaded whole into memory. `?limit_mb=N` can lower it (the tests use that).
+const LIMIT_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get('limit_mb')) || 1024, 1024) * 1e6;
+// A download is limited to 2 GB. `?download_limit_mb=N` can lower the limit (the tests use that).
+const MAX_DOWNLOAD = Math.min(parseFloat(new URLSearchParams(location.search).get('download_limit_mb')) || 2000, 2000) * 1e6;
+const WARN_DOWNLOAD = 5e8;
 
 const show = (id, text) => { $(id).textContent = text; };
 const buttons = ['run', 'summarize', 'annotate', 'draw'];
@@ -27,7 +32,30 @@ function offer(id, name, text, type) {
 const sampleName = () => $('sample').value || 'sample';
 
 // Files from an example. A file chosen in an input always wins over the example's file.
-const example = { reference: null, gff: null, reads: [], expectedReads: null };
+const example = { reference: null, gff: null, reads: [], expectedReads: null, source: { reference: '', gff: '', reads: '' } };
+
+/** Say, under each input, where its data comes from: a local file, or a download (an example, the menu or the web import). */
+function describeSources() {
+  const size = (f) => `${(f.size / 1e6).toFixed(f.size < 1e5 ? 3 : 1)} MB`;
+  const line = (slot, inputId, loaded) => {
+    const chosen = [...$(inputId).files];
+    const el = $(`source-${slot}`);
+    el.classList.remove('from-web');
+    if (chosen.length) {
+      el.textContent = `Local file: ${chosen.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
+    } else if (loaded.length) {
+      el.textContent = `From ${example.source[slot]}: ${loaded.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
+      el.classList.add('from-web');
+    } else {
+      el.textContent = 'Not set. Choose a file, or use an example, the genome menu or the web import.';
+    }
+  };
+  line('reference', 'reference', example.reference ? [example.reference] : []);
+  line('gff', 'gff', example.gff ? [example.gff] : []);
+  line('reads', 'reads', example.reads);
+}
+for (const id of ['reference', 'gff', 'reads']) $(id).addEventListener('change', describeSources);
+const hostOf = (item, base) => new URL(item.url, base).host;
 const refFile = () => $('reference').files[0] || example.reference;
 const gffFile = () => $('gff').files[0] || example.gff;
 const readFiles = () => ($('reads').files.length ? [...$('reads').files] : example.reads);
@@ -58,7 +86,7 @@ function send(step, payload, panelStatus) {
   if (busy) return false;
   setBusy(true);
   show(panelStatus, 'Starting');
-  worker.postMessage({ step, ...payload });
+  worker.postMessage({ step, limit: LIMIT_BYTES, ...payload });
   return true;
 }
 
@@ -281,10 +309,13 @@ describeSource();
 const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
 let loading = false;
 
-async function download(item, base, label, statusId = 'example-status') {
-  const url = new URL(item.url, base);
-  const response = await fetch(url);
+async function download(item, base, label, statusId = 'example-status', signal = undefined) {
+  const url = checkUrl(new URL(item.url, base).href, label);
+  const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
+  const announced = Number(response.headers.get('Content-Length')) || 0;
+  const expected = item.bytes || announced;
+  if (expected > MAX_DOWNLOAD) throw new Error(`${label}: the download is too large (${mb(expected)}; the limit is ${mb(MAX_DOWNLOAD)}).`);
   const reader = response.body.getReader();
   const parts = [];
   let got = 0;
@@ -293,10 +324,23 @@ async function download(item, base, label, statusId = 'example-status') {
     if (done) break;
     parts.push(value);
     got += value.length;
-    show(statusId, `Downloading ${label}: ${mb(got)} of ${mb(item.bytes)}`);
+    if (got > MAX_DOWNLOAD) { await reader.cancel(); throw new Error(`${label}: the download is too large (more than ${mb(MAX_DOWNLOAD)}).`); }
+    show(statusId, `Downloading ${label}: ${mb(got)}${expected ? ` of ${mb(expected)}` : ''}`);
   }
   if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
-  return new File(parts, item.name);
+  // The page reads a file as gzip by its name. A download whose name has no .gz but whose content is gzip gets the name.
+  let name = item.name;
+  if (parts.length && parts[0].length > 1 && parts[0][0] === 0x1f && parts[0][1] === 0x8b && !name.endsWith('.gz')) name += '.gz';
+  return new File(parts, name);
+}
+
+/** An address the page may download from: https (or this site), and no user name or password. */
+function checkUrl(text, label) {
+  let url;
+  try { url = new URL(text); } catch (error) { throw new Error(`${label}: "${text}" is not an address.`); }
+  if (url.protocol !== 'https:' && url.origin !== location.origin) throw new Error(`${label}: only https addresses are accepted, not ${url.protocol}//`);
+  if (url.username || url.password) throw new Error(`${label}: addresses with a user name or password are not accepted.`);
+  return url;
 }
 
 async function loadExample(manifest, base, chosen) {
@@ -311,12 +355,16 @@ async function loadExample(manifest, base, chosen) {
       example.reads.push(await download(item, base, `reads file ${i + 1} of ${chosen.reads.length}`));
     }
     example.expectedReads = chosen.expected_reads || null;
+    const origin = (item) => `the example (${item.source ? item.source + ' at ' : ''}${hostOf(item, base)})`;
+    example.source = { reference: origin(manifest.reference), gff: origin(manifest.gff), reads: origin(chosen.reads[0]) };
+    describeSources();
     if (manifest.sample) $('sample').value = manifest.sample;
     if (manifest.kind) $('kind').value = manifest.kind;
     show('example-status', `Loaded: ${chosen.label}. Press Run in step 1.`);
   } catch (error) {
     example.reference = example.gff = null;
     example.reads = [];
+    describeSources();
     show('example-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
   } finally {
     loading = false;
@@ -406,6 +454,8 @@ async function loadGenome() {
     example.reads = [];
     example.expectedReads = null;
     show('example-status', '');
+    example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})`, reads: '' };
+    describeSources();
     let note = ` Choose your reads in step 1.`;
     if (entry.genome_size > LARGE_GENOME) {
       note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
@@ -492,3 +542,142 @@ function themeReport() {
 
 $('report').addEventListener('load', themeReport);
 document.addEventListener('qmutfind-theme', themeReport);
+
+
+// ---- Load data from the web: an SRA run (looked up in ENA) or https addresses -----------------------------------------
+// ENA's lookup service and ENA's file server allow browser downloads (they send Access-Control-Allow-Origin: *).
+// ?enaapi=PATH/ uses another lookup service, but only a path on this site (the tests use that).
+const ENA_FIELDS = 'run_accession,fastq_ftp,fastq_bytes,read_count,library_layout,instrument_platform,instrument_model,scientific_name,sample_title';
+const KIND_OF_PLATFORM = { ILLUMINA: 'short', OXFORD_NANOPORE: 'long' };
+let pendingRun = null;
+let webAbort = null;
+
+function enaBase() {
+  const asked = new URLSearchParams(location.search).get('enaapi');
+  if (asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/')) return new URL(asked, location.href);
+  return new URL('https://www.ebi.ac.uk/ena/portal/api/');
+}
+
+async function sraLookup() {
+  pendingRun = null;
+  $('sra-load').hidden = true;
+  const accession = $('sra-accession').value.trim().toUpperCase();
+  const say = (text) => show('sra-info', text);
+  if (/^(PRJ|SAM|SRP|SRS|SRX|ERP|ERS|ERX|DRP|DRS|DRX)/.test(accession)) {
+    say(`${accession} is a project, sample or experiment accession. Give a run accession (SRR, ERR or DRR and digits); the ENA page of the project lists its runs.`);
+    return;
+  }
+  if (!/^[SED]RR\d{6,}$/.test(accession)) {
+    say(`"${$('sra-accession').value.trim()}" does not look like a run accession (SRR, ERR or DRR followed by at least 6 digits).`);
+    return;
+  }
+  say('Looking the run up in ENA');
+  let records;
+  try {
+    const url = new URL(`filereport?accession=${accession}&result=read_run&fields=${ENA_FIELDS}&format=json`, enaBase());
+    const response = await fetch(url, { cache: 'no-cache' });
+    if (!response.ok) throw new Error(`ENA answered ${response.status}`);
+    records = await response.json();
+  } catch (error) {
+    say(`The ENA lookup failed: ${error.message}. The network may be down or ENA may be busy.`);
+    return;
+  }
+  const record = records && records[0];
+  if (!record) { say(`${accession} was not found in ENA.`); return; }
+  const addresses = (record.fastq_ftp || '').split(';').filter(Boolean);
+  const sizes = (record.fastq_bytes || '').split(';').filter(Boolean).map(Number);
+  if (!addresses.length) {
+    say(`ENA has no FASTQ files for ${accession} (it may hold only BAM or SRA-format files). The page cannot use this run.`);
+    return;
+  }
+  const platform = record.instrument_platform;
+  if (!KIND_OF_PLATFORM[platform]) {
+    say(`${accession} was made on ${platform || 'an unknown platform'}, which is not supported (only ILLUMINA and OXFORD_NANOPORE reads).`);
+    return;
+  }
+  const total = sizes.reduce((a, b) => a + b, 0);
+  if (total > MAX_DOWNLOAD) {
+    say(`${accession} is too large for this page (${mb(total)}; the limit is ${mb(MAX_DOWNLOAD)}). Use the command-line tool.`);
+    return;
+  }
+  const paired = record.library_layout === 'PAIRED';
+  const count = Number(record.read_count) || 0;
+  const lines = [
+    `${record.scientific_name || 'Unknown organism'}${record.sample_title ? ` (${record.sample_title})` : ''}`,
+    `${platform}${record.instrument_model ? `, ${record.instrument_model}` : ''}; library ${record.library_layout}; ${paired ? `${count.toLocaleString()} read pairs` : `${count.toLocaleString()} reads`} in ${addresses.length} file(s), ${mb(total)}.`,
+  ];
+  if (paired) lines.push('The page maps each mate as a separate read (the command-line tool can map pairs).');
+  if (total > WARN_DOWNLOAD) lines.push(`Large download: it can take minutes and the page holds all of it in memory.`);
+  say(lines.join('\n'));
+  pendingRun = {
+    accession, platform, count: paired ? count * 2 : count,
+    files: addresses.map((a, i) => ({ name: a.split('/').pop(), url: /^https?:/.test(a) ? a : `https://${a}`, bytes: sizes[i] || 0 })),
+  };
+  $('sra-load').hidden = false;
+}
+
+function webBusy(on) {
+  $('sra-load').disabled = $('url-load').disabled = $('sra-lookup').disabled = on;
+  $('web-cancel').hidden = !on;
+}
+
+async function runWebDownload(task) {
+  if (loading || busy) return;
+  loading = true;
+  webBusy(true);
+  webAbort = new AbortController();
+  try {
+    await task(webAbort.signal);
+  } catch (error) {
+    show('web-status', error.name === 'AbortError' ? 'Cancelled. Nothing was loaded.' : `Error: ${error.message}`);
+  } finally {
+    loading = false;
+    webAbort = null;
+    webBusy(false);
+  }
+}
+
+$('sra-lookup').addEventListener('click', sraLookup);
+$('sra-accession').addEventListener('keydown', (e) => { if (e.key === 'Enter') sraLookup(); });
+$('web-cancel').addEventListener('click', () => { if (webAbort) webAbort.abort(); });
+
+$('sra-load').addEventListener('click', () => runWebDownload(async (signal) => {
+  const run = pendingRun;
+  if (!run) return;
+  const files = [];
+  for (const [i, item] of run.files.entries()) files.push(await download(item, location.href, `${run.accession} file ${i + 1} of ${run.files.length}`, 'web-status', signal));
+  example.reads = files;
+  example.expectedReads = run.count;
+  example.source.reads = `ENA run ${run.accession} (${new URL(run.files[0].url).host})`;
+  $('kind').value = KIND_OF_PLATFORM[run.platform];
+  describeSources();
+  show('web-status', `Loaded: the reads of ${run.accession} (${mb(files.reduce((a, f) => a + f.size, 0))}). Press Run in step 1.`);
+}));
+
+$('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
+  const wanted = [
+    ['reference', 'the reference genome', $('url-reference').value.trim() ? [$('url-reference').value.trim()] : []],
+    ['gff', 'the gene file', $('url-gff').value.trim() ? [$('url-gff').value.trim()] : []],
+    ['reads', 'the reads', $('url-reads').value.split('\n').map((x) => x.trim()).filter(Boolean)],
+  ];
+  if (wanted.every(([, , list]) => !list.length)) throw new Error('Type at least one https address.');
+  const urls = wanted.flatMap(([, label, list]) => list.map((u) => [label, checkUrl(u, label)])); // all checked before any download
+  const got = { reference: null, gff: null, reads: [] };
+  for (const [slot, label, list] of wanted) {
+    for (const text of list) {
+      const url = new URL(text);
+      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
+      const file = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal);
+      if (slot === 'reads') got.reads.push(file); else got[slot] = file;
+      example.source[slot] = `the address ${url.host}${url.pathname}`;
+    }
+  }
+  void urls;
+  if (got.reference) example.reference = got.reference;
+  if (got.gff) example.gff = got.gff;
+  if (got.reads.length) { example.reads = got.reads; example.expectedReads = null; }
+  describeSources();
+  show('web-status', `Loaded: ${wanted.filter(([, , l]) => l.length).map(([, label]) => label).join(', ')}.`);
+}));
+
+describeSources();
