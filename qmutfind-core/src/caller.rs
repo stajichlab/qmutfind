@@ -9,7 +9,10 @@ use crate::{Alignment, CigarOp};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CallerConfig {
     pub min_depth: u32,
-    pub min_alt_fraction: f64,
+    /// Minimum alternate fraction for a SNP.
+    pub min_snp_fraction: f64,
+    /// Minimum alternate fraction for an indel.
+    pub min_indel_fraction: f64,
     /// Insertions of this length or more are reported as symbolic `<INS>` calls.
     pub large_indel_min: usize,
 }
@@ -51,6 +54,23 @@ fn base_index(b: u8) -> Option<usize> {
         b'G' => Some(2),
         b'T' => Some(3),
         _ => None,
+    }
+}
+
+impl CallerConfig {
+    /// Default thresholds by read kind. They are set from the benchmark and the EVOL20 real data
+    /// (PLAN.md section 5): a haploid SNP should be near fraction 1, and long reads have lower
+    /// fractions because of their errors. Indels use a lower threshold than SNPs.
+    pub fn defaults_for(kind: crate::ReadKind) -> Self {
+        CallerConfig {
+            min_depth: 5,
+            min_snp_fraction: match kind {
+                crate::ReadKind::Short => 0.8,
+                crate::ReadKind::Long => 0.7,
+            },
+            min_indel_fraction: 0.5,
+            large_indel_min: 50,
+        }
     }
 }
 
@@ -132,7 +152,7 @@ impl Caller {
                     .max_by_key(|&b| c[b])
                     .unwrap();
                 let alt_count = c[best] as u32;
-                if alt_count > 0 && alt_count as f64 / depth as f64 >= self.config.min_alt_fraction {
+                if alt_count > 0 && alt_count as f64 / depth as f64 >= self.config.min_snp_fraction {
                     out.push((ci, Call {
                         contig: name.clone(),
                         pos: pos as u64 + 1,
@@ -152,7 +172,7 @@ impl Caller {
             }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
-                && alt_count as f64 / depth as f64 >= self.config.min_alt_fraction
+                && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
             {
                 out.push((ci, Call {
                     contig: self.reference[ci].0.clone(),
@@ -178,7 +198,7 @@ impl Caller {
             }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
-                && alt_count as f64 / depth as f64 >= self.config.min_alt_fraction
+                && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
             {
                 let mut alt = vec![seq[anchor]];
                 alt.extend(ev.bases.iter().map(|c| {
@@ -204,7 +224,7 @@ impl Caller {
                 }
                 let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
                 if depth >= self.config.min_depth
-                    && support as f64 / depth as f64 >= self.config.min_alt_fraction
+                    && support as f64 / depth as f64 >= self.config.min_indel_fraction
                 {
                     out.push((ci, Call {
                         contig: self.reference[ci].0.clone(),

@@ -18,7 +18,7 @@ fn reads_with_alt_at_50000(refs: &[(String, Vec<u8>)], alt: u8, count: usize) ->
 }
 
 fn config() -> CallerConfig {
-    CallerConfig { min_depth: 5, min_alt_fraction: 0.5, large_indel_min: 50 }
+    CallerConfig { min_depth: 5, min_snp_fraction: 0.5, min_indel_fraction: 0.5, large_indel_min: 50 }
 }
 
 #[test]
@@ -307,4 +307,37 @@ fn reads_with_slightly_different_insertion_lengths_support_one_symbolic_call_wit
     assert_eq!(c.alt_count, 10);
     // An aligner can place the same insertion a base or two apart, so allow a small window.
     assert!((71_497..=71_501).contains(&c.pos), "pos {}", c.pos);
+}
+
+
+fn config_with(snp: f64, indel: f64) -> CallerConfig {
+    CallerConfig { min_depth: 5, min_snp_fraction: snp, min_indel_fraction: indel, large_indel_min: 50 }
+}
+
+#[test]
+fn the_snp_threshold_applies_to_snps_and_the_indel_threshold_to_indels() {
+    let refs = reference();
+    let ref_base = refs[0].1[50_000];
+    let alt = other_base(ref_base);
+    // 7 of 10 reads carry the SNP, and 7 of 10 reads carry the 2 bp deletion: both at fraction 0.7.
+    let mut snp_reads = reads_with_alt_at_50000(&refs, alt, 7);
+    snp_reads.extend(reads_with_alt_at_50000(&refs, ref_base, 3));
+    let mut del_reads = reads_with_two_bp_deletion(&refs, 7);
+    del_reads.extend(reads_with_alt_at_50000(&refs, ref_base, 3));
+
+    // A strict SNP threshold and a lenient indel threshold: the deletion is called, the SNP is not.
+    assert!(call_with(&refs, &snp_reads, config_with(0.8, 0.5)).is_empty());
+    assert_eq!(call_with(&refs, &del_reads, config_with(0.8, 0.5)).len(), 1);
+    // The reverse: the SNP is called, the deletion is not.
+    assert_eq!(call_with(&refs, &snp_reads, config_with(0.5, 0.8)).len(), 1);
+    assert!(call_with(&refs, &del_reads, config_with(0.5, 0.8)).is_empty());
+}
+
+#[test]
+fn the_defaults_depend_on_the_read_kind_and_are_stricter_for_snps_than_for_indels() {
+    let short = CallerConfig::defaults_for(ReadKind::Short);
+    let long = CallerConfig::defaults_for(ReadKind::Long);
+
+    assert_eq!((short.min_depth, short.min_snp_fraction, short.min_indel_fraction, short.large_indel_min), (5, 0.8, 0.5, 50));
+    assert_eq!((long.min_depth, long.min_snp_fraction, long.min_indel_fraction, long.large_indel_min), (5, 0.7, 0.5, 50));
 }

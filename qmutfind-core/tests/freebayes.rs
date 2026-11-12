@@ -3,7 +3,7 @@
 use qmutfind_core::{calls_from_freebayes_vcf, CallerConfig};
 
 fn config() -> CallerConfig {
-    CallerConfig { min_depth: 5, min_alt_fraction: 0.5, large_indel_min: 50 }
+    CallerConfig { min_depth: 5, min_snp_fraction: 0.5, min_indel_fraction: 0.5, large_indel_min: 50 }
 }
 
 /// One FreeBayes-style record. `ao` is the AO value as written (comma-separated for several alleles).
@@ -68,4 +68,18 @@ fn a_record_without_dp_is_an_error() {
     let vcf = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nchrA\t100\t.\tA\tG\t50\t.\tAO=9\n";
 
     assert!(calls_from_freebayes_vcf(vcf.as_bytes(), &config()).is_err());
+}
+
+#[test]
+fn the_freebayes_reader_uses_the_snp_threshold_for_snps_and_the_indel_threshold_for_indels() {
+    let strict_snps = CallerConfig { min_depth: 5, min_snp_fraction: 0.8, min_indel_fraction: 0.5, large_indel_min: 50 };
+    let vcf = format!(
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n{}{}",
+        record(100, "A", "G", 10, "7"),   // a SNP at fraction 0.7
+        record(200, "CAA", "C", 10, "7"), // a deletion at fraction 0.7
+    );
+
+    let calls = calls_from_freebayes_vcf(vcf.as_bytes(), &strict_snps).unwrap();
+
+    assert_eq!(calls.iter().map(|c| c.pos).collect::<Vec<_>>(), vec![200]);
 }

@@ -302,3 +302,68 @@ fn bwa_mem2_accepts_zstd_compressed_reads() {
 
     assert_the_mate2_snp_is_called(dir.path(), &seq, alt, &out);
 }
+
+/// Ten reads covering position 30_000, of which the first `with_alt` carry `alt` there.
+fn write_reads_with_alt_fraction(dir: &Path, seq: &[u8], alt: u8, with_alt: usize) {
+    let mut fastq = String::new();
+    for i in 0..10 {
+        let start = 29_900 + i * 10;
+        let mut read = seq[start..start + 150].to_vec();
+        if i < with_alt {
+            read[30_000 - start] = alt;
+        }
+        fastq.push_str(&format!("@r{i}\n{}\n+\n{}\n", String::from_utf8_lossy(&read), "I".repeat(150)));
+    }
+    fs::write(dir.join("reads.fq"), fastq).unwrap();
+}
+
+fn setup_with_alt_fraction(with_alt: usize) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    let alt = if seq[30_000] == b'G' { b'T' } else { b'G' };
+    write_reads_with_alt_fraction(dir.path(), &seq, alt, with_alt);
+    dir
+}
+
+fn called_records(dir: &Path) -> usize {
+    records(&fs::read_to_string(dir.join("out.vcf")).unwrap()).len()
+}
+
+#[test]
+fn the_default_snp_threshold_for_short_reads_is_0_8_and_min_snp_fraction_overrides_it() {
+    let dir = setup_with_alt_fraction(7); // fraction 0.7
+
+    assert!(run_with(dir.path(), &[]).status.success());
+    assert_eq!(called_records(dir.path()), 0);
+
+    assert!(run_with(dir.path(), &["--min-snp-fraction", "0.5"]).status.success());
+    assert_eq!(called_records(dir.path()), 1);
+}
+
+#[test]
+fn min_depth_overrides_the_default_depth_threshold() {
+    let dir = setup_with_alt_fraction(10); // depth 10, fraction 1.0
+
+    assert!(run_with(dir.path(), &[]).status.success());
+    assert_eq!(called_records(dir.path()), 1);
+
+    assert!(run_with(dir.path(), &["--min-depth", "12"]).status.success());
+    assert_eq!(called_records(dir.path()), 0);
+}
+
+#[test]
+fn a_bad_threshold_value_is_rejected_with_the_flag_name() {
+    let dir = setup_with_alt_fraction(10);
+
+    let high = run_with(dir.path(), &["--min-snp-fraction", "1.5"]);
+    let text = run_with(dir.path(), &["--min-indel-fraction", "abc"]);
+    let depth = run_with(dir.path(), &["--min-depth", "-3"]);
+
+    assert!(!high.status.success());
+    assert!(String::from_utf8_lossy(&high.stderr).contains("--min-snp-fraction must be a number from 0 to 1"));
+    assert!(!text.status.success());
+    assert!(String::from_utf8_lossy(&text.stderr).contains("--min-indel-fraction must be a number from 0 to 1"));
+    assert!(!depth.status.success());
+    assert!(String::from_utf8_lossy(&depth.stderr).contains("--min-depth must be a whole number"));
+}

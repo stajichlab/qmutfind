@@ -45,7 +45,8 @@ pub fn calls_from_freebayes_vcf<R: BufRead>(reader: R, config: &CallerConfig) ->
             let alt = alt.to_ascii_uppercase();
             if depth < config.min_depth
                 || depth == 0
-                || (alt_count as f64 / depth as f64) < config.min_alt_fraction
+                || (alt_count as f64 / depth as f64)
+                    < if reference.len() == alt.len() { config.min_snp_fraction } else { config.min_indel_fraction }
                 || !only_acgt(&reference)
                 || !only_acgt(&alt)
             {

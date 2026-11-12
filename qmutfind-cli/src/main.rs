@@ -11,10 +11,19 @@ use qmutfind_core::{
     calls_from_freebayes_vcf, left_align_calls, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqReader, ReadKind, RammapAligner,
 };
 
-// Provisional defaults. They are `UNMEASURED` and are set from the benchmark (PLAN.md section 5).
-const DEFAULT_MIN_DEPTH: u32 = 5;
-const DEFAULT_MIN_ALT_FRACTION: f64 = 0.5;
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
+
+/// Read a fraction flag. It must be a number from 0 to 1.
+fn fraction_flag(flags: &HashMap<String, String>, name: &str, default: f64) -> Result<f64, String> {
+    match flags.get(name) {
+        None => Ok(default),
+        Some(v) => v
+            .parse::<f64>()
+            .ok()
+            .filter(|x| (0.0..=1.0).contains(x))
+            .ok_or_else(|| format!("--{name} must be a number from 0 to 1, not {v}")),
+    }
+}
 
 /// Open a plain, `.gz` or `.zst` file as a buffered reader.
 fn open_input(path: &str) -> Result<Box<dyn BufRead>, String> {
@@ -75,10 +84,15 @@ fn call(args: &[String]) -> Result<(), String> {
     let reference = read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?;
     let contigs: Vec<(String, usize)> = reference.iter().map(|(n, s)| (n.clone(), s.len())).collect();
 
+    let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {
-        min_depth: DEFAULT_MIN_DEPTH,
-        min_alt_fraction: DEFAULT_MIN_ALT_FRACTION,
-        large_indel_min: DEFAULT_LARGE_INDEL_MIN,
+        min_depth: match flags.get("min-depth") {
+            Some(v) => v.parse().map_err(|_| format!("--min-depth must be a whole number, not {v}"))?,
+            None => defaults.min_depth,
+        },
+        min_snp_fraction: fraction_flag(&flags, "min-snp-fraction", defaults.min_snp_fraction)?,
+        min_indel_fraction: fraction_flag(&flags, "min-indel-fraction", defaults.min_indel_fraction)?,
+        large_indel_min: defaults.large_indel_min,
     };
     let mut read_paths = vec![reads_path.clone()];
     if let Some(second) = flags.get("reads2") {

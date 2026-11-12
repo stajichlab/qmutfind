@@ -53,7 +53,7 @@ fn ten_sam_records_that_all_carry_a_snp_give_one_snp_call() {
     let alt = other_base(ref_base);
     let mut caller = Caller::new(
         refs.clone(),
-        CallerConfig { min_depth: 5, min_alt_fraction: 0.5, large_indel_min: 50 },
+        CallerConfig { min_depth: 5, min_snp_fraction: 0.5, min_indel_fraction: 0.5, large_indel_min: 50 },
     );
 
     for i in 0..10 {
