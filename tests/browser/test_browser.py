@@ -166,3 +166,17 @@ def test_a_truncated_reads_file_is_reported_as_an_error_not_a_silent_success(dri
 
     assert got["status"].startswith("Error"), got["status"]
     assert "truncated" in got["status"]
+
+
+def test_a_gzip_file_made_of_several_members_is_read_completely(driver, server, inputs):
+    # parallel-fastq-dump and `cat a.gz b.gz` make multi-member gzip files. The browser's own
+    # DecompressionStream rejects them in Firefox ("Unexpected input after the end of stream").
+    expected = expected_from_cli(inputs)
+    text = snp_reads()
+    cut = text.index("@r5")
+    (inputs / "multi.fq.gz").write_bytes(gzip.compress(text[:cut].encode()) + gzip.compress(text[cut:].encode()))
+
+    got = run_page(driver, server, {"reference": inputs / "ref.fa", "reads": [inputs / "multi.fq.gz"], "gff": inputs / "genes.gff3"}, inputs)
+
+    assert got["status"].startswith("Done"), got["status"]
+    assert got["vcf"] == expected["vcf"]

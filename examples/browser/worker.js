@@ -2,15 +2,27 @@
 // Build the package first with `pixi run build-wasm-web`.
 import init, { Session, annotate, stats, report } from '../../pkg-web/qmutfind_wasm.js';
 
+// fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
+// DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
+import { Gunzip } from './vendor/fflate.js';
+
 /** Yield the bytes of a file in chunks. A .gz file is decompressed on the way. */
 async function* chunksOf(file) {
-  let stream = file.stream();
-  if (file.name.endsWith('.gz')) stream = stream.pipeThrough(new DecompressionStream('gzip'));
-  const reader = stream.getReader();
+  const reader = file.stream().getReader();
+  if (!file.name.endsWith('.gz')) {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield value;
+    }
+  }
+  const pending = [];
+  const gunzip = new Gunzip((chunk) => pending.push(chunk));
   for (;;) {
     const { done, value } = await reader.read();
+    gunzip.push(value || new Uint8Array(0), done);
+    while (pending.length) yield pending.shift();
     if (done) return;
-    yield value;
   }
 }
 
