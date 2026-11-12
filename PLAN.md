@@ -563,6 +563,9 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      for short reads (a floor of 6 would remove every call at 7x coverage; `hrmA` has 5 reads). Chosen as a
      balance: no loss on seed 1, 6 true indels lost on seed 2. This is tuned on both seeds, so it has no
      independent check yet. Floors of 7 and 8 remove more false calls and lose more true ones.
+     CONFIRMED with the real binary (release build, `--preset long`, defaults): seed 2 SNP 2,974 / 1, small
+     indel 549 / 72, large 99 of 100 / 0 false; seed 1 SNP 2,991 / 0, small indel 571 / 16, large 100 of 100 /
+     0 false. These equal the offline numbers.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and
