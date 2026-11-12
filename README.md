@@ -57,6 +57,12 @@ of calls with a fraction from 0.2 to 0.8, and clustering.
 `qmutfind report --vcf FILE --gff GFF --region CONTIG:START-END --out page.html` writes one HTML file with
 the gene models and one circle per variant, coloured by effect.
 
+`qmutfind fetch --organism "Aspergillus fumigatus Af293" --out-dir genome` downloads the genome FASTA and GFF of one
+FungiDB organism as `.gz` files. The organism list is public. The FASTA needs an API key from your FungiDB account
+(Web Services Access). Put the key in the environment variable `EUPATHDB_KEY`. It is sent only to FungiDB and never
+printed. `--base-url` changes the site (default `https://fungidb.org`). Tested against a local mock server, and live
+only as far as the 401 error without a key.
+
 ## WebAssembly
 
 ```bash

@@ -1,6 +1,7 @@
 //! qmutfind command-line tool.
 
 mod external;
+mod fetch;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -238,8 +239,9 @@ fn main() -> ExitCode {
         Some("annotate") => annotate(&args[1..]),
         Some("stats") => stats(&args[1..]),
         Some("report") => report(&args[1..]),
+        Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind fetch --organism NAME --out-dir DIR   (needs EUPATHDB_KEY for the FASTA)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
