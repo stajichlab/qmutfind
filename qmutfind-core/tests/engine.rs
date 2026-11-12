@@ -118,3 +118,19 @@ fn set_min_mapq_above_the_largest_mapping_quality_removes_every_alignment() {
     closed.end_file().unwrap();
     assert!(records(&closed.vcf().unwrap()).is_empty());
 }
+
+#[test]
+fn the_default_minimum_mapping_quality_is_20_for_short_reads_and_0_for_long_reads_and_can_be_changed() {
+    use qmutfind_core::CallerConfig;
+    let refs = reference();
+
+    let mut short = Engine::new(&fasta(&refs), ReadKind::Short, "s1").unwrap();
+    let long = Engine::new(&fasta(&refs), ReadKind::Long, "s1").unwrap();
+
+    assert_eq!(CallerConfig::default_min_mapq(ReadKind::Short), 20);
+    assert_eq!(CallerConfig::default_min_mapq(ReadKind::Long), 0);
+    assert_eq!(short.min_mapq(), 20);
+    assert_eq!(long.min_mapq(), 0);
+    short.set_min_mapq(5);
+    assert_eq!(short.min_mapq(), 5);
+}

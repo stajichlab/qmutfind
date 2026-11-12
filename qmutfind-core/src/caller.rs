@@ -59,6 +59,16 @@ fn base_index(b: u8) -> Option<usize> {
 }
 
 impl CallerConfig {
+    /// Default minimum mapping quality by read kind. For short reads, 20 cut the EVOL20-only calls from
+    /// 61 to 9 and kept both candidate variants, at no cost on the simulated reads (PLAN.md section 11).
+    /// Long reads stay at 0 because nothing was measured for them.
+    pub fn default_min_mapq(kind: crate::ReadKind) -> u8 {
+        match kind {
+            crate::ReadKind::Short => 20,
+            crate::ReadKind::Long => 0,
+        }
+    }
+
     /// Default thresholds by read kind. They are set from the benchmark and the EVOL20 real data
     /// (PLAN.md section 5): a haploid SNP should be near fraction 1, and long reads have lower
     /// fractions because of their errors. Indels use a lower threshold than SNPs.
@@ -84,6 +94,11 @@ impl Caller {
     /// Ignore alignments with a mapping quality below `min_mapq`. The default is 0, which keeps all.
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.min_mapq = min_mapq;
+    }
+
+    /// The minimum mapping quality in use.
+    pub fn min_mapq(&self) -> u8 {
+        self.min_mapq
     }
 
     /// Replace the thresholds. Call before `calls`.

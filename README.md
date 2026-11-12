@@ -32,7 +32,7 @@ qmutfind call --reference ref.fa.gz --reads r1.fastq.gz --reads2 r2.fastq.gz \
 | `--aligner rammap\|bwa-mem2` | `rammap` (pure Rust, default) or `bwa-mem2` (short reads only, runs as an external program). |
 | `--caller builtin\|freebayes` | The built-in haploid caller, or FreeBayes (needs `--aligner bwa-mem2`). |
 | `--min-depth N`, `--min-snp-fraction X`, `--min-indel-fraction X` | Calling thresholds. Defaults: depth 5, SNP fraction 0.8 (short) or 0.7 (long), indel fraction 0.5. |
-| `--min-mapq N` | Ignore alignments with a lower mapping quality. Default 0. |
+| `--min-mapq N` | Ignore alignments with a lower mapping quality. Default 20 for short reads, 0 for long reads. |
 | `--threads N`, `--tmpdir DIR` | For the external programs. The temporary directory is `--tmpdir`, then `$SCRATCH`, then `$TMPDIR`. |
 
 Plain, `.gz` and `.zst` files are read directly.
@@ -108,7 +108,7 @@ the real EVOL20 evolution experiment (PRJNA417720). See [PLAN.md](PLAN.md) secti
 ## Known limits
 
 - Thresholds were tuned on the same data they were measured on. The parent-strain call count is a proxy, not truth.
-- Mapping quality is filtered only when `--min-mapq` is set. Base quality is not used.
+- Mapping quality is filtered at 20 for short reads. That value comes from real short-read data only. Nothing was measured for long reads, so their default is 0. Base quality is not used.
 - Statistics that need the read depth, the reference sequence or per-strand counts are not built.
 - The `annotate` tags and the canonical-transcript rule are assumed, not agreed.
 - Licence: GPL-3.0 (see [LICENSE](LICENSE)).

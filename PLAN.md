@@ -529,6 +529,18 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      EVOL20_3 (3.8 KB each; the `hrmA` page shows 3 transcripts and 4 CDS blocks in its window and the one
      variant with the tooltip `NC_007198.1:3852237 A>G missense D304G AFUA_5G14900`). Written to
      `qmutfind_data/reports/`, outside the repository. Not inspected in a browser.
+   - MAPPING-QUALITY SWEEP (2026-11-12; `rammap` + built-in, new thresholds, `--min-mapq` q; both mates
+     single-end; the min depth stays 5). Real data, parent / EVOL20 / EVOL20-only calls: q0 75 / 103 / 61;
+     q10 69 / 58 / 17; q20 61 / 31 / 9; q30 54 / 18 / 5; q40 37 / 13 / 3. EVOL20 Ts/Tv: 4.67, 2.00, 1.67, 1.00,
+     0.75. `hrmA` (3,852,237 A>G) is kept up to q20 and lost at q30 and q40 (its depth falls below 5);
+     `ssk1` is kept at every q. Simulated ART (found / false): SNP 2,972 / 1 (q0), 2,980 / 0 (q10 and q20),
+     2,978 / 0 (q30), 2,977 / 0 (q40); small indel 582 / 12 (q0), 580 / 10 (q10 to q30), 580 / 9 (q40).
+     CORRECTION: the earlier reading that the EVOL20 Ts/Tv of 4.67 "looks more like real mutations" is not
+     supported. Ts/Tv falls as the mapping-quality minimum rises, so the transition-rich calls were mostly
+     low-quality mappings, consistent with divergent repeat copies (an inference, not tested).
+     DECISION (taken by the assistant while the user was offline, following the approved plan to add quality
+     filters and re-measure): the default minimum mapping quality is 20 for short reads and 0 for long reads.
+     Short reads: measured on `rammap` only; `bwa-mem2` MAPQ values were not swept. Long reads: not measured.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and

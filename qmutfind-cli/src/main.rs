@@ -86,7 +86,7 @@ fn call(args: &[String]) -> Result<(), String> {
 
     let min_mapq: u8 = match flags.get("min-mapq") {
         Some(v) => v.parse().map_err(|_| format!("--min-mapq must be a whole number from 0 to 255, not {v}"))?,
-        None => 0,
+        None => CallerConfig::default_min_mapq(kind),
     };
     let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {

@@ -25,9 +25,11 @@ impl Engine {
         }
         let contigs = reference.iter().map(|(n, s)| (n.clone(), s.len())).collect();
         let config = CallerConfig::defaults_for(kind);
+        let mut caller = Caller::new(reference.clone(), config);
+        caller.set_min_mapq(CallerConfig::default_min_mapq(kind));
         Ok(Engine {
-            aligner: RammapAligner::new(reference.clone(), kind),
-            caller: Caller::new(reference, config),
+            aligner: RammapAligner::new(reference, kind),
+            caller,
             chunker: FastqChunker::new(),
             contigs,
             sample: sample.to_string(),
@@ -45,6 +47,11 @@ impl Engine {
     /// Ignore alignments with a mapping quality below `min_mapq`. Call before adding reads.
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.caller.set_min_mapq(min_mapq);
+    }
+
+    /// The minimum mapping quality in use.
+    pub fn min_mapq(&self) -> u8 {
+        self.caller.min_mapq()
     }
 
     /// Add a chunk of FASTQ bytes. The chunk can split a record anywhere.
