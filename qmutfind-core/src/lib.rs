@@ -1,7 +1,7 @@
 //! qmutfind core: pure Rust logic shared by the CLI and the WASM build.
 //! This crate does no file I/O and starts no threads.
 
-use rammap::Preset;
+use rammap::{Preset, Strand};
 
 /// The kind of reads being mapped. It selects the aligner preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +15,8 @@ pub struct Alignment {
     pub contig: String,
     /// 0-based start on the contig.
     pub ref_start: usize,
+    /// True when the read aligned to the reverse strand.
+    pub reverse: bool,
     cigar: String,
 }
 
@@ -55,6 +57,7 @@ impl Aligner for RammapAligner {
             .map(|m| Alignment {
                 contig: m.target_name.to_string(),
                 ref_start: m.target_start,
+                reverse: matches!(m.strand, Strand::Reverse),
                 cigar: m.cigar.clone().unwrap_or_default(),
             })
             .collect()

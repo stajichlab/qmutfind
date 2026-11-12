@@ -23,6 +23,35 @@ fn reference() -> Vec<(String, Vec<u8>)> {
     vec![("chrA".to_string(), chr_a), ("chrB".to_string(), chr_b)]
 }
 
+fn reverse_complement(seq: &[u8]) -> Vec<u8> {
+    seq.iter()
+        .rev()
+        .map(|&b| match b {
+            b'A' => b'T',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'T' => b'A',
+            other => other,
+        })
+        .collect()
+}
+
+#[test]
+fn a_reverse_complemented_read_maps_to_the_same_place_on_the_reverse_strand() {
+    let refs = reference();
+    let read = refs[0].1[49_950..50_100].to_vec();
+
+    let aligner = RammapAligner::new(refs, ReadKind::Short);
+    let forward = aligner.align("fwd", &read);
+    let reverse = aligner.align("rev", &reverse_complement(&read));
+
+    assert_eq!(forward.len(), 1);
+    assert_eq!(reverse.len(), 1);
+    assert!(!forward[0].reverse);
+    assert!(reverse[0].reverse);
+    assert_eq!(forward[0].ref_start, reverse[0].ref_start);
+}
+
 #[test]
 fn short_read_with_one_snp_maps_forward_with_a_full_length_match_cigar() {
     let refs = reference();

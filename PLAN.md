@@ -329,6 +329,27 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      (an old release). Badread is in bioconda `noarch`, latest 0.4.2, and not in conda-forge.
    - Simulated reads are cleaner than real reads, so simulation overstates real accuracy. State this
      in the results. The real-data agreement tests cover the gap.
+   - Built 2026-11-11 (test-first; `bench/make_truth.py`, 11 tests in `bench/tests/`, run with
+     `pixi run test-bench`). The script reads FASTA (plain, `.gz`, `.zst`), designs non-overlapping
+     variants (200 bp minimum spacing, 1,000 bp from contig ends, only on `ACGT` bases), and writes
+     `<prefix>.mutated.fa` and `<prefix>.truth.vcf`. Same seed gives identical files.
+     ASSUMED settings (no data behind them): small indel length 1 to 10 bp, large indel length
+     50 to 500 bp, insertion and deletion equally likely, all variants at allele fraction 1.
+   - Af293 truth set `af293_s1` (seed 1): 3,000 SNPs, 600 small indels, 100 large indels (counts are my
+     choice). With 100 large indels, a sensitivity estimate for that class has a wide confidence
+     interval. Files are in `/bigdata/stajichlab/jstajich/projects/qmutfind_data/bench/`.
+     `bcftools norm --check-ref e` against the real reference reported no REF mismatch (3,700 records).
+   - Finding: `bcftools norm` realigned 192 of the 700 indel records (27%), because random positions
+     in repeats are not left-aligned. The truth VCF and every caller's VCF must be normalized with
+     `bcftools norm` before they are compared.
+   - Illumina reads: ART 2.5.8 (2016-06-06), HiSeq 2500 profile, 150 bp, 400 bp fragments (sd 50),
+     paired, seed 1: 2,880,107 pairs, about 29x by my arithmetic (3:02 wall time, 46 MB). Files
+     `af293_s1_art_1.fq.gz` and `af293_s1_art_2.fq.gz`. Paired files kept for the later pairing
+     comparison (item 15).
+   - Nanopore reads: Badread 0.4.2, fragment length mean 8000 and sd 6000 (my choice), default
+     identity and error models (not inspected). Speed measured at 1x: 3:55 single-threaded (3,642
+     reads, 29.4 Mb). The 28x set is four runs of 7x with seeds 1 to 4, in one background job.
+     Result file: `af293_s1_ont.fastq.gz`.
    - For my caller and for `bcftools`, compute sensitivity and precision by class.
    - Use this test to set the default depth and allele-fraction thresholds, per read type.
 2. Real data, agreement only.
