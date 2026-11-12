@@ -69,7 +69,7 @@ pub fn read_report_variants<R: BufRead>(reader: R) -> Result<Vec<ReportVariant>,
     Ok(out)
 }
 
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 

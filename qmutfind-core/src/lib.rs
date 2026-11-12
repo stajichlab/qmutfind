@@ -5,6 +5,7 @@ mod annotate;
 mod caller;
 mod engine;
 mod freebayes;
+mod genome_plot;
 mod normalize;
 mod parse;
 mod report;
@@ -15,6 +16,7 @@ pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
 pub use engine::Engine;
 pub use freebayes::calls_from_freebayes_vcf;
+pub use genome_plot::genome_plot_svg;
 pub use normalize::left_align_calls;
 pub use parse::{read_fasta, FastqChunker, FastqReader};
 pub use report::{

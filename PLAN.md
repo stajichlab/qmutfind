@@ -777,6 +777,43 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
     extrapolation in section 4.
 
 
+## 11b. Mapq sweep for the `bwa-mem2` paths (2026-11-12)
+
+`bench/run_mapq_sweep.sh`; `bwa-mem2` with the mates as pairs; defaults otherwise (depth 5, SNP 0.8, indel 0.5); q 0, 10,
+20, 30, 40; `--caller builtin` and `freebayes`. VCFs are in `qmutfind_data/mapq_bwa/`; all normalized with `bcftools
+norm -f -m -any` before comparing. For FreeBayes, q0 is sent as 1 (so q0 = q1).
+
+Simulated ART seed 2 (truth set `af293_s2`; found / false): SNP found 2,970 to 2,983 for every q and both callers; false
+SNPs 3 (built-in, every q) and 1 (FreeBayes, every q). Small indel 588 found at every q; false 6 (7 for FreeBayes q0).
+Large indel 0 of 100 (short reads, by design). The mapq filter changes the simulated result by at most 0.2% of SNPs:
+simulated reads have no repeat-driven mismapping, so this data cannot show the filter's value.
+
+Real data (parent SRR6277228 / EVOL20_3 SRR6277229 / EVOL20-only calls; EVOL20-only Ts/Tv; `hrmA` and `ssk1` kept):
+| q | built-in | FreeBayes |
+|---|---|---|
+| 0 | 111 / 172 / 114; 12.1; yes, yes | 127 / 154 / 100; 14.4; yes, yes |
+| 10 | 109 / 140 / 86; 10.0 | 124 / 139 / 86; 14.3 |
+| 20 | 108 / 132 / 78; 10.4 | 121 / 129 / 77; 16.3 |
+| 30 | 99 / 109 / 56; 11.3 | 110 / 106 / 56; 16.0 |
+| 40 | 98 / 98 / 45; 8.7; yes, yes | 106 / 96 / 47; 13.0; yes, yes |
+`hrmA` (NC_007198.1:3,852,237 A>G) and `ssk1` (2,132,142 T>TG) are EVOL20-only at every q on both callers.
+
+Comparison with `rammap` + built-in (same real data, q20): `rammap` gives 61 parent calls, 31 EVOL20 calls and 9
+EVOL20-only calls, against 108 / 132 / 78 for `bwa-mem2` + built-in. The mapq filter removes far fewer calls with
+`bwa-mem2` than with `rammap`. At q20 only 5 of the 9 `rammap` EVOL20-only calls are in the `bwa-mem2` + built-in set.
+The 73 EVOL20-only calls that `bwa-mem2` + built-in makes and `rammap` does not (55 SNPs, 18 small indels) have median
+depth 8 (range 5 to 25), median allele fraction 0.80, and only 10% have a fraction of 0.99 or more. `bwa-mem2` +
+built-in and `bwa-mem2` + FreeBayes share 58 of their EVOL20-only calls, so the extra calls depend on the aligner, not on
+the caller. They cluster: 21 of the 30 on NC_007195.1 lie within 1,854,035 to 1,861,813 (about 8 kb), and 15 of the 22 on
+NC_007196.1 lie within 1,250,029 to 1,281,771.
+
+Reading (inference, not tested): point mutations in an evolved line would not sit in dense clusters at fraction 0.8, so
+these extra calls are probably mapping artifacts or a local structural difference, not independent mutations. No truth
+exists for the real data, so this cannot be confirmed. It does mean `bwa-mem2` is not a drop-in improvement here, and
+that "more calls" is not "more sensitive". The default mapq of 20 was chosen from the `rammap` data; for `bwa-mem2` it
+helps less (114 to 78 EVOL20-only calls) and the evidence for a better value is weak. NOT done: look at the reads in
+the clusters; paired versus single-end `rammap` (PLAN section 13, item 3).
+
 ## 12. Held-out validation (2026-11-12)
 
 Pre-registered in `qmutfind_data/heldout/PREREGISTRATION.txt`; settings frozen at commit `bc69776`; no re-tuning
