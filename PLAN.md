@@ -777,6 +777,49 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
     extrapolation in section 4.
 
 
+## 12. Held-out validation (2026-11-12)
+
+Pre-registered in `qmutfind_data/heldout/PREREGISTRATION.txt`; settings frozen at commit `bc69776`; no re-tuning
+afterwards. Seeds 3, 4, 5 (standard) and 6, 7 (hard: `--min-spacing 30 --homopolymer-fraction 0.5
+--cluster-fraction 0.25`). Each seed: 1,500 SNPs, 400 small indels, 100 large indels on NC_007196.1, NC_007198.1 and
+NC_007199.1 (11.8 Mb). ART 5, 10, 20 and 30x (mates mapped as single-end); Badread 6, 12 and 24x. Defaults in force:
+short reads depth 5, SNP 0.8, indel 0.5, mapq 20; long reads depth 5, SNP 0.7, indel 0.5, mapq 0, indel floor 6.
+Raw rows: `bench/results/heldout_raw.tsv`; pooled table with 95% Wilson intervals: `bench/results/heldout_summary.tsv`
+(made by `bench/summarize_heldout.py`). The pooled intervals treat variants as independent; the per-seed range is in
+the table (`sens_min`, `sens_max`). Only 3 and 2 seeds, so the seed-to-seed spread is poorly known.
+UNVERIFIED: the commit the release binary was built from was not recorded in the run log.
+
+Sensitivity (found / truth) and precision, pooled over the seeds, standard mode:
+| Reads | Class | Sensitivity | Precision |
+|---|---|---|---|
+| ART 5x | SNP | 0.542 (2,441/4,500) | 1.000 |
+| ART 10x | SNP | 0.966 | 1.000 |
+| ART 20x / 30x | SNP | 0.991 / 0.992 | 1.000 (0 false in 4,460 and 4,462 calls) |
+| ART 5x | small indel | 0.515 | 0.984 |
+| ART 10x | small indel | 0.932 | 0.987 |
+| ART 20x / 30x | small indel | 0.975 / 0.975 | 0.986 / 0.985 |
+| ONT 6x | SNP / small indel | 0.647 / 0.311 | 0.984 / 0.947 |
+| ONT 12x | SNP / small indel | 0.977 / 0.820 | 0.999 / 0.920 |
+| ONT 24x | SNP / small indel | 0.996 / 0.948 | 0.999 / 0.977 |
+| ONT 12x / 24x | large indel | 0.920 / 1.000 | 1.000 |
+
+Hard mode (2 seeds): ART SNP 0.948 at 10x, 0.991 at 20x, 0.993 at 30x, each with 1 false call; ART small indel 0.951,
+0.981, 0.983 at 10, 20, 30x. ONT 24x: SNP 0.998 with 41 false calls (precision 0.986; standard mode had 3), small indel
+0.935 (precision 0.932), large indel 0.990. ONT 12x hard: small indel 0.796, precision 0.874. The extra false SNPs in
+hard mode were not diagnosed (the hard settings add clustering and homopolymer indels; the cause is not known).
+
+Reading:
+- At or above 20x, short reads give about 0.99 SNP and 0.975 small-indel sensitivity with precision 0.985 or higher.
+  This agrees with the tuning-set results (PLAN section 11), so the thresholds did not overfit the first two seeds to a
+  visible degree for ART.
+- At 5x, sensitivity is about 0.54 for both classes. The minimum depth of 5 explains this: the median depth at 5x is
+  near the threshold (inference, not tested by lowering the depth). Do not use the defaults below about 10x.
+- Short reads find almost no large indels (0.3 to 2%), by design (PLAN decision: large indels from long reads only).
+- Nanopore needs about 12x for SNPs (0.977) and 24x for small indels (0.948). At 6x, SNP sensitivity is 0.647.
+  Nanopore small-indel precision is the weakest result (0.920 at 12x standard, 0.874 at 12x hard).
+- Every number here is from simulated reads. Real reads have repeats and systematic errors that ART and Badread do not
+  model, so real-data precision is expected to be lower. No real-data truth set exists yet.
+
 ## 13. Planned work (2026-11-12, agreed with the user)
 
 1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.
