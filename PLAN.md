@@ -540,7 +540,10 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      low-quality mappings, consistent with divergent repeat copies (an inference, not tested).
      DECISION (taken by the assistant while the user was offline, following the approved plan to add quality
      filters and re-measure): the default minimum mapping quality is 20 for short reads and 0 for long reads.
-     Short reads: measured on `rammap` only; `bwa-mem2` MAPQ values were not swept. Long reads: not measured.
+     Short reads: measured on `rammap` only; `bwa-mem2` MAPQ values were not swept. Long reads: on the simulated
+     Nanopore set (seed 1) `--min-mapq` 0, 10 and 20 give the same result (SNP 2,991 found / 0 false, small
+     indel 571 / 42 at q0 and 571 / 41 at q10 and q20, large indel 100 / 1), so the filter is neutral there
+     and no real long-read data exists to show a benefit. The long-read default stays 0.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and
