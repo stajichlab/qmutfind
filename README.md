@@ -62,8 +62,8 @@ FungiDB organism as `.gz` files. The organism list is public. The FASTA needs an
 (Web Services Access). Put the key in the environment variable `EUPATHDB_KEY`, or in a file named by `--eupathdb-key-file`
 (the file wins). A key file has one line per key: `KEY` for any site, or `HOST KEY` (for example `fungidb.org KEY`) for
 one site. A line in shell form (`EUPATHDB_KEY=KEY` or `export EUPATHDB_KEY="KEY"`) also works. Blank lines and `#` lines are ignored. Run `chmod 600` on it; the command warns if others can read it. The key
-is sent only to the `--base-url` host and never printed. `--base-url` changes the site (default `https://fungidb.org`). Tested against a local mock server, and live
-only as far as the 401 error without a key.
+is sent only to the `--base-url` host and never printed. `--base-url` changes the site (default `https://fungidb.org`). Tested against a local mock server and live
+on Af293 (FASTA and GFF downloaded).
 
 ## WebAssembly
 

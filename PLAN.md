@@ -714,7 +714,16 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
    gives the FASTA and GFF URLs (Af293: 10,130 genes, release 71). The FASTA download (`/a/service/raw-files/...`) returns
    401 "Valid API Key required" without a key. The server reads the `Authorization` header; a fake `Auth-Key` header is
    ignored. The user reports that the key works; which form (`Bearer <key>` or the bare key) is not recorded, so
-   `qmutfind fetch` tries `Bearer` first and the bare key second. `fetch` is tested against a local mock server only.
+   `qmutfind fetch` tries `Bearer` first and the bare key second. `fetch` is tested against a local mock server and, on 2026-11-12, live.
+   Live run (key file `--eupathdb-key-file`): the FASTA and GFF of Af293 downloaded (9.1 MB and 1.5 MB gzip, `gzip -t`
+   OK). Two real-site findings fixed in the code: the GFF URL in the organism list (`/common/downloads/`) answers 404 and
+   the file is under `/a/service/raw-files/`; and the key file was in `EUPATHDB_KEY=value` form. Contents of the FungiDB
+   Af293 files (release 71): 9 sequences, 29,420,142 bases, named `Chr1_A_fumigatus_Af293` ... `Chr8_...` and
+   `mito_A_fumigatus_Af293` (31,765 bp, so a mitochondrial contig IS available here, unlike the RefSeq GFF); 9,840
+   `protein_coding_gene`, 9,840 mRNA, 30,134 CDS (the organism list said 10,130 genes, which probably adds the 289 ncRNA
+   genes; not checked). Contig names differ from RefSeq (`NC_007194.1` ...), so results on one naming cannot be
+   mixed with the other. One SNP inside a CDS was annotated by `qmutfind annotate` with this GFF (missense, E21K in
+   Afu1g00100); the amino-acid result was not checked against another tool.
    CORS: no `Access-Control-Allow-Origin` header on the organism list, on the raw-files download or on a preflight
    (OPTIONS answers 401 on raw-files). From this, a browser page on another origin cannot read FungiDB responses, so a
    key-paste field in the WASM page would not work. NOT run in a real browser. Browser users upload the files instead.
