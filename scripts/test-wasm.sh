@@ -5,4 +5,4 @@ set -euo pipefail
 target="${CARGO_TARGET_DIR:-$PWD/target}"
 bash scripts/build-wasm-pkg.sh nodejs pkg-node
 cargo build -p qmutfind-cli
-QMUTFIND_BIN="$target/debug/qmutfind" node --test tests/wasm/engine.test.mjs tests/wasm/runner.test.mjs tests/wasm/annotate.test.mjs tests/wasm/stats.test.mjs
+QMUTFIND_BIN="$target/debug/qmutfind" node --test tests/wasm/engine.test.mjs tests/wasm/runner.test.mjs tests/wasm/annotate.test.mjs tests/wasm/stats.test.mjs tests/wasm/report.test.mjs

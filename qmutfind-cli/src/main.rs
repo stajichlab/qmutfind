@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    annotate_vcf, calls_from_freebayes_vcf, compute_stats, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -166,6 +166,27 @@ fn call(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{out_path}: {e}"))
 }
 
+/// `qmutfind report`: a page with the gene models and the variants of one region.
+fn report(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let vcf_path = required(&flags, "vcf")?;
+    let region = required(&flags, "region")?;
+    let out_path = required(&flags, "out")?;
+    let title = flags.get("title").cloned().unwrap_or_else(|| format!("Mutations in {region}"));
+    let mut vcf = String::new();
+    open_input(vcf_path)?.read_to_string(&mut vcf).map_err(|e| format!("{vcf_path}: {e}"))?;
+    let gff = match flags.get("gff") {
+        Some(path) => {
+            let mut bytes = Vec::new();
+            open_input(path)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+            Some(bytes)
+        }
+        None => None,
+    };
+    let page = report_page(&vcf, gff.as_deref(), region, &title)?;
+    std::fs::write(out_path, page).map_err(|e| format!("{out_path}: {e}"))
+}
+
 /// `qmutfind stats`: summary statistics of a VCF, written as JSON and TSV.
 fn stats(args: &[String]) -> Result<(), String> {
     let flags = parse_flags(args)?;
@@ -206,8 +227,9 @@ fn main() -> ExitCode {
         Some("call") => call(&args[1..]),
         Some("annotate") => annotate(&args[1..]),
         Some("stats") => stats(&args[1..]),
+        Some("report") => report(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -72,3 +72,10 @@ pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {
         .map(|s| s.to_json())
         .map_err(|e| JsError::new(&e))
 }
+
+/// The locus-view page (HTML with an inline SVG) for one region, such as "c1:21-110".
+/// Pass `undefined` for `gff` to draw the variants without gene models.
+#[wasm_bindgen]
+pub fn report(vcf: &str, gff: Option<Vec<u8>>, region: &str, title: &str) -> Result<String, JsError> {
+    qmutfind_core::report_page(vcf, gff.as_deref(), region, title).map_err(|e| JsError::new(&e))
+}

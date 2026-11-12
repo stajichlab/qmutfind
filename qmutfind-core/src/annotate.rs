@@ -109,6 +109,19 @@ struct Feature {
 }
 
 impl Annotation {
+    /// An annotation with no genes.
+    pub fn empty() -> Annotation {
+        Annotation { by_contig: HashMap::new(), transcripts_per_gene: HashMap::new() }
+    }
+
+    /// The canonical transcripts that overlap `contig:start-end`.
+    pub fn transcripts_in(&self, contig: &str, start: u64, end: u64) -> Vec<&Transcript> {
+        self.by_contig
+            .get(contig)
+            .map(|txs| txs.iter().filter(|t| t.start() <= end && t.end() >= start).collect())
+            .unwrap_or_default()
+    }
+
     /// Read a GFF3 file.
     pub fn from_gff<R: BufRead>(reader: R) -> io::Result<Annotation> {
         let mut features: HashMap<String, Feature> = HashMap::new();

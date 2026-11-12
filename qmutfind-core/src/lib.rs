@@ -7,6 +7,7 @@ mod engine;
 mod freebayes;
 mod normalize;
 mod parse;
+mod report;
 mod sam;
 mod stats;
 mod vcf;
@@ -16,6 +17,9 @@ pub use engine::Engine;
 pub use freebayes::calls_from_freebayes_vcf;
 pub use normalize::left_align_calls;
 pub use parse::{read_fasta, FastqChunker, FastqReader};
+pub use report::{
+    parse_region, read_report_variants, render_locus_svg, render_report_html, report_page, Region, ReportVariant,
+};
 pub use sam::{parse_sam_line, SamRecord};
 pub use stats::{compute_stats, ContigStats, Stats};
 pub use vcf::write_vcf;
