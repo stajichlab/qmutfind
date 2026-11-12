@@ -3,7 +3,7 @@
 use qmutfind_core::{left_align_calls, Call};
 
 fn call(pos: u64, reference: &str, alt: &str) -> Call {
-    Call { contig: "chrA".to_string(), pos, reference: reference.to_string(), alt: alt.to_string(), depth: 20, alt_count: 19, svlen: None }
+    Call { contig: "chrA".to_string(), pos, reference: reference.to_string(), alt: alt.to_string(), depth: 20, alt_count: 19, svlen: None, qual: None, depth_ratio: None }
 }
 
 fn refs(seq: &str) -> Vec<(String, Vec<u8>)> {

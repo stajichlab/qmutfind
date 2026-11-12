@@ -42,6 +42,16 @@ impl Session {
         self.engine.set_min_indel_alt_reads(min_alt_reads);
     }
 
+    /// Drop calls with a QUAL below `min_qual`.
+    pub fn set_min_qual(&mut self, min_qual: f64) {
+        self.engine.set_min_qual(min_qual);
+    }
+
+    /// Drop calls deeper than `max_depth_ratio` times the median depth. 0 keeps all.
+    pub fn set_max_depth_ratio(&mut self, max_depth_ratio: f64) {
+        self.engine.set_max_depth_ratio(max_depth_ratio);
+    }
+
     /// Add a chunk of FASTQ bytes. A chunk can split a record anywhere.
     pub fn add_reads(&mut self, chunk: &[u8]) -> Result<(), JsError> {
         self.engine.add_reads(chunk).map_err(|e| JsError::new(&e))

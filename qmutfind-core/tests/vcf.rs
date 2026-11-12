@@ -3,7 +3,7 @@
 use qmutfind_core::{write_vcf, Call};
 
 fn call(pos: u64, reference: &str, alt: &str, depth: u32, alt_count: u32) -> Call {
-    Call { contig: "chrA".to_string(), pos, reference: reference.to_string(), alt: alt.to_string(), depth, alt_count, svlen: None }
+    Call { contig: "chrA".to_string(), pos, reference: reference.to_string(), alt: alt.to_string(), depth, alt_count, svlen: None, qual: None, depth_ratio: None }
 }
 
 fn render(calls: &[Call]) -> Vec<String> {

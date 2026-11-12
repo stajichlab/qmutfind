@@ -60,6 +60,9 @@ pub fn calls_from_freebayes_vcf<R: BufRead>(reader: R, config: &CallerConfig) ->
                 depth,
                 alt_count,
                 svlen: None,
+                // FreeBayes writes its own QUAL, from a different model than the one of the pileup caller.
+                qual: f[5].parse::<f64>().ok(),
+                depth_ratio: None,
             };
             if reference.len() == alt.len() && reference.len() > 1 {
                 // A multi-base substitution: one SNP for each differing base.

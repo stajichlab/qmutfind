@@ -93,6 +93,14 @@ fn call(args: &[String]) -> Result<(), String> {
         Some(v) => v.parse().map_err(|_| format!("--min-indel-alt-reads must be a whole number, not {v}"))?,
         None => CallerConfig::default_min_indel_alt_reads(kind),
     };
+    let float_flag = |name: &str| -> Result<f64, String> {
+        match flags.get(name) {
+            None => Ok(0.0),
+            Some(v) => v.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).ok_or_else(|| format!("--{name} must be a number of 0 or more, not {v}")),
+        }
+    };
+    let min_qual = float_flag("min-qual")?;
+    let max_depth_ratio = float_flag("max-depth-ratio")?;
     let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {
         min_depth: match flags.get("min-depth") {
@@ -110,6 +118,8 @@ fn call(args: &[String]) -> Result<(), String> {
     let mut caller = Caller::new(reference.clone(), config);
     caller.set_min_mapq(min_mapq);
     caller.set_min_indel_alt_reads(min_indel_alt_reads);
+    caller.set_min_qual(min_qual);
+    caller.set_max_depth_ratio(max_depth_ratio);
     let mut freebayes_calls = None;
     let mut engine_vcf: Option<String> = None;
     if aligner_name == "bwa-mem2" {
@@ -152,6 +162,8 @@ fn call(args: &[String]) -> Result<(), String> {
         engine.set_thresholds(config.min_depth, config.min_snp_fraction, config.min_indel_fraction);
         engine.set_min_mapq(min_mapq);
         engine.set_min_indel_alt_reads(min_indel_alt_reads);
+        engine.set_min_qual(min_qual);
+        engine.set_max_depth_ratio(max_depth_ratio);
         // Version 1 maps every read, including a second mate file, as an independent single-end read.
         let mut buffer = vec![0u8; 4 << 20];
         for path in &read_paths {

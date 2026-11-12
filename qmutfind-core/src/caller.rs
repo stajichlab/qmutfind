@@ -18,7 +18,7 @@ pub struct CallerConfig {
 }
 
 /// One called variant. `pos` is 1-based.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Call {
     pub contig: String,
     pub pos: u64,
@@ -28,6 +28,58 @@ pub struct Call {
     pub alt_count: u32,
     /// Set for a symbolic call (`alt` is `<INS>`): the inserted length.
     pub svlen: Option<usize>,
+    /// Phred-scaled probability that this many alternate reads come from sequencing error alone (a binomial tail
+    /// at the error rate estimated from the whole sample). It does not cover mapping errors: a call in a repeat
+    /// can have a high QUAL. `None` when the caller did not compute it.
+    pub qual: Option<f64>,
+    /// The depth at the call divided by the median depth of the sample. Near 1 is typical. Well above 1 suggests
+    /// reads from more than one copy of a repeat. `None` when not computed.
+    pub depth_ratio: Option<f64>,
+}
+
+/// Natural log of the gamma function (Lanczos approximation, g = 7).
+fn ln_gamma(x: f64) -> f64 {
+    const C: [f64; 9] = [
+        0.999_999_999_999_809_9, 676.520_368_121_885_1, -1_259.139_216_722_402_8, 771.323_428_777_653_1,
+        -176.615_029_162_140_6, 12.507_343_278_686_905, -0.138_571_095_265_720_12, 9.984_369_578_019_572e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        return (std::f64::consts::PI / (std::f64::consts::PI * x).sin()).ln() - ln_gamma(1.0 - x);
+    }
+    let x = x - 1.0;
+    let mut a = C[0];
+    let t = x + 7.5;
+    for (i, c) in C.iter().enumerate().skip(1) {
+        a += c / (x + i as f64);
+    }
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
+}
+
+/// Phred-scaled probability P(X >= k) for X ~ Binomial(n, e), at most `QUAL_MAX`.
+fn phred_binomial_tail(n: u32, k: u32, e: f64) -> f64 {
+    let (n, k) = (n as f64, k as f64);
+    let (ln_e, ln_q) = (e.ln(), (1.0 - e).ln());
+    let ln_choose = |i: f64| ln_gamma(n + 1.0) - ln_gamma(i + 1.0) - ln_gamma(n - i + 1.0);
+    let mut terms: Vec<f64> = Vec::new();
+    let mut i = k;
+    while i <= n {
+        terms.push(ln_choose(i) + i * ln_e + (n - i) * ln_q);
+        i += 1.0;
+    }
+    let max = terms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let ln_tail = max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln();
+    (-10.0 * ln_tail / std::f64::consts::LN_10).clamp(0.0, QUAL_MAX)
+}
+
+/// The largest QUAL written. A binomial tail below this is far beyond what the error model can support.
+pub const QUAL_MAX: f64 = 999.0;
+
+/// What `calls` learns from the whole sample: the median depth and the error rates that QUAL uses.
+struct SampleStats {
+    median_depth: f64,
+    snp_error: f64,
+    indel_error: f64,
 }
 
 /// Reads that support one insertion, with base counts per inserted position.
@@ -47,6 +99,10 @@ pub struct Caller {
     config: CallerConfig,
     min_mapq: u8,
     min_indel_alt_reads: u32,
+    /// Calls with a lower QUAL are dropped. 0 keeps all.
+    min_qual: f64,
+    /// Calls with a larger depth ratio are dropped. 0 means no limit.
+    max_depth_ratio: f64,
 }
 
 fn base_index(b: u8) -> Option<usize> {
@@ -100,7 +156,7 @@ impl CallerConfig {
 impl Caller {
     pub fn new(reference: Vec<(String, Vec<u8>)>, config: CallerConfig) -> Self {
         let counts = reference.iter().map(|(_, s)| vec![[0u16; 4]; s.len()]).collect();
-        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config, min_mapq: 0, min_indel_alt_reads: 0 }
+        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config, min_mapq: 0, min_indel_alt_reads: 0, min_qual: 0.0, max_depth_ratio: 0.0 }
     }
 
     /// Ignore alignments with a mapping quality below `min_mapq`. The default is 0, which keeps all.
@@ -121,6 +177,26 @@ impl Caller {
     /// The minimum number of reads for an indel in use.
     pub fn min_indel_alt_reads(&self) -> u32 {
         self.min_indel_alt_reads
+    }
+
+    /// Drop calls with a QUAL below `min_qual`. The default is 0, which keeps all.
+    pub fn set_min_qual(&mut self, min_qual: f64) {
+        self.min_qual = min_qual;
+    }
+
+    /// The minimum QUAL in use.
+    pub fn min_qual(&self) -> f64 {
+        self.min_qual
+    }
+
+    /// Drop calls whose depth is more than `max_depth_ratio` times the median depth. 0 (the default) keeps all.
+    pub fn set_max_depth_ratio(&mut self, max_depth_ratio: f64) {
+        self.max_depth_ratio = max_depth_ratio;
+    }
+
+    /// The maximum depth ratio in use.
+    pub fn max_depth_ratio(&self) -> f64 {
+        self.max_depth_ratio
     }
 
     /// Replace the thresholds. Call before `calls`.
@@ -189,8 +265,45 @@ impl Caller {
         }
     }
 
+    /// The median depth over covered positions, the rate of non-reference bases (SNP error) and the rate of indel
+    /// events per aligned base (indel error). The rates have a small floor so that QUAL stays finite.
+    fn sample_stats(&self) -> SampleStats {
+        let mut histogram = vec![0u64; 2_001];
+        let (mut covered, mut total_depth, mut non_reference) = (0u64, 0u64, 0u64);
+        for (ci, (_, seq)) in self.reference.iter().enumerate() {
+            for (pos, c) in self.counts[ci].iter().enumerate() {
+                let depth: u64 = c.iter().map(|&x| x as u64).sum();
+                if depth == 0 {
+                    continue;
+                }
+                covered += 1;
+                total_depth += depth;
+                histogram[(depth as usize).min(2_000)] += 1;
+                if let Some(r) = base_index(seq[pos]) {
+                    non_reference += depth - c[r] as u64;
+                }
+            }
+        }
+        let mut seen = 0u64;
+        let mut median = 0usize;
+        for (d, &n) in histogram.iter().enumerate() {
+            seen += n;
+            if covered > 0 && seen * 2 >= covered {
+                median = d;
+                break;
+            }
+        }
+        let indel_events: u64 = self.deletions.values().map(|&n| n as u64).sum::<u64>() + self.insertions.values().map(|e| e.count as u64).sum::<u64>();
+        let rate = |events: u64, floor: f64| if total_depth == 0 { floor } else { (events as f64 / total_depth as f64).max(floor) };
+        SampleStats { median_depth: median as f64, snp_error: rate(non_reference, 1e-6), indel_error: rate(indel_events, 1e-7) }
+    }
+
     /// All calls, in reference order.
     pub fn calls(&self) -> Vec<Call> {
+        let stats = self.sample_stats();
+        let depth_ratio = |depth: u32| if stats.median_depth > 0.0 { Some(depth as f64 / stats.median_depth) } else { None };
+        let snp_qual = |depth: u32, alt: u32| Some(phred_binomial_tail(depth, alt, stats.snp_error));
+        let indel_qual = |depth: u32, alt: u32| Some(phred_binomial_tail(depth, alt, stats.indel_error));
         let mut out: Vec<(usize, Call)> = Vec::new();
         for (ci, (name, seq)) in self.reference.iter().enumerate() {
             for (pos, c) in self.counts[ci].iter().enumerate() {
@@ -215,6 +328,8 @@ impl Caller {
                         depth,
                         alt_count,
                         svlen: None,
+                        qual: snp_qual(depth, alt_count),
+                        depth_ratio: depth_ratio(depth),
                     }));
                 }
             }
@@ -237,6 +352,8 @@ impl Caller {
                     depth,
                     alt_count,
                     svlen: None,
+                    qual: indel_qual(depth, alt_count),
+                    depth_ratio: depth_ratio(depth),
                 }));
             }
         }
@@ -269,6 +386,8 @@ impl Caller {
                     depth,
                     alt_count,
                     svlen: None,
+                    qual: indel_qual(depth, alt_count),
+                    depth_ratio: depth_ratio(depth),
                 }));
             }
         }
@@ -291,12 +410,18 @@ impl Caller {
                         depth,
                         alt_count: support,
                         svlen: Some(svlen),
+                        qual: indel_qual(depth, support),
+                        depth_ratio: depth_ratio(depth),
                     }));
                 }
             }
         }
         out.sort_by_key(|(ci, c)| (*ci, c.pos));
-        out.into_iter().map(|(_, c)| c).collect()
+        out.into_iter()
+            .map(|(_, c)| c)
+            .filter(|c| c.qual.map_or(true, |q| q >= self.min_qual))
+            .filter(|c| self.max_depth_ratio <= 0.0 || c.depth_ratio.map_or(true, |r| r <= self.max_depth_ratio))
+            .collect()
     }
 }
 

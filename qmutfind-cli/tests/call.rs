@@ -456,3 +456,42 @@ fn a_bad_min_indel_alt_reads_value_is_rejected_with_the_flag_name() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--min-indel-alt-reads must be a whole number"));
 }
+
+fn call_rows(dir: &Path, extra: &[&str]) -> Vec<Vec<String>> {
+    let status = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1", "--preset", "short", "--out", "out.vcf"])
+        .args(extra)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    records(&fs::read_to_string(dir.join("out.vcf")).unwrap())
+}
+
+#[test]
+fn call_writes_a_qual_and_a_depth_ratio_for_each_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_snp_reads(dir.path(), &seq, if seq[30_000] == b'G' { b'T' } else { b'G' });
+
+    let rows = call_rows(dir.path(), &[]);
+
+    assert_eq!(rows.len(), 1);
+    let qual: f64 = rows[0][5].parse().expect("QUAL is a number");
+    assert!(qual > 20.0, "{qual}");
+    assert!(rows[0][7].contains(";DPR="), "{}", rows[0][7]);
+}
+
+#[test]
+fn min_qual_and_max_depth_ratio_drop_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_snp_reads(dir.path(), &seq, if seq[30_000] == b'G' { b'T' } else { b'G' });
+
+    assert_eq!(call_rows(dir.path(), &["--min-qual", "1000"]).len(), 0); // above the cap of 999
+    assert_eq!(call_rows(dir.path(), &["--min-qual", "20"]).len(), 1);
+    assert_eq!(call_rows(dir.path(), &["--max-depth-ratio", "0.01"]).len(), 0);
+    assert_eq!(call_rows(dir.path(), &["--max-depth-ratio", "50"]).len(), 1);
+}

@@ -30,6 +30,7 @@ pub fn write_vcf<W: Write>(
     writeln!(out, "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth at the site (at the anchor base for an indel)\">")?;
     writeln!(out, "##INFO=<ID=AO,Number=A,Type=Integer,Description=\"Reads that support the alternate allele\">")?;
     writeln!(out, "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Alternate allele fraction, AO divided by DP\">")?;
+    writeln!(out, "##INFO=<ID=DPR,Number=1,Type=Float,Description=\"Depth at the call divided by the median depth of the sample\">")?;
     writeln!(out, "##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type of structural variant\">")?;
     writeln!(out, "##INFO=<ID=SVLEN,Number=.,Type=Integer,Description=\"Length of the structural variant, estimated from reads\">")?;
     writeln!(out, "##INFO=<ID=IMPRECISE,Number=0,Type=Flag,Description=\"Position and length are estimates from reads\">")?;
@@ -46,10 +47,12 @@ pub fn write_vcf<W: Write>(
             Some(len) => format!(";SVTYPE=INS;SVLEN={len};IMPRECISE"),
             None => String::new(),
         };
+        let qual = c.qual.map(|q| format!("{q:.1}")).unwrap_or_else(|| ".".to_string());
+        let dpr = c.depth_ratio.map(|r| format!(";DPR={r:.2}")).unwrap_or_default();
         writeln!(
             out,
-            "{}\t{}\t.\t{}\t{}\t.\tPASS\tSAMPLE={};CLASS={};DP={};AO={};AF={:.4}{}",
-            c.contig, c.pos, c.reference, c.alt, sample, class_name(class), c.depth, c.alt_count, af, sv
+            "{}\t{}\t.\t{}\t{}\t{}\tPASS\tSAMPLE={};CLASS={};DP={};AO={};AF={:.4}{}{}",
+            c.contig, c.pos, c.reference, c.alt, qual, sample, class_name(class), c.depth, c.alt_count, af, dpr, sv
         )?;
     }
     Ok(())
