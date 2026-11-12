@@ -31,10 +31,14 @@ def _pick_contig(reference, rng):
     return rng.choices(names, weights=[len(reference[n]) for n in names])[0]
 
 
-def _make_variant(reference, klass, rng):
-    contig = _pick_contig(reference, rng)
+def _make_variant(reference, klass, rng, site=None):
+    """One random variant of class `klass`. `site` is (contig, pos) to place it at a chosen position."""
+    if site is None:
+        contig = _pick_contig(reference, rng)
+        pos = rng.randint(END_MARGIN, len(reference[contig]) - END_MARGIN - LARGE_INDEL_LEN[1])
+    else:
+        contig, pos = site
     seq = reference[contig]
-    pos = rng.randint(END_MARGIN, len(seq) - END_MARGIN - LARGE_INDEL_LEN[1])
     if klass == "SNP":
         ref = seq[pos - 1]
         alt = rng.choice([b for b in "ACGT" if b != ref])
@@ -126,30 +130,73 @@ def _usable(candidate, reference):
     return set(footprint) <= set("ACGT")
 
 
-def _too_close(candidate, taken):
+def _too_close(candidate, taken, spacing=MIN_SPACING):
     start, end = candidate.pos, candidate.pos + len(candidate.ref) - 1
     for s, e in taken.get(candidate.contig, ()):
-        if not (start - e >= MIN_SPACING or s - end >= MIN_SPACING):
+        if not (start - e >= spacing or s - end >= spacing):
             return True
     return False
 
 
-def design_variants(reference, n_snp, n_small, n_large, seed, max_attempts=1000):
+def _homopolymer_indel(reference, rng):
+    """A one-base indel in a run of four or more identical bases: one more or one fewer copy of the base.
+    The VCF anchor is the base before the run. Returns None when no run is found near the random start."""
+    contig = _pick_contig(reference, rng)
+    seq = reference[contig]
+    start = rng.randint(END_MARGIN, len(seq) - END_MARGIN - 5_000)
+    for i in range(start, start + 5_000):
+        base = seq[i]
+        if base in "ACGT" and seq[i : i + 4] == base * 4 and seq[i - 1] != base:
+            anchor = seq[i - 1]
+            if rng.random() < 0.5:  # delete one copy of the base
+                return Variant(contig, i, anchor + base, anchor, "SMALL_INDEL")
+            return Variant(contig, i, anchor, anchor + base, "SMALL_INDEL")  # add one copy
+    return None
+
+
+def _cluster_site(taken, rng):
+    """A (contig, pos) 6 to 40 bp from a variant that is already placed."""
+    contig = rng.choice(sorted(taken))
+    start, end = rng.choice(taken[contig])
+    offset = rng.randint(6, 40)
+    return contig, (end + offset if rng.random() < 0.5 else max(1, start - offset))
+
+
+def design_variants(reference, n_snp, n_small, n_large, seed, max_attempts=1000,
+                    min_spacing=MIN_SPACING, homopolymer_fraction=0.0, cluster_fraction=0.0):
+    """Design the variants. `homopolymer_fraction` of the small indels are one-base indels in
+    homopolymer runs. `cluster_fraction` of the other variants are placed 6 to 40 bp from an earlier
+    one. Both make the truth set harder than uniform random positions."""
     rng = random.Random(seed)
-    klasses = ["SNP"] * n_snp + ["SMALL_INDEL"] * n_small + ["LARGE_INDEL"] * n_large
+    n_homopolymer = round(homopolymer_fraction * n_small)
+    plan = (
+        [("SNP", False)] * n_snp
+        + [("SMALL_INDEL", True)] * n_homopolymer
+        + [("SMALL_INDEL", False)] * (n_small - n_homopolymer)
+        + [("LARGE_INDEL", False)] * n_large
+    )
     taken = {}
     variants = []
-    for klass in klasses:
+    for klass, homopolymer in plan:
+        placed = None
         for _ in range(max_attempts):
-            cand = _make_variant(reference, klass, rng)
-            if _usable(cand, reference) and not _too_close(cand, taken):
+            clustered = (not homopolymer) and bool(variants) and rng.random() < cluster_fraction
+            if homopolymer:
+                cand = _homopolymer_indel(reference, rng)
+                if cand is None:
+                    continue
+            else:
+                site = _cluster_site(taken, rng) if clustered else None
+                cand = _make_variant(reference, klass, rng, site)
+            if cand.pos < END_MARGIN or cand.pos + len(cand.ref) > len(reference[cand.contig]) - END_MARGIN:
+                continue
+            if _usable(cand, reference) and not _too_close(cand, taken, 5 if clustered else min_spacing):
+                placed = cand
                 break
-        else:
-            raise ValueError(
-                f"could not place a {klass} with spacing {MIN_SPACING} after {max_attempts} attempts"
-            )
-        taken.setdefault(cand.contig, []).append((cand.pos, cand.pos + len(cand.ref) - 1))
-        variants.append(cand)
+        if placed is None:
+            raise ValueError(f"could not place a {klass} after {max_attempts} attempts (spacing {min_spacing})")
+        taken.setdefault(placed.contig, []).append((placed.pos, placed.pos + len(placed.ref) - 1))
+        variants.append(placed)
     return variants
 
 
@@ -161,11 +208,16 @@ def main(argv=None):
     ap.add_argument("--snps", type=int, default=0)
     ap.add_argument("--small-indels", type=int, default=0)
     ap.add_argument("--large-indels", type=int, default=0)
+    ap.add_argument("--min-spacing", type=int, default=MIN_SPACING, help="bp between variants (default 200)")
+    ap.add_argument("--homopolymer-fraction", type=float, default=0.0, help="share of small indels placed in homopolymer runs")
+    ap.add_argument("--cluster-fraction", type=float, default=0.0, help="share of variants placed close to an earlier one")
     args = ap.parse_args(argv)
 
     reference = read_fasta(args.reference)
     variants = design_variants(
-        reference, args.snps, args.small_indels, args.large_indels, args.seed
+        reference, args.snps, args.small_indels, args.large_indels, args.seed,
+        min_spacing=args.min_spacing, homopolymer_fraction=args.homopolymer_fraction,
+        cluster_fraction=args.cluster_fraction,
     )
     with open(f"{args.out_prefix}.mutated.fa", "w") as fh:
         write_fasta(apply_variants(reference, variants), fh)

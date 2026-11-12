@@ -1,4 +1,5 @@
 import gzip
+import random
 import io
 from collections import Counter
 
@@ -164,3 +165,67 @@ def test_applying_variants_changes_each_contig_length_by_inserted_minus_deleted(
             len(v.alt) - len(v.ref) for v in variants if v.contig == contig
         )
         assert len(mutated[contig]) == len(seq) + delta
+
+
+def _positions_by_contig(variants):
+    out = {}
+    for v in variants:
+        out.setdefault(v.contig, []).append((v.pos, v.pos + len(v.ref) - 1))
+    return {c: sorted(spans) for c, spans in out.items()}
+
+
+def test_min_spacing_is_a_setting_and_a_smaller_value_allows_closer_variants():
+    ref = {"c": "".join(random.Random(3).choice("ACGT") for _ in range(8_000))}
+
+    variants = design_variants(ref, n_snp=40, n_small=0, n_large=0, seed=1, min_spacing=30)
+
+    spans = _positions_by_contig(variants)["c"]
+    gaps = [b[0] - a[1] for a, b in zip(spans, spans[1:])]
+    assert min(gaps) >= 30
+    assert min(gaps) < 200  # with 200 bp spacing the smallest gap could not be this small
+
+
+def test_homopolymer_fraction_puts_that_share_of_small_indels_in_runs_of_four_or_more_bases():
+    rng = random.Random(5)
+    ref = {"c": "".join(rng.choice("ACGT") for _ in range(120_000))}
+
+    variants = design_variants(ref, n_snp=0, n_small=40, n_large=0, seed=2, homopolymer_fraction=1.0)
+
+    seq = ref["c"]
+    assert len(variants) == 40
+    for v in variants:
+        assert v.klass == "SMALL_INDEL"
+        assert abs(len(v.ref) - len(v.alt)) == 1  # one base
+        # The changed base is the run: seq[pos:pos+4] (0-based, after the anchor) is four copies of it.
+        changed = v.ref[1:] if len(v.ref) > len(v.alt) else v.alt[1:]
+        assert seq[v.pos : v.pos + 4] == changed * 4, v
+
+
+def test_a_homopolymer_fraction_below_one_leaves_the_rest_of_the_small_indels_ordinary():
+    rng = random.Random(6)
+    ref = {"c": "".join(rng.choice("ACGT") for _ in range(120_000))}
+
+    variants = design_variants(ref, n_snp=0, n_small=60, n_large=0, seed=3, homopolymer_fraction=0.5)
+
+    in_run = 0
+    for v in variants:
+        changed = v.ref[1:] if len(v.ref) > len(v.alt) else v.alt[1:]
+        if len(changed) == 1 and ref["c"][v.pos : v.pos + 4] == changed * 4:
+            in_run += 1
+    assert 30 <= in_run <= 45  # 30 are placed in runs by design; a few ordinary indels land in one by chance
+
+
+def test_cluster_fraction_places_variants_close_to_an_earlier_one_without_overlapping_it():
+    rng = random.Random(7)
+    ref = {"c": "".join(rng.choice("ACGT") for _ in range(200_000))}
+
+    variants = design_variants(ref, n_snp=80, n_small=20, n_large=0, seed=4, cluster_fraction=0.5)
+
+    spans = _positions_by_contig(variants)["c"]
+    close = 0
+    for i, (s, e) in enumerate(spans):
+        assert i == 0 or s > spans[i - 1][1], "variants overlap"
+        near_before = i > 0 and s - spans[i - 1][1] <= 40
+        near_after = i + 1 < len(spans) and spans[i + 1][0] - e <= 40
+        close += near_before or near_after
+    assert close >= 40  # half of the 100 variants were placed within 40 bp of another, so at least this many are close
