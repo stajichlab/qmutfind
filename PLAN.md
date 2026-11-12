@@ -24,7 +24,13 @@ CI passed on GitHub on 2026-11-12 for the commit before the effect annotation; l
 - `README.md` documents the commands. `examples/browser` is a page and a worker. `pixi run test-browser` runs it in headless
   Firefox (Selenium, SpiderMonkey engine) on a small synthetic data set: the VCF, statistics and report equal the native CLI
   output byte for byte (plain and gzip input), and a truncated reads file shows an error (3 tests pass; a mutation check that
-  hard-coded the sample name made 2 fail, 2026-11-12). Not measured: Chrome, Safari, large real data in a browser.
+  hard-coded the sample name made 2 fail, 2026-11-12). Full-size real data, 2026-11-12 (headless Firefox, one worker, reads files via the page's file inputs): EVOL20_3
+  (SRR6277229, 2,854,974 reads, 2 gzip files) finished in 63.9 s (66 s wall) and gave a VCF byte-identical to the native
+  CLI with current defaults (49 calls; native 40.5 s). Peak resident memory of all Firefox processes: 1,484 MB (sampled
+  every 2 s, so a short peak could be missed). A test found a real bug: Firefox's `DecompressionStream` fails on
+  multi-member gzip (the `parallel-fastq-dump` output has 4 members), so the page now uses the vendored `fflate` (MIT);
+  a test covers it. Not measured: Chrome, Safari, the larger parent sample (6.07M reads), Nanopore data in a browser.
+  Note: the older `engine_*.vcf` files in `evol20/` were made before the mapq 20 default and are not comparable.
 Not built: the statistics that need depth, the reference or per-strand counts (callable-genome rate,
 trinucleotide context, strand bias, expected N:S), the "possible large indel, unresolved" report for short
 reads, base-quality filtering, the genomics-wasm BWA-MEM2 and FreeBayes builds, a real-browser test, a
