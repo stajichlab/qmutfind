@@ -6,6 +6,8 @@
 //! Contig c2 (40 bp), a minus-strand gene, one exon 11-22, CDS 11-22, coding strand ATG AAA CCC TAA (M K P *).
 //! Contig c3 (60 bp), a minus-strand gene, exon 11-40, CDS 20-31: forward 32-40 is the 5' UTR, 11-19 the 3' UTR.
 //! Contig c4 (60 bp), a plus-strand non-coding RNA, exons 11-20 and 31-40, intron 21-30.
+//! Contig c5 (80 bp), two overlapping plus-strand genes. P: exon 11-60, CDS 50-58 (so 11-49 is its 5' UTR).
+//! Q: exon 25-45, CDS 28-42 (ATG GCT GAA CGT AAA). Position 35 is in P's UTR and in the CDS of Q.
 
 use qmutfind_core::{annotate_text, annotate_vcf, classify_effect, Annotation, Genome};
 
@@ -28,6 +30,13 @@ fn c2() -> Vec<u8> {
     s.into_bytes()
 }
 
+fn c5() -> Vec<u8> {
+    // 1-27 filler, 28-42 CDS of Q, 43-49 filler, 50-58 CDS of P (ATGAAAAAA), 59-80 filler
+    let s = format!("{}ATGGCTGAACGTAAA{}ATGAAAAAA{}", "T".repeat(27), "T".repeat(7), "T".repeat(22));
+    assert_eq!(s.len(), 80);
+    s.into_bytes()
+}
+
 const GFF: &str = "##gff-version 3
 c1\tsrc\tgene\t21\t110\t.\t+\t.\tID=gene1;locus_tag=G1
 c1\tsrc\tmRNA\t21\t110\t.\t+\t.\tID=tx1;Parent=gene1
@@ -47,6 +56,14 @@ c4\tsrc\tgene\t11\t40\t.\t+\t.\tID=gene4;locus_tag=G4
 c4\tsrc\tncRNA\t11\t40\t.\t+\t.\tID=tx4;Parent=gene4
 c4\tsrc\texon\t11\t20\t.\t+\t.\tParent=tx4
 c4\tsrc\texon\t31\t40\t.\t+\t.\tParent=tx4
+c5\tsrc\tgene\t11\t60\t.\t+\t.\tID=geneP;locus_tag=GP
+c5\tsrc\tmRNA\t11\t60\t.\t+\t.\tID=txP;Parent=geneP
+c5\tsrc\texon\t11\t60\t.\t+\t.\tParent=txP
+c5\tsrc\tCDS\t50\t58\t.\t+\t0\tParent=txP
+c5\tsrc\tgene\t25\t45\t.\t+\t.\tID=geneQ;locus_tag=GQ
+c5\tsrc\tmRNA\t25\t45\t.\t+\t.\tID=txQ;Parent=geneQ
+c5\tsrc\texon\t25\t45\t.\t+\t.\tParent=txQ
+c5\tsrc\tCDS\t28\t42\t.\t+\t0\tParent=txQ
 ";
 
 fn setup() -> (Annotation, Genome) {
@@ -56,6 +73,7 @@ fn setup() -> (Annotation, Genome) {
         ("c2".to_string(), c2()),
         ("c3".to_string(), "T".repeat(60).into_bytes()),
         ("c4".to_string(), "T".repeat(60).into_bytes()),
+        ("c5".to_string(), c5()),
     ]);
     (ann, genome)
 }
@@ -170,7 +188,8 @@ fn an_indel_in_the_cds_is_a_frameshift_unless_its_length_is_a_multiple_of_three(
     assert_eq!(effect("c1", 30, "GA", "G").0, "frameshift");
     assert_eq!(effect("c1", 30, "GAAC", "G").0, "inframe_deletion");
     assert_eq!(effect("c1", 30, "G", "GT").0, "frameshift");
-    assert_eq!(effect("c1", 30, "G", "GTTT").0, "inframe_insertion");
+    // GGG keeps the reading frame and makes no stop. (TTT would give GCT GTT TAA: a new stop, tested below.)
+    assert_eq!(effect("c1", 30, "G", "GGGG").0, "inframe_insertion");
     // Four and five bases are frameshifts too, not only one and two.
     assert_eq!(effect("c1", 30, "GAACG", "G").0, "frameshift");
     assert_eq!(effect("c1", 30, "G", "GTTTTT").0, "frameshift");
@@ -309,4 +328,56 @@ fn annotate_text_reports_a_bad_gff_or_an_empty_reference_as_an_error() {
 
     assert!(annotate_text(&vcf, fasta.as_bytes(), Some(b"c1\tsrc\tgene\tnot-a-number\t5\t.\t+\t.\tID=g\n")).is_err());
     assert!(annotate_text(&vcf, b"", Some(GFF.as_bytes())).is_err());
+}
+
+
+// ---- found by comparing with bcftools csq on 3,700 variants ----
+
+#[test]
+fn a_variant_in_the_utr_of_one_gene_and_the_cds_of_another_gets_the_more_severe_effect() {
+    // c5 position 35 is in P's 5' UTR (P starts first) and in Q's codon 3 (GAA, 34-36). A to G gives GGA: E to G.
+    let (ann, genome) = setup();
+
+    let e = classify_effect(&ann, &genome, "c5", 35, "A", "G");
+
+    assert_eq!((e.label.as_str(), e.aa.as_deref(), e.gene.as_deref()), ("missense", Some("E3G"), Some("GQ")));
+}
+
+#[test]
+fn an_indel_whose_anchor_is_outside_the_transcript_is_judged_by_the_bases_it_affects() {
+    // c1 18-20 are intergenic T, 21-23 are the 5' UTR CAC, 24 is the start of the CDS.
+    // Delete 21-23, anchored at 20: every deleted base is in the UTR.
+    assert_eq!(effect("c1", 20, "TCAC", "T").0, "5UTR_derived");
+    // Delete 19-24, anchored at 18: two deleted bases are outside, three are UTR and one is CDS.
+    assert_eq!(effect("c1", 18, "TTTCACA", "T").0, "complex");
+}
+
+#[test]
+fn an_in_frame_insertion_or_deletion_that_gains_a_stop_loses_the_stop_or_loses_the_start_is_not_just_in_frame() {
+    // Insert TAA between codon 3 (30-32) and codon 4: a new stop. Insert GGG: no stop.
+    assert_eq!(effect("c1", 32, "A", "ATAA").0, "nonsense");
+    assert_eq!(effect("c1", 32, "A", "AGGG").0, "inframe_insertion");
+    // Delete the stop codon TAA (102-104), anchored at 101.
+    assert_eq!(effect("c1", 101, "CTAA", "C").0, "stop_lost");
+    // Delete the start codon ATG (24-26), anchored at 23.
+    assert_eq!(effect("c1", 23, "CATG", "C").0, "start_lost");
+    // Delete codon 16 (TGC, 99-101), anchored at 98: only the protein is shorter.
+    assert_eq!(effect("c1", 98, "ATGC", "A").0, "inframe_deletion");
+}
+
+#[test]
+fn an_in_frame_indel_that_gains_a_stop_on_the_minus_strand_is_found_the_same_way() {
+    // c2 forward 11-22 is TTAGGGTTTCAT, coding ATGAAACCCTAA (M K P *), codon 2 is forward 17-19.
+    // Insert the coding bases TAA after codon 1, which is the forward bases TTA between 19 and 20.
+    // Forward insertion TTA after position 19 reads as TAA on the coding strand: a new stop.
+    assert_eq!(effect("c2", 19, "T", "TTTA").0, "nonsense");
+}
+
+#[test]
+fn a_deletion_anchored_on_the_last_base_of_a_gene_but_deleting_only_intergenic_bases_is_intergenic() {
+    // c1 105-110 is the 3' UTR and the transcript ends at 110. Bases 111 and 112 are intergenic.
+    // Delete 111-112, anchored at 110 (the anchor is in the gene, the deleted bases are not).
+    assert_eq!(effect("c1", 110, "CTT", "C").0, "intergenic");
+    // Delete 110-111 (anchored at 109): one deleted base is in the UTR and one is not, so it is complex.
+    assert_eq!(effect("c1", 109, "CCT", "C").0, "complex");
 }

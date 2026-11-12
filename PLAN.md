@@ -568,6 +568,34 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      CONFIRMED with the real binary (release build, `--preset long`, defaults): seed 2 SNP 2,974 / 1, small
      indel 549 / 72, large 99 of 100 / 0 false; seed 1 SNP 2,991 / 0, small indel 571 / 16, large 100 of 100 /
      0 false. These equal the offline numbers.
+   - INDEPENDENT CHECK OF THE EFFECT LABELS AGAINST `bcftools csq` 1.25 (2026-11-12; `bcftools csq -l -f ref -g
+     RefSeq GFF3` in local, one-variant-at-a-time mode, which indexed 9,895 transcripts, 30,114 CDS and 0 UTRs;
+     `bench/compare_annotation.py`, 35 tests; compared on my canonical transcript, matching csq's empty
+     transcript field on intron entries by gene, with gene Name aliases from the GFF). Variants: the 3,700
+     simulated truth variants of seed 1, annotated by `qmutfind annotate` and by `csq`. First run found
+     three real flaws in my classifier, each fixed test-first: (1) the first overlapping transcript was
+     reported, so a variant in one gene's UTR and another gene's CDS got the weaker label (118 variants);
+     (2) an indel anchored outside a transcript but affecting it was labeled intergenic (3); (3) an in-frame
+     insertion or deletion that gains a stop, loses the stop or loses the start codon was labeled only
+     in-frame (18; csq: stop_gained). A fourth flaw was found on real data and fixed: a deletion whose anchor
+     is the last base of a gene but whose deleted bases are intergenic was `unclassified`; deletions are now
+     judged by the deleted bases only. Final result on the 3,700: effect agrees 2,086, disagrees 32, both
+     silent (intergenic) 1,055, csq silent where I label a gene 4 (2 non-coding RNA, 2 complex), my UTR
+     labels where csq says intron 512 (csq has no UTR features), not comparable 11. All 32 disagreements are
+     my `intron_derived` (30) or `5UTR_derived` (2) against csq `splice_region`, which csq extends to 8 bases
+     into the intron while my `splice_site` is the first and last two bases (a difference of definition, not
+     an error; no new label was added). Coding SNPs with an amino-acid change reported by both: 1,553, all
+     identical in residue, codon number and new residue. Real calls: EVOL20 103 variants, 16 agree, 0 disagree,
+     8 UTR-versus-intron, 9 of 9 amino-acid changes identical; parent 75 variants, 20 agree, 0 disagree, 9 of 9
+     identical. Statistics cross-check against `bcftools stats`: SNP and indel counts, transitions,
+     transversions and Ts/Tv are identical on the truth VCF (3,000 / 700 / 1,023 / 1,977 / 0.52) and on the
+     EVOL20 calls (68 / 35 / 56 / 12 / 4.67).
+     Limits: `csq` is a second implementation, not ground truth, and shares my reading of the GFF. The
+     Af293 GFF has no mitochondrial contig and no `transl_table`, so the genetic-code handling is untested
+     on real data. None of the 9,823 transcripts has a first-CDS phase other than 0, so my code, which
+     ignores the GFF phase column, was not tested on partial CDS (it would be wrong on a GFF that has them).
+     `csq` with `-p a` (haplotype mode) writes `BCSQ=@pos` pointers and looks silent for those records;
+     local mode (`-l`) was used. SnpEff was not run.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and

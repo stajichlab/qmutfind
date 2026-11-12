@@ -63,6 +63,16 @@ impl Transcript {
         None
     }
 
+    /// The coding sequence in transcript direction (reverse complemented on the minus strand).
+    fn coding_sequence(&self, genome: &Genome) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.cds_len() as usize);
+        for idx in 0..self.cds_len() {
+            let base = genome.base(&self.contig, self.position_of(idx)?)?.to_ascii_uppercase();
+            out.push(if self.strand == Strand::Minus { complement(base) } else { base });
+        }
+        Some(out)
+    }
+
     /// Genomic position of coding index `idx`.
     fn position_of(&self, idx: u64) -> Option<u64> {
         let mut left = idx;
@@ -338,24 +348,62 @@ fn region_label(region: Region) -> &'static str {
     }
 }
 
-/// Classify one variant given in VCF form (an indel has one anchor base).
+/// How serious an effect is, for choosing among transcripts that overlap a variant. Lower is more serious.
+fn severity(label: &str) -> u8 {
+    match label {
+        "nonsense" => 0,
+        "start_lost" => 1,
+        "stop_lost" => 2,
+        "frameshift" => 3,
+        "splice_site" => 4,
+        "large_indel_in_cds" => 5,
+        "inframe_deletion" => 6,
+        "inframe_insertion" => 7,
+        "missense" => 8,
+        "complex" => 9,
+        "synonymous" => 10,
+        "5UTR_derived" => 11,
+        "3UTR_derived" => 12,
+        "non_coding" => 13,
+        "intron_derived" => 14,
+        _ => 15,
+    }
+}
+
+/// Classify one variant given in VCF form (an indel has one anchor base). Every canonical transcript
+/// that overlaps the bases the variant affects is judged, and the most serious effect is returned.
 pub fn classify_effect(ann: &Annotation, genome: &Genome, contig: &str, pos: u64, reference: &str, alt: &str) -> Effect {
     let Some(txs) = ann.by_contig.get(contig) else {
         return effect_of("intergenic", None, None, ann);
     };
+    // The bases a variant affects: a SNP its base, a deletion the deleted bases (not the anchor), an
+    // insertion the two bases on either side.
+    let (span_start, span_end) = if reference.len() > alt.len() {
+        let anchored = reference.as_bytes()[0] == alt.as_bytes()[0];
+        let first = if anchored { pos + 1 } else { pos };
+        (first, pos + reference.len() as u64 - 1)
+    } else if reference.len() == alt.len() {
+        (pos, pos + reference.len() as u64 - 1)
+    } else {
+        (pos, pos + 1)
+    };
+    let mut best: Option<Effect> = None;
     for tx in txs {
-        if pos < tx.start() || pos > tx.end() {
+        if tx.start() > span_end || tx.end() < span_start {
             continue;
         }
-        if reference.len() == 1 && alt.len() == 1 {
-            return snp_effect(ann, genome, tx, pos, alt.as_bytes()[0]);
+        let effect = if reference.len() == 1 && alt.len() == 1 {
+            snp_effect(ann, genome, tx, pos, alt.as_bytes()[0])
+        } else if reference.len() == alt.len() {
+            effect_of("unclassified", Some(tx), None, ann) // a multi-base substitution
+        } else {
+            indel_effect(ann, genome, tx, pos, reference, alt)
+        };
+        if best.as_ref().map_or(true, |b| severity(&effect.label) < severity(&b.label)) {
+            best = Some(effect);
         }
-        if reference.len() == alt.len() {
-            return effect_of("unclassified", Some(tx), None, ann); // a multi-base substitution
-        }
-        return indel_effect(ann, tx, pos, reference, alt);
     }
-    effect_of("intergenic", None, None, ann)
+    best.unwrap_or_else(|| effect_of("intergenic", None, None, ann))
 }
 
 /// The effect of a SNP at `pos`, which lies between the first and last base of `tx`.
@@ -369,7 +417,7 @@ fn snp_effect(ann: &Annotation, genome: &Genome, tx: &Transcript, pos: u64, alt:
 /// The effect of an insertion or deletion. The bases it affects are the deleted bases, or for an
 /// insertion the two bases on either side. A splice site base anywhere makes it a splice site
 /// variant. Otherwise all affected bases must lie in one region, or the variant is complex.
-fn indel_effect(ann: &Annotation, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Effect {
+fn indel_effect(ann: &Annotation, genome: &Genome, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Effect {
     let symbolic = alt.starts_with('<');
     let net = reference.len() as i64 - alt.len() as i64;
     let affected: Vec<u64> = if !symbolic && net > 0 {
@@ -386,8 +434,8 @@ fn indel_effect(ann: &Annotation, tx: &Transcript, pos: u64, reference: &str, al
         match regions[0] {
             Region::Cds if symbolic => "large_indel_in_cds",
             Region::Cds if net % 3 != 0 => "frameshift",
-            Region::Cds if net > 0 => "inframe_deletion",
-            Region::Cds => "inframe_insertion",
+            Region::Cds => inframe_protein_effect(genome, tx, pos, reference, alt)
+                .unwrap_or(if net > 0 { "inframe_deletion" } else { "inframe_insertion" }),
             other => region_label(other),
         }
     } else {
@@ -506,4 +554,44 @@ pub fn annotate_text(vcf: &str, reference_fasta: &[u8], gff: Option<&[u8]>) -> R
     let mut out = Vec::new();
     annotate_vcf(vcf.as_bytes(), &mut out, annotation.as_ref(), &genome).map_err(|e| format!("VCF: {e}"))?;
     String::from_utf8(out).map_err(|e| e.to_string())
+}
+
+
+fn reverse_complement(seq: &[u8]) -> Vec<u8> {
+    seq.iter().rev().map(|&b| complement(b)).collect()
+}
+
+fn protein(codons: &[u8], table: u8) -> Vec<u8> {
+    codons.chunks_exact(3).map(|c| translate([c[0], c[1], c[2]], table)).collect()
+}
+
+/// For an in-frame indel inside a CDS: does it change the start codon, create a premature stop, or
+/// remove the terminal stop? Returns the label, or None when the protein changes in length only.
+fn inframe_protein_effect(genome: &Genome, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Option<&'static str> {
+    let cds = tx.coding_sequence(genome)?;
+    let alt_cds = if reference.len() > alt.len() {
+        // The deleted bases follow the anchor. Their coding indices are contiguous.
+        let deleted = (reference.len() - alt.len()) as u64;
+        let indices: Vec<u64> = (pos + 1..=pos + deleted).map(|p| tx.coding_index(p)).collect::<Option<_>>()?;
+        let (lo, hi) = (*indices.iter().min()? as usize, *indices.iter().max()? as usize + 1);
+        [&cds[..lo], &cds[hi..]].concat()
+    } else {
+        let inserted = &alt.as_bytes()[reference.len()..];
+        let anchor = tx.coding_index(pos)? as usize;
+        let (at, bases) = match tx.strand {
+            Strand::Plus => (anchor + 1, inserted.to_vec()),
+            Strand::Minus => (anchor, reverse_complement(inserted)),
+        };
+        [&cds[..at], &bases[..], &cds[at..]].concat()
+    };
+    let (ref_aa, alt_aa) = (protein(&cds, tx.transl_table), protein(&alt_cds, tx.transl_table));
+    if alt_aa.first() != ref_aa.first() && ref_aa.first() == Some(&b'M') {
+        return Some("start_lost");
+    }
+    let ref_has_stop = ref_aa.last() == Some(&b'*');
+    match alt_aa.iter().position(|&a| a == b'*') {
+        Some(i) if i + 1 != alt_aa.len() || !ref_has_stop => Some("nonsense"),
+        None if ref_has_stop => Some("stop_lost"),
+        _ => None,
+    }
 }
