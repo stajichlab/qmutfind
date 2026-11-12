@@ -55,3 +55,6 @@ __pycache__/
 pkg-node/
 pkg-web/
 dist-site/
+
+# The small example reads of the site are part of the repository.
+!site/example/*.fastq.gz
