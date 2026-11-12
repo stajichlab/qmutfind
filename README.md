@@ -59,7 +59,7 @@ the gene models and one circle per variant, coloured by effect.
 
 `qmutfind fetch --organism "Aspergillus fumigatus Af293" --out-dir genome` downloads the genome FASTA and GFF of one
 FungiDB organism as `.gz` files. The organism list is public. The FASTA needs an API key from your FungiDB account
-(Web Services Access). Put the key in the environment variable `EUPATHDB_KEY`, or in a file named by `--key-file`
+(Web Services Access). Put the key in the environment variable `EUPATHDB_KEY`, or in a file named by `--eupathdb-key-file`
 (the file wins). A key file has one line per key: `KEY` for any site, or `HOST KEY` (for example `fungidb.org KEY`) for
 one site. Blank lines and `#` lines are ignored. Run `chmod 600` on it; the command warns if others can read it. The key
 is sent only to the `--base-url` host and never printed. `--base-url` changes the site (default `https://fungidb.org`). Tested against a local mock server, and live

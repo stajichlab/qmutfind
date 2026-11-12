@@ -1,7 +1,7 @@
 //! `qmutfind fetch`: download the genome FASTA and GFF of one organism from FungiDB.
 //!
 //! The organism list (with the file URLs) is public. The FASTA download needs an API key, which is read from the
-//! environment variable `EUPATHDB_KEY`, or from `--key-file` (which wins when both are given). The key goes only to the host of `--base-url`, and it is never printed.
+//! environment variable `EUPATHDB_KEY`, or from `--eupathdb-key-file` (which wins when both are given). The key goes only to the host of `--base-url`, and it is never printed.
 
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -179,7 +179,7 @@ pub fn fetch(args: &[String]) -> Result<(), String> {
     let wanted = crate::required(&flags, "organism")?;
     let out_dir = Path::new(crate::required(&flags, "out-dir")?);
     let base = flags.get("base-url").map(|s| s.trim_end_matches('/')).unwrap_or(DEFAULT_BASE);
-    let key = match flags.get("key-file") {
+    let key = match flags.get("eupathdb-key-file") {
         Some(path) => Some(key_from_file(path, &host_of(base).ok_or_else(|| format!("--base-url must start with http:// or https://, not {base}"))?)?),
         None => std::env::var(KEY_VARIABLE).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()),
     };

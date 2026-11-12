@@ -241,7 +241,7 @@ fn main() -> ExitCode {
         Some("report") => report(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind fetch --organism NAME --out-dir DIR [--key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
