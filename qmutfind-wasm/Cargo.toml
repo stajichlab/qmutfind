@@ -10,3 +10,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 qmutfind-core = { path = "../qmutfind-core" }
+# Must equal the wasm-bindgen CLI version in pixi.toml (the CLI and the library must match).
+wasm-bindgen = "=0.2.114"

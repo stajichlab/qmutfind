@@ -45,3 +45,8 @@ setup-emsdk = "bash scripts/setup-emsdk.sh"
 # Check the Emscripten install.
 test-emsdk = "pytest tests -q"
 
+# Build the WebAssembly package for Node (pkg-node) or for browsers (pkg-web).
+build-wasm-node = "bash scripts/build-wasm-pkg.sh nodejs pkg-node"
+build-wasm-web = "bash scripts/build-wasm-pkg.sh web pkg-web"
+# Check that the WASM build gives the same VCF as the native CLI.
+test-wasm = "bash scripts/test-wasm.sh"

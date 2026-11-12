@@ -32,3 +32,5 @@ jobs:
       - run: pixi run setup-emsdk
       - run: pixi run test-emsdk
       - run: pixi run build-wasm
+      # Builds the Node package and the CLI, then checks that the WASM VCF equals the CLI VCF.
+      - run: pixi run test-wasm
