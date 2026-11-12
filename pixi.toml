@@ -59,7 +59,7 @@ test-bench = "pytest bench/tests -q"
 # at this version. Needs git, python and network access.
 setup-emsdk = "bash scripts/setup-emsdk.sh"
 # Check the Emscripten install.
-test-emsdk = "pytest tests -q"
+test-emsdk = "pytest tests/test_emsdk.py -q"
 
 # Build the WebAssembly package for Node (pkg-node) or for browsers (pkg-web).
 build-wasm-node = "bash scripts/build-wasm-pkg.sh nodejs pkg-node"
