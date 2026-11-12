@@ -6,16 +6,21 @@ ASSUMED: "only" and not "or later". Change `license` in `Cargo.toml` if you want
 `rammap` declares `license = "MIT"` in its workspace `Cargo.toml` (read 2026-11-11). I did not read its
 `LICENSE` file. The legal effect of combining MIT and GPL-3.0 code is not checked here.
 
-Status (2026-11-11): design agreed in a question-and-answer review. The `rammap` spike passed.
-The Cargo workspace exists with three crates. `qmutfind-core` has: the `Aligner` trait with
-`ReadKind::{Short, Long}` and a `RammapAligner` backend (strand, structured CIGAR, oriented aligned read);
-a haploid pileup `Caller` that calls SNPs, deletions and insertions with `min_depth` and
-`min_alt_fraction` thresholds; and `classify` (SNP, small indel, large indel). 12 Rust tests pass
-(`pixi run test`) and 11 Python tests pass (`pixi run test-bench`). Threshold defaults are `UNMEASURED`.
-Not yet built: soft-clip and reverse-strand caller tests, effect classification, statistics, the CLI
-`call` command, the WASM wrapper, the report, and the truth-set benchmark run itself.
-`pixi.toml`, the benchmark inputs (Af293 truth set, ART reads) exist. The Badread reads were still being
-generated when this line was written.
+Status (2026-11-12). Works and is tested (95 Rust tests, 25 Python tests, 2 Emscripten tests, 7 Node
+WASM tests; CI passed on GitHub on 2026-11-12):
+- `qmutfind call` with selectable backends: `--aligner rammap|bwa-mem2`, `--caller builtin|freebayes`,
+  `--reads2`, `--threads`, `--min-depth`, `--min-snp-fraction`, `--min-indel-fraction`. The `rammap` path runs the
+  same `Engine` as the browser build.
+- `qmutfind annotate`: the effect of each variant on the canonical transcript of a gene, for any VCF
+  (`EFFECT`, `GENE`, `TRANSCRIPT`, `AA`, `NTX`). The tag names and the canonical-transcript rule are ASSUMED:
+  the user did not answer question 43 before going offline.
+- WebAssembly: `Session` (reference bytes, read chunks, VCF out) built with `pixi run build-wasm-node` or
+  `build-wasm-web`; `pixi run test-wasm` checks that the WASM VCF equals the CLI VCF. Emscripten 3.1.64 is
+  installed by `pixi run setup-emsdk`.
+Not built: statistics, the report (SVG locus views), the "possible large indel, unresolved" report for short
+reads, mapping-quality and base-quality filters, WASM bindings for `annotate`, the genomics-wasm BWA-MEM2 and
+FreeBayes builds, a real-browser test. Defaults for thresholds were set from data and are tuned on the data
+they were measured on (see section 11).
 The original voice-note text is kept in `PLAN.original-voice-notes.md`.
 
 Markers used in this file:
@@ -489,6 +494,24 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Simulated truth set, new defaults (found / false): ART `rammap` + built-in SNP 2,972 / 1, small indel 582 / 12,
      large 4; ART `bwa-mem2` + built-in SNP 2,973 / 0, small 580 / 11, large 0; ART `bwa-mem2` + FreeBayes
      SNP 2,979 / 0, small 580 / 10, large 2; ONT `rammap` + built-in SNP 2,991 / 0, small 571 / 42, large 100 / 1 false.
+   - WASM ON REAL DATA (2026-11-12; Node 22.23.4, single thread, `pkg-node` built with SIMD128, module 566 KB;
+     the Af293 gzip reference and the gzip reads streamed through `scripts/wasm-run.mjs`; the native CLI is the
+     `rammap` + built-in path, release build, one run each): EVOL20_3, 2,854,974 reads: native 46.4 s wall,
+     575 MB peak; WASM 59.4 s (1.5 s to index, 57.5 s to map), 696 MB resident. Parent, 6,074,768 reads: native
+     89.0 s, 572 MB; WASM 123.8 s (1.3 s index, 121.9 s map), 654 MB. WASM is about 1.3 to 1.4 times slower
+     than native. The WASM VCF is byte-identical to the CLI VCF on both samples (103 and 75 records).
+     This is Node, not a browser (same V8 engine); no browser test yet (open item 14).
+   - EFFECT ANNOTATION ON THE EVOL20 CALLS (2026-11-12; `qmutfind annotate` with the Af293 RefSeq GFF3;
+     0.37 s and 55 MB for 103 records). EVOL20 labels: 79 intergenic, 6 synonymous, 5 3UTR_derived,
+     4 frameshift, 3 missense, 3 intron_derived, 3 5UTR_derived. The two candidate-gene variants:
+     `hrmA` AFUA_5G14900 `NC_007198.1:3,852,237 A>G` missense D304G (DP 5, AO 5, transcript XM_748074.2);
+     `ssk1` AFUA_5G08390 `NC_007198.1:2,132,142 T>TG` frameshift (DP 6, AO 5). The `hrmA` missense agrees
+     with the literature summary (itself partly from patent text, UNVERIFIED). Both are at the minimum depth,
+     because EVOL20 has about 7x coverage. EVOL20 minus parent: 61 variants, 6 of them in genes: the two above,
+     synonymous `AFUA_1G00480` T209T (`NC_007194.1:151,238`), synonymous `AFUA_8G04070` D179D and T204T
+     (`NC_007201.1:884,282` and `884,357`, 75 bp apart), and an intron change in `AFUA_6G11620`. The other 55
+     are intergenic and unexplained. `AFUA_5G13710` has no variant. Limits: UTRs and introns are derived,
+     and 41% of Af293 mRNAs have no derivable UTR, so a variant in such a UTR is labeled intergenic.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
