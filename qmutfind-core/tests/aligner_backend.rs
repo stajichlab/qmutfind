@@ -1,7 +1,7 @@
 //! Behavior of the aligner backend that wraps `rammap`.
 //! The reference is synthetic and deterministic, so results do not depend on any data file.
 
-use qmutfind_core::{Aligner, ReadKind, RammapAligner};
+use qmutfind_core::{Aligner, CigarOp, ReadKind, RammapAligner};
 
 /// Small deterministic generator, so the reference is the same on every machine.
 struct Lcg(u64);
@@ -34,6 +34,51 @@ fn reverse_complement(seq: &[u8]) -> Vec<u8> {
             other => other,
         })
         .collect()
+}
+
+#[test]
+fn a_long_read_with_a_deletion_an_insertion_and_mismatches_gets_the_expected_cigar() {
+    let refs = reference();
+    let mut read = refs[0].1[70_000..73_000].to_vec();
+    for p in [300usize, 700, 1100, 1500, 1900] {
+        read[p] = if read[p] == b'C' { b'A' } else { b'C' };
+    }
+    read.remove(2000);
+    read.insert(2500, b'T');
+
+    let aligner = RammapAligner::new(refs, ReadKind::Long);
+    let alignments = aligner.align("long", &read);
+
+    assert_eq!(alignments.len(), 1);
+    let a = &alignments[0];
+    assert_eq!(a.contig, "chrA");
+    assert_eq!(a.ref_start, 70_000);
+    assert_eq!(a.cigar_string(), "1998M1D501M1I500M");
+    assert_eq!(
+        a.cigar_ops(),
+        vec![
+            CigarOp::Match(1998),
+            CigarOp::Deletion(1),
+            CigarOp::Match(501),
+            CigarOp::Insertion(1),
+            CigarOp::Match(500),
+        ]
+    );
+}
+
+#[test]
+fn aligned_read_returns_the_bases_in_reference_orientation_for_both_strands() {
+    let refs = reference();
+    let mut read = refs[0].1[49_950..50_100].to_vec();
+    read[50] = if read[50] == b'G' { b'T' } else { b'G' };
+    let reversed = reverse_complement(&read);
+
+    let aligner = RammapAligner::new(refs, ReadKind::Short);
+    let forward = &aligner.align("fwd", &read)[0];
+    let reverse = &aligner.align("rev", &reversed)[0];
+
+    assert_eq!(forward.aligned_read(&read), read);
+    assert_eq!(reverse.aligned_read(&reversed), read);
 }
 
 #[test]

@@ -7,10 +7,15 @@ ASSUMED: "only" and not "or later". Change `license` in `Cargo.toml` if you want
 `LICENSE` file. The legal effect of combining MIT and GPL-3.0 code is not checked here.
 
 Status (2026-11-11): design agreed in a question-and-answer review. The `rammap` spike passed.
-The Cargo workspace exists with three crates. `qmutfind-core` has the `Aligner` trait, `ReadKind::Short`
-and a `RammapAligner` backend, with one passing test (`qmutfind-core/tests/aligner_backend.rs`).
-Not yet built: `pixi.toml`, the CLI, the WASM wrapper, the caller, the classifier, the statistics,
-the report, the benchmark inputs. Nothing is committed.
+The Cargo workspace exists with three crates. `qmutfind-core` has: the `Aligner` trait with
+`ReadKind::{Short, Long}` and a `RammapAligner` backend (strand, structured CIGAR, oriented aligned read);
+a haploid pileup `Caller` that calls SNPs, deletions and insertions with `min_depth` and
+`min_alt_fraction` thresholds; and `classify` (SNP, small indel, large indel). 12 Rust tests pass
+(`pixi run test`) and 11 Python tests pass (`pixi run test-bench`). Threshold defaults are `UNMEASURED`.
+Not yet built: soft-clip and reverse-strand caller tests, effect classification, statistics, the CLI
+`call` command, the WASM wrapper, the report, and the truth-set benchmark run itself.
+`pixi.toml`, the benchmark inputs (Af293 truth set, ART reads) exist. The Badread reads were still being
+generated when this line was written.
 The original voice-note text is kept in `PLAN.original-voice-notes.md`.
 
 Markers used in this file:
