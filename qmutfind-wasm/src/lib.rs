@@ -84,3 +84,17 @@ pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {
 pub fn report(vcf: &str, gff: Option<Vec<u8>>, region: &str, title: &str) -> Result<String, JsError> {
     qmutfind_core::report_page(vcf, gff.as_deref(), region, title).map_err(|e| JsError::new(&e))
 }
+
+/// The whole-genome plot (SVG text) of VCF text. Contig lengths come from the VCF's `##contig` lines, or from
+/// `reference_fasta` (plain FASTA bytes) when it is given.
+#[wasm_bindgen]
+pub fn genome_plot(vcf: &str, reference_fasta: Option<Vec<u8>>) -> Result<String, JsError> {
+    let contigs = match reference_fasta {
+        Some(bytes) => {
+            let reference = qmutfind_core::read_fasta(bytes.as_slice()).map_err(|e| JsError::new(&format!("reference FASTA: {e}")))?;
+            Some(reference.into_iter().map(|(name, seq)| (name, seq.len())).collect::<Vec<_>>())
+        }
+        None => None,
+    };
+    qmutfind_core::genome_plot_svg(vcf, contigs.as_deref()).map_err(|e| JsError::new(&e))
+}

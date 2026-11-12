@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    annotate_vcf, calls_from_freebayes_vcf, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, genome_plot_svg, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -198,6 +198,25 @@ fn report(args: &[String]) -> Result<(), String> {
     std::fs::write(out_path, page).map_err(|e| format!("{out_path}: {e}"))
 }
 
+/// `qmutfind plot`: the whole-genome plot of a VCF as an SVG file. Contig lengths come from the VCF's
+/// `##contig` lines, or from `--reference` when it is given.
+fn plot(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let vcf_path = required(&flags, "vcf")?;
+    let out_path = required(&flags, "out")?;
+    let mut vcf = String::new();
+    open_input(vcf_path)?.read_to_string(&mut vcf).map_err(|e| format!("{vcf_path}: {e}"))?;
+    let contigs = match flags.get("reference") {
+        Some(path) => {
+            let reference = read_fasta(open_input(path)?).map_err(|e| format!("{path}: {e}"))?;
+            Some(reference.into_iter().map(|(name, seq)| (name, seq.len())).collect::<Vec<_>>())
+        }
+        None => None,
+    };
+    let svg = genome_plot_svg(&vcf, contigs.as_deref())?;
+    std::fs::write(out_path, svg).map_err(|e| format!("{out_path}: {e}"))
+}
+
 /// `qmutfind stats`: summary statistics of a VCF, written as JSON and TSV.
 fn stats(args: &[String]) -> Result<(), String> {
     let flags = parse_flags(args)?;
@@ -239,9 +258,10 @@ fn main() -> ExitCode {
         Some("annotate") => annotate(&args[1..]),
         Some("stats") => stats(&args[1..]),
         Some("report") => report(&args[1..]),
+        Some("plot") => plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
