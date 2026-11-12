@@ -93,7 +93,7 @@ fn get(agent: &ureq::Agent, url: &str, auth: Option<&str>, key_host: &str) -> Re
 }
 
 /// Download `url` into `out_dir`, compressing with gzip unless the name already ends in `.gz`.
-fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, base: &str, out_dir: &Path) -> Result<String, String> {
+fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, key_source: &str, base: &str, out_dir: &Path) -> Result<String, String> {
     // Never send the key over plain http when the site is https.
     // The organism list gives `/common/downloads/` URLs. They answer 404 on the real site (2026-11-12). The same
     // file is served, with the key, under `/a/service/raw-files/`.
@@ -121,7 +121,7 @@ fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, base: &str, out_d
                 return Err(format!("{url} needs an API key. Set the environment variable {KEY_VARIABLE} (get the key from your FungiDB account page, Web Services Access)"));
             }
             Err(ureq::Error::Status(401, _)) if i + 1 < schemes.len() => continue,
-            Err(ureq::Error::Status(401, _)) => return Err(format!("the server rejected the key in {KEY_VARIABLE} (HTTP 401)")),
+            Err(ureq::Error::Status(401, _)) => return Err(format!("the server rejected the key from {key_source} (HTTP 401)")),
             Err(ureq::Error::Status(code, _)) => return Err(format!("{url}: HTTP {code}")),
             Err(e) => return Err(format!("{url}: {e}")),
         }
@@ -152,6 +152,15 @@ fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, base: &str, out_d
     Ok(final_path.display().to_string())
 }
 
+/// The value of a line like `EUPATHDB_KEY=abc`, `export EUPATHDB_KEY="abc"` or `EUPATHDB_KEY='abc'`.
+/// `None` for any other line. Only the name `EUPATHDB_KEY` counts, so a key that ends in `=` is not cut.
+fn shell_assignment_value(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("export ").map(str::trim_start).unwrap_or(line);
+    let value = rest.strip_prefix(KEY_VARIABLE)?.strip_prefix('=')?.trim();
+    let value = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))).unwrap_or(value);
+    (!value.is_empty()).then_some(value)
+}
+
 /// Read the key for `host` from a key file. Each line is `KEY` (used for any site) or `HOST KEY` (used for that
 /// site only). A line for the host wins over a line without a host. Blank lines and lines that start with `#` are
 /// ignored. Keys are never printed.
@@ -164,6 +173,7 @@ fn key_from_file(path: &str, host: &str) -> Result<String, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("cannot read key file {path}: {e}"))?;
     let mut default = None;
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let line = shell_assignment_value(line).unwrap_or(line);
         let mut words = line.split_whitespace();
         match (words.next(), words.next(), words.next()) {
             (Some(key), None, _) => default = default.or(Some(key)),
@@ -184,11 +194,15 @@ pub fn fetch(args: &[String]) -> Result<(), String> {
         None => std::env::var(KEY_VARIABLE).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()),
     };
 
+    let key_source = match flags.get("eupathdb-key-file") {
+        Some(path) => format!("key file {path}"),
+        None => format!("the environment variable {KEY_VARIABLE}"),
+    };
     let agent = ureq::AgentBuilder::new().redirects(0).timeout_connect(std::time::Duration::from_secs(30)).build();
     let organisms = list_organisms(&agent, base)?;
     let organism = choose(&organisms, wanted)?;
     for url in [&organism.fasta, &organism.gff] {
-        let saved = download(&agent, url, key.as_deref(), base, out_dir)?;
+        let saved = download(&agent, url, key.as_deref(), &key_source, base, out_dir)?;
         eprintln!("qmutfind: wrote {saved}");
     }
     Ok(())

@@ -210,3 +210,41 @@ fn a_key_file_that_others_can_read_gives_a_warning_but_still_works() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(String::from_utf8_lossy(&out.stderr).contains("readable by other users"));
 }
+
+#[test]
+fn a_key_file_line_in_shell_form_is_accepted_with_or_without_export_and_quotes() {
+    for line in [format!("EUPATHDB_KEY={KEY}"), format!("export EUPATHDB_KEY=\"{KEY}\""), format!("EUPATHDB_KEY='{KEY}'")] {
+        let m = mock(false);
+        let dir = tempfile::tempdir().unwrap();
+        let f = key_file(dir.path(), &format!("{line}\n"), 0o600);
+
+        let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--eupathdb-key-file", &f]);
+
+        assert!(out.status.success(), "{line}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+}
+
+#[test]
+fn a_key_that_ends_in_equals_signs_is_not_mistaken_for_a_variable_assignment() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let f = key_file(dir.path(), &format!("{KEY}==\n"), 0o600);
+
+    let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--eupathdb-key-file", &f]);
+
+    // The mock only accepts KEY itself, so the request is rejected. The point is that the sent key was "KEY==", not "".
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("rejected"));
+}
+
+#[test]
+fn a_rejected_key_from_a_file_names_the_file_not_the_environment_variable() {
+    let m = mock(false);
+    let dir = tempfile::tempdir().unwrap();
+    let f = key_file(dir.path(), "wrong-key\n", 0o600);
+
+    let out = run_with(dir.path(), &m.base, None, "Aspergillus fumigatus Af293", &["--eupathdb-key-file", &f]);
+
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("keys.txt") && !err.contains("EUPATHDB_KEY"), "{err}");
+}
