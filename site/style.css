@@ -1,0 +1,170 @@
+/* qmutfind landing page. Five themes, chosen with <html data-theme="...">: slate (default), lab, grey, mono, quest.
+   No external fonts, images or scripts: the page works offline once loaded. */
+
+:root {
+  --bg: #e9ecf0; --fg: #1b2430; --muted: #5b6676;
+  --panel: #ffffff; --panel-fg: #1b2430; --line: #c7ced8;
+  --accent: #14315f; --accent-fg: #ffffff; --link: #14315f;
+  --code-bg: #eef1f5; --field-bg: #ffffff; --field-line: #9aa5b4;
+  --radius: 6px; --shadow: 0 1px 2px rgba(20, 30, 50, .12);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --head-font: var(--font); --head-transform: none; --head-spacing: 0;
+}
+
+/* Slate grey, navy and white (default) */
+html[data-theme="slate"] body { background: linear-gradient(180deg, #dfe4ea 0, #e9ecf0 220px); }
+html[data-theme="slate"] .top { background: #2f3b4a; color: #fff; border-radius: var(--radius); padding: 14px 18px; }
+html[data-theme="slate"] .top .tag, html[data-theme="slate"] .themes-label { color: #c5cfdb; }
+html[data-theme="slate"] .themes button { background: #3d4b5e; color: #fff; border-color: #55667d; }
+html[data-theme="slate"] .themes button[aria-pressed="true"] { background: #fff; color: #14315f; }
+html[data-theme="slate"] .panel h2 { color: #14315f; border-bottom: 2px solid #14315f; padding-bottom: 4px; }
+html[data-theme="slate"] .mark { background: #8fb3e8; border: 3px solid #fff; }
+
+/* Simple grey */
+html[data-theme="grey"] {
+  --bg: #d9d9d9; --fg: #222; --muted: #555; --panel: #f2f2f2; --panel-fg: #222; --line: #b5b5b5;
+  --accent: #444; --accent-fg: #fff; --link: #333; --code-bg: #e4e4e4; --field-bg: #fafafa; --field-line: #8a8a8a;
+  --shadow: none;
+}
+html[data-theme="grey"] .top { border-bottom: 1px solid #999; padding-bottom: 10px; }
+html[data-theme="grey"] .themes button[aria-pressed="true"] { background: #444; color: #fff; }
+html[data-theme="grey"] .mark { background: #555; }
+
+/* Black and white */
+html[data-theme="mono"] {
+  --bg: #fff; --fg: #000; --muted: #333; --panel: #fff; --panel-fg: #000; --line: #000;
+  --accent: #000; --accent-fg: #fff; --link: #000; --code-bg: #f0f0f0; --field-bg: #fff; --field-line: #000;
+  --radius: 0; --shadow: none;
+}
+html[data-theme="mono"] .panel { border: 2px solid #000; }
+html[data-theme="mono"] .top { border-bottom: 4px solid #000; padding-bottom: 10px; }
+html[data-theme="mono"] a { text-decoration: underline; }
+html[data-theme="mono"] .themes button { border: 2px solid #000; background: #fff; color: #000; }
+html[data-theme="mono"] .themes button[aria-pressed="true"] { background: #000; color: #fff; }
+html[data-theme="mono"] .mark { background: #000; }
+
+/* Lab: a dark laboratory screen, like the display in a TV forensics lab */
+html[data-theme="lab"] {
+  --bg: #04090f; --fg: #b8f3ff; --muted: #5fa4b4; --panel: rgba(6, 22, 34, .82); --panel-fg: #b8f3ff; --line: #11485c;
+  --accent: #27e0ff; --accent-fg: #021018; --link: #6ff0ff; --code-bg: #031019; --field-bg: #02121c; --field-line: #1b6a82;
+  --radius: 2px; --shadow: 0 0 18px rgba(39, 224, 255, .12);
+  --font: var(--mono); --head-font: var(--mono); --head-transform: uppercase; --head-spacing: .14em;
+}
+html[data-theme="lab"] body {
+  background:
+    linear-gradient(rgba(39, 224, 255, .05) 1px, transparent 1px) 0 0 / 100% 32px,
+    linear-gradient(90deg, rgba(39, 224, 255, .05) 1px, transparent 1px) 0 0 / 32px 100%,
+    radial-gradient(ellipse at 50% -10%, #0b3550 0, #04090f 62%);
+}
+html[data-theme="lab"] body::after {  /* scan lines */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .18) 0 1px, transparent 1px 3px);
+}
+html[data-theme="lab"] .panel { border: 1px solid #11485c; position: relative; backdrop-filter: blur(2px); }
+html[data-theme="lab"] .panel::before, html[data-theme="lab"] .panel::after {  /* corner brackets */
+  content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid #27e0ff; pointer-events: none;
+}
+html[data-theme="lab"] .panel::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+html[data-theme="lab"] .panel::after { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+html[data-theme="lab"] h1, html[data-theme="lab"] h2 { color: #27e0ff; text-shadow: 0 0 10px rgba(39, 224, 255, .55); }
+html[data-theme="lab"] h2::before { content: "> "; color: #ffb000; }
+html[data-theme="lab"] .top { border-bottom: 1px solid #11485c; padding-bottom: 12px; }
+html[data-theme="lab"] .tag { color: #ffb000; }
+html[data-theme="lab"] .mark {
+  background: none; border: 2px solid #27e0ff; border-radius: 50%; box-shadow: 0 0 12px #27e0ff, inset 0 0 8px #27e0ff;
+  position: relative; animation: spin 9s linear infinite;
+}
+html[data-theme="lab"] .mark::after { content: ""; position: absolute; inset: 7px; border: 2px dashed #ffb000; border-radius: 50%; }
+html[data-theme="lab"] .readout { border-left: 3px solid #27e0ff; background: #031019; padding: 6px 10px; }
+html[data-theme="lab"] #status:not(:empty)::after { content: "_"; animation: blink 1s steps(1) infinite; color: #27e0ff; }
+html[data-theme="lab"] button.primary { box-shadow: 0 0 14px rgba(39, 224, 255, .6); text-transform: uppercase; letter-spacing: .12em; }
+html[data-theme="lab"] .themes button[aria-pressed="true"] { box-shadow: 0 0 10px rgba(39, 224, 255, .7); }
+html[data-theme="lab"] .limits { border-color: #ffb000; }
+html[data-theme="lab"] .limits h2 { color: #ffb000; text-shadow: 0 0 10px rgba(255, 176, 0, .5); }
+html[data-theme="lab"] iframe { filter: invert(.92) hue-rotate(180deg); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Quest: a 1980s-90s graphic adventure game interface. 16-colour EGA palette, chunky bevelled windows, a menu bar. */
+html[data-theme="quest"] {
+  --bg: #0000aa; --fg: #ffffff; --muted: #aaaaaa; --panel: #aaaaaa; --panel-fg: #000000; --line: #000000;
+  --accent: #0000aa; --accent-fg: #ffffff; --link: #0000aa; --code-bg: #ffffff; --field-bg: #ffffff; --field-line: #000000;
+  --radius: 0; --shadow: none;
+  --font: "Courier New", Courier, "Liberation Mono", monospace; --head-font: var(--font);
+}
+html[data-theme="quest"] body {
+  background:
+    linear-gradient(#0000aa 0 0) padding-box,
+    repeating-conic-gradient(#0000aa 0 25%, #0000b4 0 50%) 0 0 / 8px 8px;
+  font-size: 17px; image-rendering: pixelated;
+}
+html[data-theme="quest"] .frame { max-width: 880px; }
+html[data-theme="quest"] .top {  /* the menu bar */
+  background: #ffffff; color: #000; border: 3px solid #000; border-radius: 0; padding: 4px 10px; margin-bottom: 18px;
+}
+html[data-theme="quest"] .top .tag, html[data-theme="quest"] .themes-label { color: #000; }
+html[data-theme="quest"] h1 { color: #aa0000; font-size: 1.5rem; text-shadow: 2px 2px 0 #55ffff; letter-spacing: .06em; }
+html[data-theme="quest"] .mark { background: #ffff55; border: 3px solid #000; width: 28px; height: 28px; box-shadow: 3px 3px 0 #aa5500; }
+html[data-theme="quest"] .panel {  /* a bevelled grey window with a blue title strip */
+  background: #aaaaaa; color: #000; border: 3px solid #000; padding: 0 16px 14px;
+  box-shadow: inset 3px 3px 0 #ffffff, inset -3px -3px 0 #555555, 6px 6px 0 #000;
+}
+html[data-theme="quest"] .panel > h2 {
+  background: #0000aa; color: #ffffff; margin: 0 -16px 12px; padding: 4px 16px; border-bottom: 3px solid #000;
+  text-transform: uppercase; letter-spacing: .1em; font-size: 1rem; text-shadow: none;
+}
+html[data-theme="quest"] .hero { padding-top: 14px; }
+html[data-theme="quest"] .lede { font-weight: bold; }
+html[data-theme="quest"] .steps li::marker { color: #aa0000; font-weight: bold; }
+html[data-theme="quest"] a { color: #0000aa; text-decoration: underline; }
+html[data-theme="quest"] code, html[data-theme="quest"] pre { background: #000; color: #55ff55; border: 2px solid #555; padding: 1px 4px; }
+html[data-theme="quest"] pre { padding: 8px 10px; }
+html[data-theme="quest"] input, html[data-theme="quest"] select { border: 3px solid #000; box-shadow: inset 2px 2px 0 #555; background: #fff; }
+html[data-theme="quest"] button { background: #aaaaaa; color: #000; border: 3px solid #000; box-shadow: inset 2px 2px 0 #fff, inset -2px -2px 0 #555; font-weight: bold; }
+html[data-theme="quest"] button:active { box-shadow: inset 2px 2px 0 #555, inset -2px -2px 0 #fff; }
+html[data-theme="quest"] button.primary { background: #55ff55; }
+html[data-theme="quest"] .themes button { padding: 1px 8px; }
+html[data-theme="quest"] .themes button[aria-pressed="true"] { background: #ffff55; color: #000; border-color: #000; }
+html[data-theme="quest"] .readout { background: #ffffff; border: 3px solid #000; padding: 6px 10px; margin: 8px 0; min-height: 0; }
+html[data-theme="quest"] .readout:empty { display: none; }
+html[data-theme="quest"] .limits > h2 { background: #aa0000; }
+html[data-theme="quest"] .foot { color: #fff; }
+html[data-theme="quest"] .foot a { color: #ffff55; }
+html[data-theme="quest"] iframe { border: 3px solid #000; background: #fff; }
+
+/* Layout shared by all themes */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--font); }
+.frame { max-width: 920px; margin: 0 auto; padding: 16px; }
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.mark { width: 34px; height: 34px; border-radius: 50%; flex: none; }
+h1 { margin: 0; font: 700 1.7rem/1.1 var(--head-font); letter-spacing: var(--head-spacing); text-transform: var(--head-transform); }
+h2 { margin: 0 0 10px; font: 700 1.1rem/1.2 var(--head-font); letter-spacing: var(--head-spacing); text-transform: var(--head-transform); }
+.tag { margin: 2px 0 0; color: var(--muted); }
+.themes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.themes-label { color: var(--muted); font-size: .85rem; margin-right: 2px; }
+.themes button { font: inherit; font-size: .85rem; padding: 3px 10px; border: 1px solid var(--line); background: var(--panel); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
+.themes button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.panel { background: var(--panel); color: var(--panel-fg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 18px; margin-bottom: 16px; }
+.lede { font-size: 1.1rem; margin-top: 0; }
+a { color: var(--link); }
+code, pre { font-family: var(--mono); font-size: .92em; background: var(--code-bg); border-radius: 3px; }
+code { padding: 1px 4px; }
+pre { padding: 10px 12px; overflow-x: auto; }
+pre code { padding: 0; background: none; }
+.form { display: grid; gap: 4px; }
+.form label { margin-top: 8px; font-weight: 600; }
+.form input[type="text"], .form select { max-width: 100%; }
+input, select { font: inherit; background: var(--field-bg); color: var(--panel-fg); border: 1px solid var(--field-line); border-radius: var(--radius); padding: 5px 8px; }
+button.primary { font: inherit; font-weight: 700; padding: 8px 26px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.primary:disabled { opacity: .55; cursor: wait; }
+.readout { margin: 6px 0; font-family: var(--mono); font-size: .95em; overflow-wrap: anywhere; }
+.readout:empty { display: none; }
+#report:not([srcdoc]) { display: none; }
+#report { width: 100%; height: 420px; border: 1px solid var(--line); background: #fff; margin-top: 10px; }
+.foot { text-align: center; color: var(--muted); font-size: .9rem; padding: 8px 0 24px; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #e8a400; outline-offset: 2px; }
+@media (max-width: 560px) { .frame { padding: 12px; } h1 { font-size: 1.4rem; } }
+@media (prefers-reduced-motion: reduce) { html[data-theme="lab"] .mark, html[data-theme="lab"] #status::after { animation: none; } }

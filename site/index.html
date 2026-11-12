@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en" data-theme="slate">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qmutfind: find mutations in a fungal genome</title>
+<meta name="description" content="qmutfind maps sequencing reads to a reference, calls SNPs and indels, says what each change does to the genes, and draws the result. It runs in your browser.">
+<script>
+// Choose the theme before the page is drawn: the address (?theme=), then the saved choice, then the default.
+(function () {
+  var themes = ['slate', 'lab', 'grey', 'mono', 'quest'], chosen = 'slate';
+  try { var saved = localStorage.getItem('qmutfind-theme'); if (themes.indexOf(saved) >= 0) chosen = saved; } catch (e) {}
+  var fromAddress = new URLSearchParams(location.search).get('theme');
+  if (themes.indexOf(fromAddress) >= 0) chosen = fromAddress;
+  document.documentElement.setAttribute('data-theme', chosen);
+})();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="frame">
+
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>qmutfind</h1>
+      <p class="tag">Find the mutations in one fungal genome sample.</p>
+    </div>
+  </div>
+  <nav class="themes" aria-label="Page style">
+    <span class="themes-label">Style</span>
+    <button type="button" data-set-theme="slate">Slate</button>
+    <button type="button" data-set-theme="lab">Lab</button>
+    <button type="button" data-set-theme="grey">Grey</button>
+    <button type="button" data-set-theme="mono">Mono</button>
+    <button type="button" data-set-theme="quest">Quest</button>
+  </nav>
+</header>
+
+<section class="hero panel">
+  <p class="lede">qmutfind maps sequencing reads to a reference genome, finds SNPs and small insertions and deletions,
+  says what each change does to the genes, and draws the result.</p>
+  <p>It runs in this page. The page does not send your files to any server. Use it for one haploid sample, for
+  example an evolved <i>Aspergillus fumigatus</i> strain that you compare with its reference.</p>
+  <ol class="steps">
+    <li><b>Choose</b> a reference genome (FASTA).</li>
+    <li><b>Choose</b> the reads (FASTQ). Add a gene file (GFF3) to get gene effects.</li>
+    <li><b>Run.</b> The page maps the reads and calls the variants.</li>
+    <li><b>Read</b> the VCF, the statistics and the picture of the region.</li>
+  </ol>
+</section>
+
+<section class="panel" id="run-section">
+  <h2>Run it</h2>
+  <div class="form">
+    <label for="reference">Reference genome (FASTA, <code>.gz</code> allowed)</label>
+    <input id="reference" type="file">
+    <label for="reads">Reads (FASTQ, <code>.gz</code> allowed; select several files if you have them)</label>
+    <input id="reads" type="file" multiple>
+    <label for="gff">Genes (GFF3, optional)</label>
+    <input id="gff" type="file">
+    <label for="sample">Sample name</label>
+    <input id="sample" type="text" value="sample">
+    <label for="kind">Read type</label>
+    <select id="kind"><option value="short">Short reads (Illumina)</option><option value="long">Long reads (Nanopore)</option></select>
+    <label for="region">Region to draw (optional, for example <code>Chr1:1,000-6,000</code>)</label>
+    <input id="region" type="text" size="40">
+    <p><button id="run" type="button" class="primary">Run</button></p>
+  </div>
+  <div id="status" role="status" class="readout"></div>
+  <div id="progress" class="readout"></div>
+  <div id="summary" class="readout"></div>
+  <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-stats" hidden>Download the statistics (JSON)</a></p>
+  <iframe id="report" title="Gene and mutation picture"></iframe>
+</section>
+
+<section class="panel">
+  <h2>What has been measured</h2>
+  <ul>
+    <li>The browser build gives the same VCF as the command-line tool. This was checked byte for byte on a real sample
+    (EVOL20_3, 2,854,974 reads). In headless Firefox it took 64 seconds and about 1.5 GB of memory.</li>
+    <li>On simulated reads, short reads at 20x or more found about 99% of SNPs and 97.5% of small indels, with
+    precision of 98.5% or higher. Nanopore reads at 24x found 99.6% of SNPs and 94.8% of small indels.</li>
+    <li>The numbers come from five held-out simulated data sets that were not used to set the thresholds.</li>
+  </ul>
+</section>
+
+<section class="panel limits" id="limits">
+  <h2>Limits</h2>
+  <ul>
+    <li>The accuracy numbers above are from <b>simulated</b> reads. Real reads contain repeats and errors that the
+    simulators do not model. There is no real-data truth set yet.</li>
+    <li>Below about 10x coverage, the default depth rule misses many variants (about half at 5x).</li>
+    <li>Short reads cannot show large insertions. Large indels are called from long reads only.</li>
+    <li>In the browser, a read pair is mapped as two separate reads. The command-line tool can map pairs.</li>
+    <li>Only Firefox was tested. Chrome and Safari were not. Large data sets need several GB of memory.</li>
+    <li>The tool is for one haploid sample. It is not a diploid or population caller.</li>
+    <li>The gene effects use one transcript per gene (the one with the longest coding sequence).</li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h2>Command line</h2>
+  <p>The same code runs as a command-line tool. It can also fetch FungiDB genomes with your own API key.</p>
+<pre><code>qmutfind call --reference ref.fa.gz --reads r1.fastq.gz --reads2 r2.fastq.gz \
+              --sample mutant1 --preset short --out mutant1.vcf
+qmutfind annotate --vcf mutant1.vcf --reference ref.fa.gz --gff genes.gff3.gz --out mutant1.annot.vcf</code></pre>
+  <p><a href="https://github.com/stajichlab/qmutfind">Source code, install steps and full results</a>.</p>
+</section>
+
+<footer class="foot">
+  <p>qmutfind is free software under the GNU GPL v3. Built at the
+  <a href="https://github.com/stajichlab">Stajich Lab</a>. Version
+  <a href="https://github.com/stajichlab/qmutfind">on GitHub</a>.</p>
+</footer>
+
+</div>
+<script src="theme.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

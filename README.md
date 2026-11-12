@@ -90,6 +90,10 @@ Browser: [examples/browser](examples/browser) is a page and a worker. `pixi run 
 headless Firefox on a small synthetic data set and compares the VCF, statistics and report with the native CLI.
 Chrome and Safari are not tested. Large real data sets have not been run in a browser.
 
+The landing page is in `site/`. `bash scripts/build-site.sh` assembles it in `dist-site/` (run `pixi run build-wasm-web`
+first). It has five styles, chosen with the buttons or with `?theme=slate|lab|grey|mono|quest`. The workflow
+`.github/workflows/pages.yml` publishes it to <https://qmutfind.fungalgenomes.org/> on every push to `main`.
+
 ## Tests
 
 ```bash

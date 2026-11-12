@@ -88,9 +88,9 @@ def driver():
     d.quit()
 
 
-def run_page(driver, server, files, tmp_path, kind="short", region=REGION, wait=180):
+def run_page(driver, server, files, tmp_path, kind="short", region=REGION, wait=180, page="examples/browser/index.html"):
     """Upload the files, click Run, wait for the result. Returns the texts the page produced."""
-    driver.get(f"{server}/examples/browser/index.html")
+    driver.get(f"{server}/{page}")
     driver.find_element(By.ID, "reference").send_keys(str(files["reference"]))
     driver.find_element(By.ID, "reads").send_keys("\n".join(str(p) for p in files["reads"]))
     if files.get("gff"):
@@ -180,3 +180,58 @@ def test_a_gzip_file_made_of_several_members_is_read_completely(driver, server, 
 
     assert got["status"].startswith("Done"), got["status"]
     assert got["vcf"] == expected["vcf"]
+
+
+SITE = "dist-site/index.html"
+THEMES = ["lab", "grey", "mono", "slate", "quest"]
+
+
+def test_the_landing_page_gives_the_same_vcf_and_report_as_the_cli(driver, server, inputs):
+    assert (ROOT / SITE).exists(), "build the site first: bash scripts/build-site.sh"
+    expected = expected_from_cli(inputs)
+
+    got = run_page(driver, server, {"reference": inputs / "ref.fa", "reads": [inputs / "reads.fq"], "gff": inputs / "genes.gff3"}, inputs, page=SITE)
+
+    assert got["status"].startswith("Done"), got["status"]
+    assert got["vcf"] == expected["vcf"]
+    assert got["report"] == expected["report"]
+
+
+def test_each_theme_can_be_chosen_by_the_address_and_has_its_own_colours(driver, server):
+    seen = {}
+    for theme in THEMES:
+        driver.get(f"{server}/{SITE}?theme={theme}")
+        assert driver.find_element(By.TAG_NAME, "html").get_attribute("data-theme") == theme
+        seen[theme] = (
+            driver.execute_script("return getComputedStyle(document.body).backgroundColor"),
+            driver.execute_script("return getComputedStyle(document.body).color"),
+        )
+    assert len(set(seen.values())) == len(THEMES), seen
+
+
+def test_the_theme_buttons_switch_the_theme_and_the_choice_is_kept_after_a_reload(driver, server):
+    driver.get(f"{server}/{SITE}?theme=slate")
+    driver.execute_script("localStorage.clear()")
+    driver.get(f"{server}/{SITE}")
+    driver.find_element(By.CSS_SELECTOR, "[data-set-theme=mono]").click()
+    assert driver.find_element(By.TAG_NAME, "html").get_attribute("data-theme") == "mono"
+
+    driver.get(f"{server}/{SITE}")
+
+    assert driver.find_element(By.TAG_NAME, "html").get_attribute("data-theme") == "mono"
+
+
+def test_an_unknown_theme_in_the_address_falls_back_to_the_default(driver, server):
+    driver.get(f"{server}/{SITE}?theme=not-a-theme")
+    driver.execute_script("localStorage.clear()")
+    driver.get(f"{server}/{SITE}?theme=not-a-theme")
+
+    assert driver.find_element(By.TAG_NAME, "html").get_attribute("data-theme") == "slate"
+
+
+def test_the_page_states_its_limits_and_links_to_the_source(driver, server):
+    driver.get(f"{server}/{SITE}")
+    text = driver.find_element(By.TAG_NAME, "body").text
+    assert "Limits" in text and "simulated" in text
+    links = [a.get_attribute("href") for a in driver.find_elements(By.TAG_NAME, "a")]
+    assert "https://github.com/stajichlab/qmutfind" in links
