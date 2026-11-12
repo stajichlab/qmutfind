@@ -545,6 +545,7 @@ def genome_site(inputs):
         (GENOME_DIR / "genomes.json").write_text(json.dumps({"genomes": [
             entry("GCF_1.1", "Aspergillus testii (strain A)", 120_000, "ref.fa.gz"),
             entry("GCF_2.1", "Candida testii", 80_000_000, "ref.fa.gz"),
+            {**entry("GCA_3.1", "Penicillium nogffii", 130_000, "ref.fa.gz"), "genes": 0, "gff": None, "source": "GenBank"},
         ]}))
         (GENOME_DIR / "fungidb.json").write_text(json.dumps({"release": "FungiDB-71", "organisms": [
             {"name": "Aspergillus fakeii X1", "species": "Aspergillus fakeii", "genes": 5000},
@@ -605,6 +606,20 @@ def test_loading_an_ncbi_genome_fills_in_the_reference_and_genes_and_step_1_then
     assert press(driver, "annotate", "annotate-status").startswith("1 of 1")  # the genome's gene file was loaded too
 
 
+def test_a_genome_without_gene_models_loads_the_reference_only_and_says_so(driver, server, genome_site):
+    open_menu(driver, server)
+
+    label = [o.text for o in driver.find_elements(By.CSS_SELECTOR, "#genome-menu option[value='ncbi:GCA_3.1']")][0]
+    assert "0 genes" not in label and "undefined" not in label and "no gene models" in label
+    choose_genome(driver, "ncbi:GCA_3.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    status = driver.find_element(By.ID, "genome-status").text
+    assert status.startswith("Loaded") and "no gene models" in status, status
+    assert source_text(driver, "reference").startswith("From the genome menu (GCA_3.1")
+    assert source_text(driver, "gff").startswith("Not set")
+
+
 def test_a_large_genome_gets_a_warning_that_it_was_not_tested(driver, server, genome_site):
     open_menu(driver, server)
 
@@ -639,13 +654,21 @@ def test_the_real_genome_lists_are_complete_and_point_at_https_ncbi_files():
     from urllib.parse import urlparse
     document = json.loads((ROOT / "site" / "genomes" / "genomes.json").read_text())
     genomes = document["genomes"]
-    assert 45 <= len(genomes) <= 60
+    assert 130 <= len(genomes) <= 250
     assert len({g["accession"] for g in genomes}) == len(genomes)
+    by_accession = {g["accession"]: g for g in genomes}
+    assert {"GCF_000002655.1", "GCA_000150145.1", "GCA_051225625.1"} <= set(by_accession)  # Af293, A1163, CEA10
     for g in genomes:
-        assert g["accession"].startswith("GCF_") and g["genes"] > 0 and g["genome_size"] > 0, g["accession"]
+        refseq = g["accession"].startswith("GCF_")
+        assert (refseq and g["source"] == "RefSeq") or (g["accession"].startswith("GCA_") and g["source"] == "GenBank"), g["accession"]
+        assert g["genome_size"] > 0 and (g["genes"] > 0 or not refseq), g["accession"]
         for key in ("fasta", "gff"):
+            if g[key] is None:  # only a GenBank genome may lack gene models
+                assert key == "gff" and not refseq, g["accession"]
+                continue
             assert urlparse(g[key]["url"]).scheme == "https" and urlparse(g[key]["url"]).netloc == "ftp.ncbi.nlm.nih.gov"
             assert g[key]["bytes"] > 0 and "//_" not in g[key]["url"]
+    assert by_accession["GCA_051225625.1"]["gff"] is None and by_accession["GCA_000150145.1"]["gff"]["bytes"] > 0
     fungidb = json.loads((ROOT / "site" / "genomes" / "fungidb.json").read_text())
     assert fungidb["release"].startswith("FungiDB-") and len(fungidb["organisms"]) > 100
 

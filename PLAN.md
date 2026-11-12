@@ -882,7 +882,10 @@ thousands of calls was not tried in the browser; Chrome and Safari were not trie
   its level is left out of the drawing. The page under the drawing lists every variant of the region in a table, so
   nothing is lost. The axis labels at both ends are anchored inside the plot.
 - Genome menu (`site/genomes/genomes.json`, made by `bench/make_genome_list.py` from the NCBI RefSeq fungi table of
-  2026-11-12): 50 hand-chosen RefSeq genomes with annotation, 9.0 to 64.9 Mb, each with FASTA and GFF3 sizes from HEAD
+  2026-11-12): 155 genomes: all 134 RefSeq Chromosome or Complete Genome assemblies with annotation up to 70 Mb, the
+  50 hand-chosen RefSeq genomes (16 Scaffold and 4 Contig level ones among them are kept by name), and two GenBank
+  genomes (A1163 `GCA_000150145.1`, GFF3 present; CEA10 `GCA_051225625.1`, no GFF3 at NCBI, so `gff` is null and the page
+  loads the reference only). 9 genomes are above 50 Mb (largest 67.2 Mb). Each has FASTA and GFF3 sizes from HEAD
   requests (all with `Access-Control-Allow-Origin`). The page downloads them in the browser and checks the sizes.
   Genomes above 50 Mb carry a warning: browser memory was measured only on a 29.75 Mb genome (about 0.7 GB in Node).
   Live check in Firefox: S. pombe (GCF_000002945.2) loaded in 1.1 s.

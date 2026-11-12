@@ -123,8 +123,10 @@ are not checked. `?limit_mb=N` and `?download_limit_mb=N` lower the two limits.
 
 ### Genome menu
 
-`site/genomes/genomes.json` lists 50 RefSeq fungal genomes with gene models (made by `bench/make_genome_list.py` from the
-NCBI table; the page downloads them from NCBI). `site/genomes/fungidb.json` lists the FungiDB organisms; FungiDB blocks
+`site/genomes/genomes.json` lists 155 NCBI fungal genomes (made by `bench/make_genome_list.py` from the NCBI tables; the page
+downloads them from NCBI): every RefSeq Chromosome or Complete Genome assembly up to 70 Mb, 50 hand-chosen RefSeq
+genomes, and two GenBank genomes, *A. fumigatus* A1163 and CEA10. CEA10 has no GFF3 at NCBI, so the page loads its
+reference only. `site/genomes/fungidb.json` lists the FungiDB organisms; FungiDB blocks
 downloads from web pages, so for those the page shows the `qmutfind fetch` command. `?genomes=PATH` uses another list,
 but only a path on the site.
 

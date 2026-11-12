@@ -15,9 +15,12 @@ import concurrent.futures
 import datetime
 import json
 import sys
+import time
+import urllib.error
 import urllib.request
 
 SUMMARY_URL = "https://ftp.ncbi.nlm.nih.gov/genomes/refseq/fungi/assembly_summary.txt"
+GENBANK_SUMMARY_URL = "https://ftp.ncbi.nlm.nih.gov/genomes/genbank/fungi/assembly_summary.txt"
 ORIGIN = "https://qmutfind.fungalgenomes.org"
 
 # Chosen by hand: model fungi, pathogens and plant pathogens that people run mutation analysis on. Each is a RefSeq
@@ -76,6 +79,24 @@ ACCESSIONS = [
 ]
 
 
+# GenBank genomes that are not in RefSeq. They are kept even without a GFF3 (the page then has no gene models for them).
+GENBANK_ACCESSIONS = [
+    "GCA_000150145.1",  # Aspergillus fumigatus A1163
+    "GCA_051225625.1",  # Aspergillus fumigatus CEA10 (no GFF3 at NCBI)
+]
+
+
+def select_accessions(rows, max_size, named=()):
+    """The accessions of the menu: every latest, annotated Chromosome or Complete Genome assembly up to max_size, plus
+    the `named` ones (kept whatever their level). Sorted, without duplicates."""
+    chosen = set(named)
+    for accession, r in rows.items():
+        entry = make_entry(r)
+        if entry["level"] in ("Chromosome", "Complete Genome") and not check_entry(entry, max_size):
+            chosen.add(accession)
+    return sorted(chosen)
+
+
 def parse_summary(text):
     """The assembly table as {accession: {column: value}}. Comment lines start with ##; the header starts with one #."""
     columns, rows = None, {}
@@ -108,6 +129,7 @@ def make_entry(row):
     name = base.rsplit("/", 1)[-1]
     return {
         "accession": row["assembly_accession"],
+        "source": "GenBank" if row["assembly_accession"].startswith("GCA_") else "RefSeq",
         "label": label,
         "organism": organism,
         "strain": strain,
@@ -124,19 +146,33 @@ def make_entry(row):
     }
 
 
-def check_entry(entry, max_size):
+def check_entry(entry, max_size, need_annotation=True):
     """The reasons an entry cannot be used. An empty list means it can."""
     problems = []
     if entry["version_status"] != "latest":
         problems.append(f"not the latest version ({entry['version_status']})")
-    if not entry["annotation"] or entry["genes"] <= 0:
+    if need_annotation and (not entry["annotation"] or entry["genes"] <= 0):
         problems.append("no annotation (no annotation provider or no genes)")
     if entry["genome_size"] <= 0 or entry["genome_size"] > max_size:
         problems.append(f"genome size {entry['genome_size']} is outside 1 to {max_size}")
     return problems
 
 
-def head(url):
+def head(url, tries=6):
+    """`head_once`, tried again after a pause when the server is busy (HTTP 429, 5xx) or the network times out."""
+    for attempt in range(tries):
+        try:
+            return head_once(url)
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 500, 502, 503, 504) or attempt == tries - 1:
+                raise
+        except OSError:  # a timeout or a connection error (socket.timeout is not TimeoutError before Python 3.10)
+            if attempt == tries - 1:
+                raise
+        time.sleep(2 ** attempt)
+
+
+def head_once(url):
     """(status, content length, Access-Control-Allow-Origin) of a HEAD request."""
     request = urllib.request.Request(url, method="HEAD", headers={"Origin": ORIGIN})
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -149,7 +185,13 @@ def add_file_sizes(entry):
     for key in ("fasta", "gff"):
         try:
             status, size, cors = head(entry[key]["url"])
-        except Exception as error:  # a network or HTTP error
+        except urllib.error.HTTPError as error:
+            if key == "gff" and error.code == 404 and entry["source"] == "GenBank":
+                entry["gff"] = None  # NCBI has no gene models for this GenBank assembly
+                continue
+            problems.append(f"{key}: {error}")
+            continue
+        except Exception as error:  # a network error
             problems.append(f"{key}: {error}")
             continue
         entry[key]["bytes"] = size
@@ -164,6 +206,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Make the genome menu of the site.")
     ap.add_argument("--out", required=True)
     ap.add_argument("--summary", help="a saved assembly_summary.txt (default: download it)")
+    ap.add_argument("--genbank-summary", help="a saved GenBank assembly_summary.txt (default: download it)")
     ap.add_argument("--max-size", type=int, default=70_000_000, help="largest genome in bases (default 70 Mb)")
     args = ap.parse_args(argv)
     if args.summary:
@@ -172,18 +215,24 @@ def main(argv=None):
         with urllib.request.urlopen(SUMMARY_URL, timeout=120) as response:
             text = response.read().decode()
     rows = parse_summary(text)
+    if args.genbank_summary:
+        genbank_text = open(args.genbank_summary).read()
+    else:
+        with urllib.request.urlopen(GENBANK_SUMMARY_URL, timeout=600) as response:
+            genbank_text = response.read().decode()
+    rows.update({a: r for a, r in parse_summary(genbank_text).items() if a in GENBANK_ACCESSIONS})
     entries, failures = [], []
-    for accession in ACCESSIONS:
+    for accession in select_accessions({a: r for a, r in rows.items() if a.startswith("GCF_")}, args.max_size, ACCESSIONS) + GENBANK_ACCESSIONS:
         if accession not in rows:
-            failures.append(f"{accession}: not in the RefSeq fungi table")
+            failures.append(f"{accession}: not in the NCBI fungi tables")
             continue
         entry = make_entry(rows[accession])
-        problems = check_entry(entry, args.max_size)
+        problems = check_entry(entry, args.max_size, need_annotation=entry["source"] == "RefSeq")
         if problems:
             failures.append(f"{accession} {entry['label']}: " + "; ".join(problems))
         else:
             entries.append(entry)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         for entry, problems in zip(entries, pool.map(add_file_sizes, entries)):
             if problems:
                 failures.append(f"{entry['accession']} {entry['label']}: " + "; ".join(problems))
@@ -192,7 +241,7 @@ def main(argv=None):
         return 1
     entries.sort(key=lambda e: e["label"].lower())
     document = {
-        "source": "NCBI RefSeq fungi assembly table (" + SUMMARY_URL + ") and HEAD requests to the files",
+        "source": "NCBI RefSeq fungi assembly table (" + SUMMARY_URL + "), GenBank table for " + ", ".join(GENBANK_ACCESSIONS) + ", and HEAD requests to the files",
         "generated": datetime.date.today().isoformat(),
         "max_genome_size": args.max_size,
         "genomes": entries,

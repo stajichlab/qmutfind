@@ -401,7 +401,7 @@ setupExamples();
 
 
 // ---- The genome menu ------------------------------------------------------------------------------------------
-// genomes/genomes.json lists NCBI RefSeq genomes (the page downloads them: NCBI allows that). genomes/fungidb.json lists
+// genomes/genomes.json lists NCBI genomes (RefSeq, and some GenBank without gene models) (the page downloads them: NCBI allows that). genomes/fungidb.json lists
 // FungiDB organisms. FungiDB blocks downloads from web pages and needs an API key, so for those the page only shows the
 // `qmutfind fetch` command. ?genomes=PATH uses another list, but only a path on this site.
 const LARGE_GENOME = 50e6;
@@ -414,10 +414,10 @@ function fillMenu() {
   const menu = $('genome-menu');
   menu.replaceChildren();
   const group = (label) => { const g = document.createElement('optgroup'); g.label = label; return g; };
-  const ncbi = group('NCBI RefSeq (loads in this page)');
+  const ncbi = group('NCBI (loads in this page)');
   for (const g of genomeList) {
     if (filter && !`${g.label} ${g.accession}`.toLowerCase().includes(filter)) continue;
-    ncbi.appendChild(new Option(`${g.label} (${(g.genome_size / 1e6).toFixed(1)} Mb, ${g.genes.toLocaleString()} genes, ${g.level})`, `ncbi:${g.accession}`));
+    ncbi.appendChild(new Option(`${g.label} (${(g.genome_size / 1e6).toFixed(1)} Mb, ${g.gff && g.genes > 0 ? `${g.genes.toLocaleString()} genes` : 'no gene models'}, ${g.level}${g.source === 'GenBank' ? ', GenBank' : ''})`, `ncbi:${g.accession}`));
   }
   const fungidb = group('FungiDB (needs the command line and a key)');
   for (const o of fungidbList) {
@@ -447,16 +447,17 @@ async function loadGenome() {
   try {
     const base = genomesBase;
     const reference = await download(entry.fasta, base, 'the genome', 'genome-status');
-    const gff = await download(entry.gff, base, 'the gene models', 'genome-status');
+    const gff = entry.gff ? await download(entry.gff, base, 'the gene models', 'genome-status') : null;
     // A new genome replaces the example, whose reads belong to another genome.
     example.reference = reference;
     example.gff = gff;
     example.reads = [];
     example.expectedReads = null;
     show('example-status', '');
-    example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})`, reads: '' };
+    example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: entry.gff ? `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})` : '', reads: '' };
     describeSources();
-    let note = ` Choose your reads in step 1.`;
+    let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so step 3 cannot annotate it unless you choose a GFF3 file.';
+    note += ' Choose your reads in step 1.';
     if (entry.genome_size > LARGE_GENOME) {
       note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
     }
@@ -486,13 +487,13 @@ async function setupGenomes() {
     if (response.ok) {
       const document_ = await response.json();
       fungidbList = document_.organisms || [];
-      $('genome-text').textContent = `${genomeList.length} NCBI RefSeq genomes with gene models download in this page. ` +
+      $('genome-text').textContent = `${genomeList.length} NCBI genomes (RefSeq, and two GenBank) download in this page. ` +
         `${fungidbList.length} FungiDB organisms (${document_.release || 'FungiDB'}) are listed too; they need the command line.`;
     }
   } catch (error) {
     // The FungiDB list is optional.
   }
-  if (!$('genome-text').textContent) $('genome-text').textContent = `${genomeList.length} NCBI RefSeq genomes with gene models download in this page.`;
+  if (!$('genome-text').textContent) $('genome-text').textContent = `${genomeList.length} NCBI genomes download in this page.`;
   fillMenu();
   $('genome-filter').addEventListener('input', fillMenu);
   $('genome-load').addEventListener('click', loadGenome);

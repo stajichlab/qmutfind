@@ -78,3 +78,89 @@ def test_a_trailing_slash_in_the_ftp_path_does_not_double_the_slash_in_the_urls(
     assert "//_genomic" not in entry["fasta"]["url"] and "ASM265v1//" not in entry["gff"]["url"]
     assert entry["fasta"]["url"].endswith("/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.fna.gz")
     assert entry["fasta"]["name"] == "GCF_000002655.1_ASM265v1_genomic.fna.gz"
+
+
+def test_selection_takes_every_chromosome_or_complete_genome_up_to_the_size_limit_plus_the_named_ones():
+    from make_genome_list import select_accessions
+
+    rows = parse_summary(table(
+        row(accession="GCF_000000001.1", level="Chromosome", size="30000000"),
+        row(accession="GCF_000000002.1", level="Complete Genome", size="20000000"),
+        row(accession="GCF_000000003.1", level="Scaffold", size="25000000"),
+        row(accession="GCF_000000004.1", level="Contig", size="25000000"),
+        row(accession="GCF_000000005.1", level="Chromosome", size="90000000"),  # too large
+        row(accession="GCF_000000006.1", level="Chromosome", status="suppressed"),
+        row(accession="GCF_000000007.1", level="Chromosome", provider="na", genes="0"),  # no annotation
+    ))
+
+    chosen = select_accessions(rows, max_size=70_000_000, named=["GCF_000000003.1", "GCF_000000001.1"])
+
+    assert chosen == ["GCF_000000001.1", "GCF_000000002.1", "GCF_000000003.1"]  # sorted, no duplicate, scaffold only by name
+
+
+def test_a_genbank_entry_has_no_gff_when_ncbi_has_none_but_a_refseq_entry_without_one_is_a_problem(monkeypatch):
+    import urllib.error
+
+    import make_genome_list as m
+
+    def fake_head(url):
+        if url.endswith(".gff.gz"):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        return 200, 1000, "*"
+
+    monkeypatch.setattr(m, "head", fake_head)
+    genbank = m.make_entry(parse_summary(table(row(accession="GCA_000000009.1", provider="na", genes="0")))["GCA_000000009.1"])
+    refseq = m.make_entry(parse_summary(table(row()))["GCF_000002655.1"])
+
+    assert genbank["source"] == "GenBank" and refseq["source"] == "RefSeq"
+    assert m.add_file_sizes(genbank) == [] and genbank["gff"] is None and genbank["fasta"]["bytes"] == 1000
+    assert any("gff" in p for p in m.add_file_sizes(refseq))
+
+
+def test_a_busy_server_answer_503_or_a_timeout_is_retried_but_a_404_is_not(monkeypatch):
+    import urllib.error
+
+    import make_genome_list as m
+
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(url):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        return 200, 5, "*"
+
+    monkeypatch.setattr(m, "head_once", flaky)
+    assert m.head("https://x/y") == (200, 5, "*") and calls["n"] == 3
+
+    def missing(url):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    calls["n"] = 0
+    monkeypatch.setattr(m, "head_once", missing)
+    try:
+        m.head("https://x/y")
+        assert False, "expected HTTPError"
+    except urllib.error.HTTPError:
+        pass
+    assert calls["n"] == 1
+
+
+def test_a_socket_timeout_is_retried(monkeypatch):
+    import socket
+
+    import make_genome_list as m
+
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def slow(url):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise socket.timeout("The read operation timed out")
+        return 200, 7, "*"
+
+    monkeypatch.setattr(m, "head_once", slow)
+    assert m.head("https://x/y") == (200, 7, "*")
