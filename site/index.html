@@ -61,6 +61,8 @@
     <input id="gff" type="file">
     <label for="vcf-file">A VCF file (optional). Choose one to skip step 1. It replaces the result of step 1.</label>
     <input id="vcf-file" type="file">
+    <label for="depth-file">A coverage file (optional): a <code>mosdepth</code> regions BED (<code>.bed.gz</code> is fine). Step 1 makes one for you.</label>
+    <input id="depth-file" type="file">
     <label for="sample">Sample name</label>
     <input id="sample" type="text" value="sample">
   </div>
@@ -79,17 +81,27 @@
   <div id="status" role="status" class="readout"></div>
   <div id="progress" class="readout"></div>
   <div id="summary" class="readout"></div>
-  <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a></p>
+  <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-depth-bed" hidden>Download the coverage (BED)</a></p>
 </section>
 
 <section class="panel step" id="step2">
   <h2><span class="num">2</span> Summarize: statistics and a genome-wide plot</h2>
-  <p class="hint">Uses the VCF from step 1, or the VCF file you chose. If the VCF has no contig lines, it also uses the reference genome.</p>
+  <p class="hint">Uses the VCF and the coverage from step 1, or the files you chose. If the VCF has no contig lines, it also
+  uses the reference genome. You can summarize a coverage file or a VCF file alone.</p>
+  <div class="form">
+    <label for="order">Order of the contigs in the plots</label>
+    <select id="order">
+      <option value="name">By name (Chr1, Chr2, ... Chr10)</option>
+      <option value="length">Longest first</option>
+      <option value="input">As in the file</option>
+    </select>
+  </div>
   <p><button id="summarize" type="button" class="primary">Summarize</button></p>
   <div id="summarize-status" role="status" class="readout"></div>
   <div id="stats-table"></div>
+  <div id="depth-plot" aria-live="polite"></div>
   <div id="genome-plot" aria-live="polite"></div>
-  <p class="downloads"><a id="download-stats" hidden>Download the statistics (JSON)</a> <a id="download-plot" hidden>Download the plot (SVG)</a></p>
+  <p class="downloads"><a id="download-stats" hidden>Download the statistics (JSON)</a> <a id="download-plot" hidden>Download the variant plot (SVG)</a> <a id="download-depth-plot" hidden>Download the coverage plot (SVG)</a></p>
 </section>
 
 <section class="panel step" id="step3">

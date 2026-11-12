@@ -57,7 +57,20 @@ of calls with a fraction from 0.2 to 0.8, and clustering.
 `qmutfind report --vcf FILE --gff GFF --region CONTIG:START-END --out page.html` writes one HTML file with
 the gene models and one circle per variant, coloured by effect.
 
-`qmutfind plot --vcf FILE [--reference FA] --out genome.svg` draws every call along the contigs: calls per bin on top and
+`qmutfind call --depth-out depth.bed [--depth-window 10000]` also writes the mean depth per window as BED text with four
+columns (contig, start, end, depth), the same layout as a `mosdepth` regions file. It needs the built-in caller.
+`qmutfind depth-plot --bed depth.bed [--vcf FILE] [--reference FA] [--order input|length|name] --out depth.svg` draws a
+Manhattan-style plot of the depth along the contigs (median line, high bins clipped and marked, a tick for each call when a
+VCF is given). It reads our BED or a `mosdepth` regions or per-base file, plain or `.gz`. `--order name` sorts contigs
+as Chr1, Chr2, Chr10.
+
+Each call has a `QUAL` (Phred-scaled probability that this many alternate reads come from sequencing error alone, from a
+binomial model with the error rate estimated from the whole sample; it does not cover mapping errors, so a call in a
+repeat can still have a high QUAL) and `DPR` (depth at the call over the sample's median depth). `--min-qual X` and
+`--max-depth-ratio X` drop calls; both are off by default because they have not been tuned. With FreeBayes the QUAL is the
+one FreeBayes writes.
+
+`qmutfind plot --vcf FILE [--reference FA] [--order input|length|name] --out genome.svg` draws every call along the contigs: calls per bin on top and
 the allele fraction of each call below (a Manhattan-style plot). Contig lengths come from the VCF `##contig` lines, or
 from `--reference`.
 

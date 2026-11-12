@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    annotate_vcf, calls_from_freebayes_vcf, genome_plot_svg, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, depth_plot_svg, genome_plot_svg, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -101,6 +101,14 @@ fn call(args: &[String]) -> Result<(), String> {
     };
     let min_qual = float_flag("min-qual")?;
     let max_depth_ratio = float_flag("max-depth-ratio")?;
+    let depth_out = flags.get("depth-out");
+    let depth_window: usize = match flags.get("depth-window") {
+        Some(v) => v.parse().ok().filter(|w| *w > 0).ok_or_else(|| format!("--depth-window must be a whole number of bases above 0, not {v}"))?,
+        None => 10_000,
+    };
+    if depth_out.is_some() && caller_name == "freebayes" {
+        return Err("--depth-out needs the built-in caller: the FreeBayes path keeps no per-base counts".to_string());
+    }
     let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {
         min_depth: match flags.get("min-depth") {
@@ -122,6 +130,7 @@ fn call(args: &[String]) -> Result<(), String> {
     caller.set_max_depth_ratio(max_depth_ratio);
     let mut freebayes_calls = None;
     let mut engine_vcf: Option<String> = None;
+    let mut depth_bed: Option<String> = None;
     if aligner_name == "bwa-mem2" {
         let work = external::Workdir::create(&external::default_tmpdir(flags.get("tmpdir")))?;
         let plain_reference = external::write_plain_copy(&work, "ref.fa", &mut *open_input(reference_path)?)?;
@@ -177,9 +186,14 @@ fn call(args: &[String]) -> Result<(), String> {
             }
             engine.end_file().map_err(|e| format!("{path}: {e}"))?;
         }
+        depth_bed = depth_out.map(|_| engine.depth_bed(depth_window));
         engine_vcf = Some(engine.vcf()?);
     }
 
+    if let Some(path) = depth_out {
+        let bed = depth_bed.unwrap_or_else(|| caller.depth_bed(depth_window));
+        std::fs::write(path, bed).map_err(|e| format!("{path}: {e}"))?;
+    }
     let out = File::create(out_path).map_err(|e| format!("cannot create {out_path}: {e}"))?;
     if let Some(vcf) = engine_vcf {
         return BufWriter::new(out).write_all(vcf.as_bytes()).map_err(|e| format!("{out_path}: {e}"));
@@ -225,7 +239,34 @@ fn plot(args: &[String]) -> Result<(), String> {
         }
         None => None,
     };
-    let svg = genome_plot_svg(&vcf, contigs.as_deref())?;
+    let svg = genome_plot_svg(&vcf, contigs.as_deref(), flags.get("order").map(String::as_str).unwrap_or("input"))?;
+    std::fs::write(out_path, svg).map_err(|e| format!("{out_path}: {e}"))
+}
+
+/// `qmutfind depth-plot`: the genome-wide depth plot from BED text (our `--depth-out` file or `mosdepth` output).
+fn depth_plot(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let bed_path = required(&flags, "bed")?;
+    let out_path = required(&flags, "out")?;
+    let mut bed = String::new();
+    open_input(bed_path)?.read_to_string(&mut bed).map_err(|e| format!("{bed_path}: {e}"))?;
+    let vcf = match flags.get("vcf") {
+        Some(path) => {
+            let mut text = String::new();
+            open_input(path)?.read_to_string(&mut text).map_err(|e| format!("{path}: {e}"))?;
+            Some(text)
+        }
+        None => None,
+    };
+    let contigs = match flags.get("reference") {
+        Some(path) => {
+            let reference = read_fasta(open_input(path)?).map_err(|e| format!("{path}: {e}"))?;
+            Some(reference.into_iter().map(|(name, seq)| (name, seq.len())).collect::<Vec<_>>())
+        }
+        None => None,
+    };
+    let order = flags.get("order").map(String::as_str).unwrap_or("input");
+    let svg = depth_plot_svg(&bed, contigs.as_deref(), order, vcf.as_deref())?;
     std::fs::write(out_path, svg).map_err(|e| format!("{out_path}: {e}"))
 }
 
@@ -271,9 +312,10 @@ fn main() -> ExitCode {
         Some("stats") => stats(&args[1..]),
         Some("report") => report(&args[1..]),
         Some("plot") => plot(&args[1..]),
+        Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

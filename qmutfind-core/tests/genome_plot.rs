@@ -41,7 +41,7 @@ fn num(svg: &str, marker: &str, n: usize, name: &str) -> f64 {
 
 #[test]
 fn there_is_one_marker_per_call_with_the_right_shape_for_its_class() {
-    let svg = genome_plot_svg(&vcf(&CALLS), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&CALLS), None, "input").unwrap();
 
     assert_eq!(svg.matches("class=\"call\"").count(), 4);
     assert_eq!(svg.matches("data-class=\"SNP\"").count(), 2);
@@ -54,7 +54,7 @@ fn there_is_one_marker_per_call_with_the_right_shape_for_its_class() {
 
 #[test]
 fn every_contig_is_labelled_even_when_it_has_no_calls_and_calls_follow_the_contig_order() {
-    let svg = genome_plot_svg(&vcf(&CALLS), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&CALLS), None, "input").unwrap();
 
     for name in ["chrA", "chrB", "chrC"] {
         assert!(svg.contains(&format!("data-contig-label=\"{name}\"")), "{name} is not labelled");
@@ -71,6 +71,7 @@ fn a_position_maps_to_x_in_proportion_to_the_genome_length() {
     let svg = genome_plot_svg(
         &vcf(&["chrA\t101\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1", "chrB\t301\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1"]),
         None,
+        "input",
     )
     .unwrap();
 
@@ -87,7 +88,7 @@ fn a_position_maps_to_x_in_proportion_to_the_genome_length() {
 
 #[test]
 fn a_higher_allele_fraction_is_drawn_higher_on_the_page() {
-    let svg = genome_plot_svg(&vcf(&CALLS), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&CALLS), None, "input").unwrap();
 
     let y_af_1 = num(&svg, "data-pos=\"100\"", 0, "data-y");
     let y_af_half = num(&svg, "data-pos=\"400\"", 0, "data-y");
@@ -96,7 +97,7 @@ fn a_higher_allele_fraction_is_drawn_higher_on_the_page() {
 
 #[test]
 fn the_density_bins_add_up_to_the_number_of_calls() {
-    let svg = genome_plot_svg(&vcf(&CALLS), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&CALLS), None, "input").unwrap();
 
     let total: usize = svg
         .match_indices("class=\"bin\"")
@@ -110,7 +111,7 @@ fn contig_lengths_can_come_from_the_reference_when_the_vcf_has_no_contig_lines()
     let bare = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nchrA\t100\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1\n";
     let contigs = vec![("chrA".to_string(), 1000usize), ("chrB".to_string(), 2000usize)];
 
-    let svg = genome_plot_svg(bare, Some(&contigs)).unwrap();
+    let svg = genome_plot_svg(bare, Some(&contigs), "input").unwrap();
 
     assert!(svg.contains("data-contig-label=\"chrB\""));
 }
@@ -119,21 +120,21 @@ fn contig_lengths_can_come_from_the_reference_when_the_vcf_has_no_contig_lines()
 fn without_any_contig_lengths_the_error_says_what_to_give() {
     let bare = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nchrA\t100\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1\n";
 
-    let err = genome_plot_svg(bare, None).unwrap_err();
+    let err = genome_plot_svg(bare, None, "input").unwrap_err();
 
     assert!(err.contains("contig") && err.contains("reference"), "{err}");
 }
 
 #[test]
 fn a_call_on_a_contig_with_no_known_length_is_an_error_not_a_silent_drop() {
-    let err = genome_plot_svg(&vcf(&["chrZ\t5\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1"]), None).unwrap_err();
+    let err = genome_plot_svg(&vcf(&["chrZ\t5\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1"]), None, "input").unwrap_err();
 
     assert!(err.contains("chrZ"), "{err}");
 }
 
 #[test]
 fn a_vcf_without_calls_still_gives_a_plot_that_says_there_are_none() {
-    let svg = genome_plot_svg(&vcf(&[]), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&[]), None, "input").unwrap();
 
     assert_eq!(svg.matches("class=\"call\"").count(), 0);
     assert!(svg.contains("No variants"));
@@ -144,6 +145,7 @@ fn the_class_is_worked_out_from_the_alleles_when_the_class_tag_is_missing() {
     let svg = genome_plot_svg(
         &vcf(&["chrA\t10\t.\tA\tG\t.\tPASS\tAF=1", "chrA\t20\t.\tAC\tA\t.\tPASS\tAF=1", "chrA\t30\t.\tA\tAGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG\t.\tPASS\tAF=1"]),
         None,
+        "input",
     )
     .unwrap();
 
@@ -154,7 +156,7 @@ fn the_class_is_worked_out_from_the_alleles_when_the_class_tag_is_missing() {
 
 #[test]
 fn a_call_without_an_allele_fraction_is_drawn_on_a_separate_lane_and_the_plot_says_so() {
-    let svg = genome_plot_svg(&vcf(&["chrA\t10\t.\tA\tG\t.\tPASS\tCLASS=SNP"]), None).unwrap();
+    let svg = genome_plot_svg(&vcf(&["chrA\t10\t.\tA\tG\t.\tPASS\tCLASS=SNP"]), None, "input").unwrap();
 
     assert!(svg.contains("no AF in the VCF"));
 }
@@ -163,11 +165,11 @@ fn a_call_without_an_allele_fraction_is_drawn_on_a_separate_lane_and_the_plot_sa
 fn contig_names_are_escaped_and_the_output_is_deterministic() {
     let text = "##fileformat=VCFv4.2\n##contig=<ID=a<b&c,length=100>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\na<b&c\t5\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1\n";
 
-    let first = genome_plot_svg(text, None).unwrap();
+    let first = genome_plot_svg(text, None, "input").unwrap();
 
     assert!(!first.contains("a<b&c"));
     assert!(first.contains("a&lt;b&amp;c"));
-    assert_eq!(first, genome_plot_svg(text, None).unwrap());
+    assert_eq!(first, genome_plot_svg(text, None, "input").unwrap());
 }
 
 #[test]
@@ -179,6 +181,7 @@ fn calls_far_apart_on_one_contig_fall_in_different_bins_and_close_calls_share_on
             "chrB\t2970\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1",
         ]),
         None,
+        "input",
     )
     .unwrap();
 
@@ -190,4 +193,21 @@ fn calls_far_apart_on_one_contig_fall_in_different_bins_and_close_calls_share_on
     let first_x = num(&svg, "class=\"bin\"", 0, "x");
     let last_x = num(&svg, "class=\"bin\"", 1, "x");
     assert!(last_x - first_x > 500.0, "the two bins are at the two ends of chrB: {first_x} {last_x}");
+}
+
+#[test]
+fn the_variant_plot_orders_contigs_by_input_length_or_natural_name_like_the_depth_plot() {
+    let text = "##fileformat=VCFv4.2\n##contig=<ID=chr10,length=500>\n##contig=<ID=chr2,length=3000>\n##contig=<ID=chr1,length=1000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+    let order = |how: &str| -> Vec<String> {
+        let svg = genome_plot_svg(text, None, how).unwrap();
+        svg.match_indices("data-contig-label=\"").map(|(i, _)| {
+            let rest = &svg[i + "data-contig-label=\"".len()..];
+            rest[..rest.find('"').unwrap()].to_string()
+        }).collect()
+    };
+
+    assert_eq!(order("input"), vec!["chr10", "chr2", "chr1"]);
+    assert_eq!(order("length"), vec!["chr2", "chr1", "chr10"]);
+    assert_eq!(order("name"), vec!["chr1", "chr2", "chr10"]);
+    assert!(genome_plot_svg(text, None, "sideways").is_err());
 }

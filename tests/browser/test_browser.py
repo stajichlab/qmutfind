@@ -238,7 +238,7 @@ def test_step_2_without_any_vcf_says_so(driver, server):
 
     status = press(driver, "summarize", "summarize-status")
 
-    assert "no VCF" in status
+    assert "no VCF" in status or "no VCF or coverage" in status
 
 
 # Step 3: annotate, pick a variant, draw its locus
@@ -368,3 +368,38 @@ def test_the_page_states_its_limits_and_links_to_the_source(driver, server):
     assert "Limits" in text and "simulated" in text
     links = [a.get_attribute("href") for a in driver.find_elements(By.TAG_NAME, "a")]
     assert "https://github.com/stajichlab/qmutfind" in links
+
+
+# Coverage: step 1 keeps a depth profile, step 2 draws it, and a mosdepth file can be used alone
+
+def test_step_1_keeps_the_coverage_and_step_2_draws_it_like_the_cli(driver, server, inputs):
+    run_cli("call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1", "--preset", "short", "--out", "called.vcf",
+            "--depth-out", "depth.bed", "--depth-window", "10000", cwd=inputs)
+    run_cli("depth-plot", "--bed", "depth.bed", "--vcf", "called.vcf", "--order", "name", "--out", "depth.svg", cwd=inputs)
+    assert step1(driver, server, inputs).startswith("Done")
+    assert download_text(driver, "download-depth-bed") == (inputs / "depth.bed").read_text()
+
+    status = press(driver, "summarize", "summarize-status")
+
+    assert status.startswith("Done") and "coverage plot" in status, status
+    assert download_text(driver, "download-depth-plot") == (inputs / "depth.svg").read_text()
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#depth-plot svg .depth")) > 0
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#depth-plot svg .vtick")) == 1
+
+
+def test_a_mosdepth_file_alone_gives_a_coverage_plot_and_the_contig_order_can_be_chosen(driver, server, inputs):
+    (inputs / "m.regions.bed.gz").write_bytes(gzip.compress(b"chr10\t0\t5000\t30\nchr2\t0\t9000\t28\nchr1\t0\t7000\t31\n"))
+    open_site(driver, server)
+    choose(driver, "depth-file", inputs / "m.regions.bed.gz")
+    labels = lambda: [t.get_attribute("data-contig-label") for t in driver.find_elements(By.CSS_SELECTOR, "#depth-plot svg text[data-contig-label]")]
+
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    assert labels() == ["chr1", "chr2", "chr10"]  # the default is by name
+
+    driver.find_element(By.CSS_SELECTOR, "#order option[value=length]").click()
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    assert labels() == ["chr2", "chr1", "chr10"]
+
+    driver.find_element(By.CSS_SELECTOR, "#order option[value=input]").click()
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    assert labels() == ["chr10", "chr2", "chr1"]

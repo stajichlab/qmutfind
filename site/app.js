@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const worker = new Worker('worker.js', { type: 'module' });
 
 // The state that carries from step to step.
-const state = { vcf: null, annotated: null, annotatedFor: null };
+const state = { vcf: null, annotated: null, depth: null };
 let busy = false;
 const MAX_ROWS = 500;
 
@@ -31,6 +31,11 @@ function currentVcf() {
   const file = $('vcf-file').files[0];
   if (file) return file;
   return state.annotated || state.vcf;
+}
+
+/** The coverage the next step should use: a chosen file, else the BED from step 1. */
+function currentDepth() {
+  return $('depth-file').files[0] || state.depth;
 }
 
 function describeSource() {
@@ -70,9 +75,10 @@ $('run').addEventListener('click', () => {
 
 // Step 2
 $('summarize').addEventListener('click', () => {
-  const vcf = needVcf('summarize-status');
-  if (!vcf) return;
-  send('summarize', { vcf, reference: $('reference').files[0] || null }, 'summarize-status');
+  const vcf = currentVcf();
+  const bed = currentDepth();
+  if (!vcf && !bed) { show('summarize-status', 'There is no VCF or coverage yet. Run step 1, or choose a VCF or coverage file.'); return; }
+  send('summarize', { vcf, bed, reference: $('reference').files[0] || null, order: $('order').value }, 'summarize-status');
 });
 
 function statsTable(s) {
@@ -216,19 +222,27 @@ worker.onmessage = (event) => {
   setBusy(false);
   if (m.step === 'run') {
     state.vcf = m.vcf;
+    state.depth = m.depth;
     state.annotated = null;
     show('status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s`);
     show('summary', `Calls: ${m.vcf.split('\n').filter((l) => l && l[0] !== '#').length.toLocaleString()}. Go on to step 2 or step 3.`);
     offer('download-vcf', `${sampleName()}.vcf`, m.vcf, 'text/plain');
+    offer('download-depth-bed', `${sampleName()}.depth.bed`, m.depth, 'text/plain');
     describeSource();
   }
   if (m.step === 'summarize') {
-    const s = JSON.parse(m.stats);
-    $('stats-table').innerHTML = statsTable(s);
-    $('genome-plot').innerHTML = m.plot;
-    show('summarize-status', `Done: ${Number(s.total).toLocaleString()} variants.`);
-    offer('download-stats', `${sampleName()}.stats.json`, m.stats, 'application/json');
-    offer('download-plot', `${sampleName()}.genome.svg`, m.plot, 'image/svg+xml');
+    const parts = [];
+    if (m.stats) {
+      const s = JSON.parse(m.stats);
+      $('stats-table').innerHTML = statsTable(s);
+      parts.push(`${Number(s.total).toLocaleString()} variants`);
+      offer('download-stats', `${sampleName()}.stats.json`, m.stats, 'application/json');
+    }
+    $('genome-plot').innerHTML = m.plot || '';
+    if (m.plot) offer('download-plot', `${sampleName()}.genome.svg`, m.plot, 'image/svg+xml');
+    $('depth-plot').innerHTML = m.depthPlot || '';
+    if (m.depthPlot) { parts.push('coverage plot'); offer('download-depth-plot', `${sampleName()}.depth.svg`, m.depthPlot, 'image/svg+xml'); }
+    show('summarize-status', `Done: ${parts.join(', ')}.`);
   }
   if (m.step === 'annotate') {
     state.annotated = m.vcf;

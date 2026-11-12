@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, annotate, stats, report, genome_plot } from './pkg-web/qmutfind_wasm.js';
+import init, { Session, annotate, stats, report, genome_plot, depth_plot } from './pkg-web/qmutfind_wasm.js';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -76,15 +76,25 @@ async function run({ reference, reads, sample, kind }) {
   }
   const reads_mapped = session.read_count();
   const vcf = session.vcf();
+  const depth = session.depth_bed(10000);
   session.free();
-  postMessage({ step: 'run', type: 'done', vcf, reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
+  postMessage({ step: 'run', type: 'done', vcf, depth, reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
 }
 
-async function summarize({ vcf, reference }) {
-  postMessage({ step: 'summarize', type: 'status', text: 'Summarizing the VCF' });
-  const text = await vcfText(vcf);
+async function summarize({ vcf, bed, reference, order }) {
+  postMessage({ step: 'summarize', type: 'status', text: 'Summarizing' });
+  const text = vcf ? await vcfText(vcf) : null;
   const fasta = reference ? await bytesOf('reference', reference) : undefined;
-  postMessage({ step: 'summarize', type: 'done', stats: stats(text, 100), plot: genome_plot(text, fasta) });
+  const answer = { step: 'summarize', type: 'done', stats: null, plot: null, depthPlot: null };
+  if (text !== null) {
+    answer.stats = stats(text, 100);
+    answer.plot = genome_plot(text, fasta, order);
+  }
+  if (bed) {
+    const bedText = typeof bed === 'string' ? bed : new TextDecoder().decode(await readAll(bed));
+    answer.depthPlot = depth_plot(bedText, text === null ? undefined : text, fasta, order);
+  }
+  postMessage(answer);
 }
 
 async function annotateStep({ vcf, reference, gff }) {

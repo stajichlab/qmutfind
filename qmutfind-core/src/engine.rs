@@ -98,6 +98,11 @@ impl Engine {
         }
     }
 
+    /// The mean depth in windows of `window` bases as BED text with four columns (like `mosdepth` regions).
+    pub fn depth_bed(&self, window: usize) -> String {
+        self.caller.depth_bed(window)
+    }
+
     /// Reads mapped so far.
     pub fn read_count(&self) -> u64 {
         self.reads

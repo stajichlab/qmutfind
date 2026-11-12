@@ -2,13 +2,12 @@
 //! The top panel counts calls per bin (where the variants are). The bottom panel is a Manhattan-style view with
 //! the allele fraction of each call on the y axis. The CLI and the browser build both call this function.
 
+use crate::layout::{bands_and_labels, layout, order_contigs, GAP, LEFT, PLOT};
 use crate::report::escape;
 use crate::{classify, VariantClass};
 
 const WIDTH: f64 = 1000.0;
-const LEFT: f64 = 70.0;
-const PLOT: f64 = 900.0;
-const GAP: f64 = 4.0;
+const _GAP_USED: f64 = GAP;
 const BIN_PX: f64 = 6.0;
 const DENSITY_BOTTOM: f64 = 90.0;
 const DENSITY_HEIGHT: f64 = 56.0;
@@ -57,11 +56,12 @@ fn class_name(reference: &str, alt: &str, tag: Option<&str>) -> &'static str {
 
 /// Draw the plot. `contigs` (name and length, in the order to draw) overrides the `##contig` lines of the VCF;
 /// pass `None` to use them. A VCF with neither is an error, as is a call on a contig with no known length.
-pub fn genome_plot_svg(vcf: &str, contigs: Option<&[(String, usize)]>) -> Result<String, String> {
+pub fn genome_plot_svg(vcf: &str, contigs: Option<&[(String, usize)]>, order: &str) -> Result<String, String> {
     let contigs: Vec<(String, usize)> = match contigs {
         Some(c) => c.to_vec(),
         None => header_contigs(vcf),
     };
+    let contigs = order_contigs(contigs, order)?;
     if contigs.is_empty() {
         return Err("the plot needs contig lengths: the VCF has no ##contig lines, so give the reference genome".to_string());
     }
@@ -97,44 +97,12 @@ pub fn genome_plot_svg(vcf: &str, contigs: Option<&[(String, usize)]>) -> Result
     }
 
     // Layout: each contig is a band as wide as its share of the genome, with a small gap between bands.
-    let usable = PLOT - GAP * (contigs.len() as f64 - 1.0);
-    let scale = usable / total as f64;
-    let mut starts = Vec::with_capacity(contigs.len());
-    let mut x = LEFT;
-    for (_, len) in &contigs {
-        starts.push(x);
-        x += *len as f64 * scale + GAP;
-    }
-    let band_width = |i: usize| contigs[i].1 as f64 * scale;
+    let l = layout(&contigs);
+    let (starts, scale) = (&l.starts, l.scale);
+    let band_width = |i: usize| l.widths[i];
     let x_of = |c: &Call| starts[c.contig] + (c.pos.saturating_sub(1)) as f64 * scale;
 
-    let mut body = String::new();
-    // Bands, alternating in shade, and the contig labels.
-    for (i, (name, _)) in contigs.iter().enumerate() {
-        body.push_str(&format!(
-            "<rect data-band=\"{}\" x=\"{:.2}\" y=\"30\" width=\"{:.2}\" height=\"{:.0}\" style=\"fill:var(--fg,#222)\" fill-opacity=\"{}\"/>",
-            escape(name),
-            starts[i],
-            band_width(i),
-            AF_BOTTOM - 30.0,
-            if i % 2 == 0 { "0.10" } else { "0.03" }
-        ));
-        let fit = (band_width(i) / 6.5) as usize;
-        let shown: String = if name.chars().count() <= fit {
-            name.clone()
-        } else if fit >= 3 {
-            name.chars().take(fit - 1).chain(std::iter::once('…')).collect()
-        } else {
-            String::new()
-        };
-        body.push_str(&format!(
-            "<text data-contig-label=\"{n}\" x=\"{:.2}\" y=\"324\" font-size=\"10\" text-anchor=\"middle\" style=\"fill:var(--fg,#222)\"><title>{n}: {} bp</title>{}</text>",
-            starts[i] + band_width(i) / 2.0,
-            contigs[i].1,
-            escape(&shown),
-            n = escape(name)
-        ));
-    }
+    let mut body = bands_and_labels(&contigs, &l, 30.0, AF_BOTTOM, 324.0);
 
     // The density panel: calls per bin.
     let mut bins: Vec<Vec<usize>> = contigs.iter().enumerate().map(|(i, _)| vec![0; ((band_width(i) / BIN_PX).round() as usize).max(1)]).collect();

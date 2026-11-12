@@ -67,6 +67,11 @@ impl Session {
         self.engine.read_count() as f64
     }
 
+    /// The mean depth in windows of `window` bases as BED text with four columns (contig, start, end, depth).
+    pub fn depth_bed(&self, window: u32) -> String {
+        self.engine.depth_bed(window as usize)
+    }
+
     /// The calls so far as VCF text.
     pub fn vcf(&self) -> Result<String, JsError> {
         self.engine.vcf().map_err(|e| JsError::new(&e))
@@ -98,7 +103,7 @@ pub fn report(vcf: &str, gff: Option<Vec<u8>>, region: &str, title: &str) -> Res
 /// The whole-genome plot (SVG text) of VCF text. Contig lengths come from the VCF's `##contig` lines, or from
 /// `reference_fasta` (plain FASTA bytes) when it is given.
 #[wasm_bindgen]
-pub fn genome_plot(vcf: &str, reference_fasta: Option<Vec<u8>>) -> Result<String, JsError> {
+pub fn genome_plot(vcf: &str, reference_fasta: Option<Vec<u8>>, order: Option<String>) -> Result<String, JsError> {
     let contigs = match reference_fasta {
         Some(bytes) => {
             let reference = qmutfind_core::read_fasta(bytes.as_slice()).map_err(|e| JsError::new(&format!("reference FASTA: {e}")))?;
@@ -106,5 +111,20 @@ pub fn genome_plot(vcf: &str, reference_fasta: Option<Vec<u8>>) -> Result<String
         }
         None => None,
     };
-    qmutfind_core::genome_plot_svg(vcf, contigs.as_deref()).map_err(|e| JsError::new(&e))
+    qmutfind_core::genome_plot_svg(vcf, contigs.as_deref(), order.as_deref().unwrap_or("input")).map_err(|e| JsError::new(&e))
+}
+
+/// The genome-wide depth plot (SVG text) from BED text (four columns; the output of `depth_bed` or of `mosdepth`).
+/// `vcf` adds a tick for each call. `reference_fasta` (plain FASTA bytes) overrides the contig lengths.
+/// `order` is "input", "length" or "name".
+#[wasm_bindgen]
+pub fn depth_plot(bed: &str, vcf: Option<String>, reference_fasta: Option<Vec<u8>>, order: Option<String>) -> Result<String, JsError> {
+    let contigs = match reference_fasta {
+        Some(bytes) => {
+            let reference = qmutfind_core::read_fasta(bytes.as_slice()).map_err(|e| JsError::new(&format!("reference FASTA: {e}")))?;
+            Some(reference.into_iter().map(|(name, seq)| (name, seq.len())).collect::<Vec<_>>())
+        }
+        None => None,
+    };
+    qmutfind_core::depth_plot_svg(bed, contigs.as_deref(), order.as_deref().unwrap_or("input"), vcf.as_deref()).map_err(|e| JsError::new(&e))
 }

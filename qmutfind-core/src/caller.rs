@@ -37,6 +37,15 @@ pub struct Call {
     pub depth_ratio: Option<f64>,
 }
 
+/// The mean depth of one window of a contig. `start` is 0-based and `end` is exclusive.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepthWindow {
+    pub contig: String,
+    pub start: usize,
+    pub end: usize,
+    pub mean: f64,
+}
+
 /// Natural log of the gamma function (Lanczos approximation, g = 7).
 fn ln_gamma(x: f64) -> f64 {
     const C: [f64; 9] = [
@@ -263,6 +272,29 @@ impl Caller {
                 }
             }
         }
+    }
+
+    /// Mean depth in consecutive windows of `window` bases along each contig, uncovered bases counted as zero
+    /// (the last window of a contig may be shorter). Like `mosdepth` with `--by window`.
+    pub fn depth_windows(&self, window: usize) -> Vec<DepthWindow> {
+        let window = window.max(1);
+        let mut out = Vec::new();
+        for (ci, (name, seq)) in self.reference.iter().enumerate() {
+            let mut start = 0;
+            while start < seq.len() {
+                let end = (start + window).min(seq.len());
+                let sum: u64 = self.counts[ci][start..end].iter().map(|c| c.iter().map(|&x| x as u64).sum::<u64>()).sum();
+                out.push(DepthWindow { contig: name.clone(), start, end, mean: sum as f64 / (end - start) as f64 });
+                start = end;
+            }
+        }
+        out
+    }
+
+    /// `depth_windows` as BED text with four columns (contig, start, end, mean depth), the format of the
+    /// `mosdepth` regions file.
+    pub fn depth_bed(&self, window: usize) -> String {
+        self.depth_windows(window).iter().map(|w| format!("{}\t{}\t{}\t{:.2}\n", w.contig, w.start, w.end, w.mean)).collect()
     }
 
     /// The median depth over covered positions, the rate of non-reference bases (SNP error) and the rate of indel

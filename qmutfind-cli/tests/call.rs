@@ -495,3 +495,39 @@ fn min_qual_and_max_depth_ratio_drop_calls() {
     assert_eq!(call_rows(dir.path(), &["--max-depth-ratio", "0.01"]).len(), 0);
     assert_eq!(call_rows(dir.path(), &["--max-depth-ratio", "50"]).len(), 1);
 }
+
+#[test]
+fn depth_out_writes_windowed_mean_depth_as_a_four_column_bed() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_snp_reads(dir.path(), &seq, if seq[30_000] == b'G' { b'T' } else { b'G' });
+
+    call_rows(dir.path(), &["--depth-out", "depth.bed", "--depth-window", "10000"]);
+
+    let bed = fs::read_to_string(dir.path().join("depth.bed")).unwrap();
+    let rows: Vec<Vec<&str>> = bed.lines().map(|l| l.split('\t').collect()).collect();
+    assert_eq!(rows.len(), 6); // 60,000 bp in windows of 10,000
+    assert_eq!(rows[0][..3], ["chrA", "0", "10000"]);
+    let window_with_reads: f64 = rows[2][3].parse().unwrap(); // reads span 29,900 to 30,150
+    assert!(window_with_reads > 0.0, "{window_with_reads}");
+    assert_eq!(rows[0][3], "0.00");
+}
+
+#[test]
+fn depth_out_is_rejected_with_freebayes_because_that_path_keeps_no_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_snp_reads(dir.path(), &seq, b'G');
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1", "--preset", "short", "--out", "out.vcf"])
+        .args(["--aligner", "bwa-mem2", "--caller", "freebayes", "--depth-out", "depth.bed"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--depth-out"));
+}
