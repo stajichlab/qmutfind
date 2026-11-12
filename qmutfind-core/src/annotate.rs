@@ -275,21 +275,112 @@ fn effect_of(label: &str, tx: Option<&Transcript>, aa: Option<String>, ann: &Ann
     }
 }
 
+/// Where a position lies in a transcript.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Region {
+    Cds,
+    FivePrimeUtr,
+    ThreePrimeUtr,
+    NonCodingExon,
+    Splice,
+    Intron,
+    Outside,
+}
+
+fn region_of(tx: &Transcript, pos: u64) -> Region {
+    if tx.coding_index(pos).is_some() {
+        return Region::Cds;
+    }
+    if tx.exons.iter().any(|&(s, e)| pos >= s && pos <= e) {
+        // An exon base that is not in the CDS: a UTR, or a base of a non-coding transcript.
+        let (Some(cds_start), Some(cds_end)) = (tx.cds.first().map(|c| c.0), tx.cds.last().map(|c| c.1)) else {
+            return Region::NonCodingExon;
+        };
+        if pos >= cds_start && pos <= cds_end {
+            return Region::NonCodingExon;
+        }
+        let low_side = pos < cds_start;
+        let five_prime = (low_side && tx.strand == Strand::Plus) || (!low_side && tx.strand == Strand::Minus);
+        return if five_prime { Region::FivePrimeUtr } else { Region::ThreePrimeUtr };
+    }
+    // Between exons: an intron derived from the gap. The first and last two bases are splice sites.
+    for pair in tx.exons.windows(2) {
+        let (intron_start, intron_end) = (pair[0].1 + 1, pair[1].0 - 1);
+        if pos >= intron_start && pos <= intron_end {
+            let splice = pos < intron_start + 2 || pos + 2 > intron_end;
+            return if splice { Region::Splice } else { Region::Intron };
+        }
+    }
+    Region::Outside
+}
+
+fn region_label(region: Region) -> &'static str {
+    match region {
+        Region::FivePrimeUtr => "5UTR_derived",
+        Region::ThreePrimeUtr => "3UTR_derived",
+        Region::NonCodingExon => "non_coding",
+        Region::Splice => "splice_site",
+        Region::Intron => "intron_derived",
+        Region::Cds | Region::Outside => "unclassified",
+    }
+}
+
 /// Classify one variant given in VCF form (an indel has one anchor base).
 pub fn classify_effect(ann: &Annotation, genome: &Genome, contig: &str, pos: u64, reference: &str, alt: &str) -> Effect {
-    let none = effect_of("unclassified", None, None, ann);
-    let Some(txs) = ann.by_contig.get(contig) else { return none };
+    let Some(txs) = ann.by_contig.get(contig) else {
+        return effect_of("intergenic", None, None, ann);
+    };
     for tx in txs {
         if pos < tx.start() || pos > tx.end() {
             continue;
         }
         if reference.len() == 1 && alt.len() == 1 {
-            if let Some(idx) = tx.coding_index(pos) {
-                return coding_snp(ann, genome, tx, idx, alt.as_bytes()[0]);
-            }
+            return snp_effect(ann, genome, tx, pos, alt.as_bytes()[0]);
         }
+        if reference.len() == alt.len() {
+            return effect_of("unclassified", Some(tx), None, ann); // a multi-base substitution
+        }
+        return indel_effect(ann, tx, pos, reference, alt);
     }
-    none
+    effect_of("intergenic", None, None, ann)
+}
+
+/// The effect of a SNP at `pos`, which lies between the first and last base of `tx`.
+fn snp_effect(ann: &Annotation, genome: &Genome, tx: &Transcript, pos: u64, alt: u8) -> Effect {
+    if let Some(idx) = tx.coding_index(pos) {
+        return coding_snp(ann, genome, tx, idx, alt);
+    }
+    effect_of(region_label(region_of(tx, pos)), Some(tx), None, ann)
+}
+
+/// The effect of an insertion or deletion. The bases it affects are the deleted bases, or for an
+/// insertion the two bases on either side. A splice site base anywhere makes it a splice site
+/// variant. Otherwise all affected bases must lie in one region, or the variant is complex.
+fn indel_effect(ann: &Annotation, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Effect {
+    let symbolic = alt.starts_with('<');
+    let net = reference.len() as i64 - alt.len() as i64;
+    let affected: Vec<u64> = if !symbolic && net > 0 {
+        let anchored = reference.as_bytes()[0] == alt.as_bytes()[0];
+        let (first, count) = if anchored { (pos + 1, net as u64) } else { (pos, reference.len() as u64) };
+        (first..first + count).collect()
+    } else {
+        vec![pos, pos + 1]
+    };
+    let regions: Vec<Region> = affected.iter().map(|&p| region_of(tx, p)).collect();
+    let label = if regions.contains(&Region::Splice) {
+        "splice_site"
+    } else if regions.iter().all(|&r| r == regions[0]) {
+        match regions[0] {
+            Region::Cds if symbolic => "large_indel_in_cds",
+            Region::Cds if net % 3 != 0 => "frameshift",
+            Region::Cds if net > 0 => "inframe_deletion",
+            Region::Cds => "inframe_insertion",
+            other => region_label(other),
+        }
+    } else {
+        "complex"
+    };
+    effect_of(label, Some(tx), None, ann)
 }
 
 fn coding_snp(ann: &Annotation, genome: &Genome, tx: &Transcript, idx: u64, alt: u8) -> Effect {
