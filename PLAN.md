@@ -12,8 +12,10 @@ CI passed on GitHub on 2026-11-12 for the commit before the effect annotation; l
   `--reads2`, `--threads`, `--min-depth`, `--min-snp-fraction`, `--min-indel-fraction`, `--min-mapq`. The
   `rammap` path runs the same `Engine` as the browser build.
 - `qmutfind annotate`: the effect of each variant on the canonical transcript of a gene, for any VCF
-  (`EFFECT`, `GENE`, `TRANSCRIPT`, `AA`, `NTX`). The tag names and the canonical-transcript rule are ASSUMED:
-  the user did not answer question 43 before going offline.
+  (`EFFECT`, `GENE`, `TRANSCRIPT`, `AA`, `NTX`). DECIDED (user, 2026-11-12, question 43): the simple tags and the
+  rule that each gene is judged on its canonical transcript (the longest CDS), with `NTX` giving the number of
+  transcripts. The labels are plain words (for example `missense`), not Sequence Ontology names
+  (`missense_variant`); the user was told this and agreed to the tags as defined.
 - `qmutfind stats`: JSON and TSV statistics from a VCF. `qmutfind report`: one HTML page with an SVG of the
   gene models and the variants of a genomic range.
 - WebAssembly: `Session` (reference bytes, read chunks, VCF out) and the functions `annotate`, `stats` and

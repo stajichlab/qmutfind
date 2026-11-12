@@ -112,5 +112,5 @@ the real EVOL20 evolution experiment (PRJNA417720). See [PLAN.md](PLAN.md) secti
 - Nanopore small indels are the weakest class: on simulated reads at 15.8x, 72 of 621 small-indel calls are false even with the default floor of 6 supporting reads (16 of 587 at 27.7x).
 - Mapping quality is filtered at 20 for short reads. That value comes from real short-read data only. Nothing was measured for long reads, so their default is 0. Base quality is not used.
 - Statistics that need the read depth, the reference sequence or per-strand counts are not built.
-- The `annotate` tags and the canonical-transcript rule are assumed, not agreed.
+- The `annotate` tags use plain words (`missense`), not Sequence Ontology names (`missense_variant`), and a gene is judged on its longest-CDS transcript only. Tools that expect Sequence Ontology terms or the `ANN` field will need a translation.
 - Licence: GPL-3.0 (see [LICENSE](LICENSE)).
