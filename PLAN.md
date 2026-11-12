@@ -450,6 +450,35 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Peak memory printed by `time -v` (largest child process, not identified): 1.25 GB and 2.36 GB.
      Not built: `--reads2` for paired input; `.zst` reads are passed to `bwa-mem2` unconverted, which it
      cannot read (untested).
+   - EVOL20 REAL-DATA COMPARISON (2026-11-12; Af293 RefSeq reference; parent SRR6277228, 3,037,384 pairs,
+     mean depth 14.2x from `samtools depth`; EVOL20_3 SRR6277229, 1,427,487 pairs; four pipelines through the
+     CLI, thresholds depth >= 5 and fraction >= 0.5; all outputs normalized with `bcftools norm`; mates:
+     `rammap` as single-end, the others as pairs). Calls per sample (parent / EVOL20 / EVOL20-only):
+     `rammap` + built-in 646 / 1,010 / 700; `bwa-mem2` + built-in 1,335 / 1,849 / 1,192;
+     `bwa-mem2` + FreeBayes 874 / 1,315 / 923; `minimap2` + `bcftools` 88 / 79 / 36.
+     The parent should be close to the reference, so most of the extra calls of the first three are
+     probably false. This is an assumption: there is no ground truth for the parent.
+     Diagnosis (parent, `rammap` + built-in): median DP at called sites 27 against a mean depth of 14.2
+     (about 2x), and 387 of 646 calls have a fraction under 0.6. This fits reads from duplicated or
+     repeated regions piling onto one locus. A true variant in a haploid should be near 1.0. The default
+     `min_alt_fraction` 0.5 was provisional and `UNMEASURED`; the real data show it is too low for SNPs.
+     Threshold sweep, parent calls at min fraction 0.5 / 0.7 / 0.8 / 0.9: `rammap` + built-in
+     646 / 105 / 66 / 49; `bwa-mem2` + built-in 1,335 / 186 / 92 / 63; `bwa-mem2` + FreeBayes
+     874 / 131 / 98 / 81. Overlap with the 88 `bcftools` parent calls falls as the threshold rises
+     (`rammap` + built-in 76 / 56 / 50 / 43 of 88).
+     Cost on the simulated truth set (found / false): ART SNPs 2,985 / 7 at 0.5, 2,975 / 1 at 0.7, 2,972 / 1
+     at 0.8; ART small indels 582, 576, 551 at 0.5, 0.7, 0.8 (383 at 0.9); ONT SNPs 2,999 / 10, 2,991 / 0,
+     2,933 / 0 at 0.5, 0.7, 0.8; ONT small indels 571, 431, 313. One fraction threshold hurts indels and
+     long reads far more than SNPs, and the real-data excess is almost all SNPs (621 SNP and 25 indel
+     calls in the parent).
+     Candidate genes (RefSeq `NC_007198.1`): `ssk1` AFUA_5G08390 2,130,224-2,134,138 (-), AFUA_5G13710
+     3,600,517-3,603,725 (-), `hrmA` AFUA_5G14900 3,851,274-3,852,983 (+). EVOL20-only variants in them,
+     reported by all four pipelines: `NC_007198.1:2,132,142 T>TG` (ssk1) and `NC_007198.1:3,852,237 A>G`
+     (hrmA). None in AFUA_5G13710 in any pipeline. The amino-acid effects are not known yet (no effect
+     classifier). Only 6 EVOL20-only variants are reported by all four pipelines; 127 by three, 701 by two,
+     1,044 by one. The gene names come partly from patent text and are unverified.
+     Rough wall times (3 threads, one run each; parent / EVOL20): `rammap` + built-in 89 / 44 s;
+     `bwa-mem2` + built-in 75 / 42 s; `bwa-mem2` + FreeBayes 168 / 86 s; `minimap2` + `bcftools` 134 / 84 s.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
