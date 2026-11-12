@@ -465,7 +465,8 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Pairing matters for FreeBayes: the earlier PAIRED `bwa-mem2` + FreeBayes run had small indels 587 found
      and 3 false, against 580 and 10 false single-end. One seed; an observation only.
      `bcftools norm` realigned 592 of 3,571 FreeBayes records and 0 records from the built-in caller, so
-     the FreeBayes output of the CLI is not left-aligned. Known gap: normalize it in the tool.
+     the FreeBayes output of the CLI was not left-aligned at that time. FIXED later: `left_align_calls` is now applied to the
+     FreeBayes calls in the CLI (`qmutfind-cli/src/main.rs`). No new `bcftools norm` count was measured after the fix.
      Wall time (rough, 3 threads, one run each): `bwa-mem2` + built-in 1:52, `bwa-mem2` + FreeBayes 4:31.
      Peak memory printed by `time -v` (largest child process, not identified): 1.25 GB and 2.36 GB.
      Not built: `--reads2` for paired input; `.zst` reads are passed to `bwa-mem2` unconverted, which it
@@ -774,3 +775,19 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
     See section 6 for the label, the measured coverage (59.0% of mRNAs) and the limit.
 19. Measure full-size runs in WASM (all 625k Nanopore reads, all Illumina reads of one run) to replace the
     extrapolation in section 4.
+
+
+## 13. Planned work (2026-11-12, agreed with the user)
+
+1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.
+2. Mapq sweep for the `bwa-mem2` paths (`bench/run_mapq_sweep.sh`): real parent and EVOL20_3, simulated ART seed 2;
+   `--caller builtin` and `freebayes`; q 0, 10, 20, 30, 40. For FreeBayes, q0 is sent as 1, so q0 equals q1.
+3. Paired versus single-end mapping. Same data, `bwa-mem2` with the mates as a pair against the mates as two
+   single-end files, then `rammap` single-end as now. Measure found/false on the simulated truth set and the call
+   counts on the real parent. A `rammap` paired mode does not exist; whether it is worth building depends on this result.
+4. Saved for later: validation against published mutation lists (PRJNA1094460, PRJNA1347423; the papers must be read).
+5. Smaller items, one at a time, each with tests: base-quality filtering (off by default until measured), depth and
+   strand statistics, a "possible large indel unresolved" report, Nanopore and the 6.07M-read parent in Firefox,
+   `--caller bcftools` as an independent cross-check.
+6. FungiDB files (contig names `Chr1_A_fumigatus_Af293`, with a mitochondrial contig): allowed as an input set. The
+   source and release must be written next to every result (FungiDB release 71, fetched 2026-11-12 with `qmutfind fetch`).
