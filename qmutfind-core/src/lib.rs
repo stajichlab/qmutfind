@@ -10,7 +10,7 @@ mod parse;
 mod sam;
 mod vcf;
 pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
-pub use annotate::{classify_effect, Annotation, Effect, Genome, Transcript};
+pub use annotate::{annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
 pub use engine::Engine;
 pub use freebayes::calls_from_freebayes_vcf;
 pub use normalize::left_align_calls;

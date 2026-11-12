@@ -7,7 +7,7 @@
 //! Contig c3 (60 bp), a minus-strand gene, exon 11-40, CDS 20-31: forward 32-40 is the 5' UTR, 11-19 the 3' UTR.
 //! Contig c4 (60 bp), a plus-strand non-coding RNA, exons 11-20 and 31-40, intron 21-30.
 
-use qmutfind_core::{classify_effect, Annotation, Genome};
+use qmutfind_core::{annotate_vcf, classify_effect, Annotation, Genome};
 
 fn c1() -> Vec<u8> {
     let mut s = String::new();
@@ -218,4 +218,72 @@ fn an_indel_outside_every_transcript_is_intergenic_and_one_inside_names_its_gene
     let (ann, genome) = setup();
     let e = classify_effect(&ann, &genome, "c1", 30, "GA", "G");
     assert_eq!((e.gene.as_deref(), e.transcript.as_deref()), (Some("G1"), Some("tx1")));
+}
+
+
+// ---- annotating a VCF ----
+
+const VCF_HEADER: &str = "##fileformat=VCFv4.2\n##contig=<ID=c1,length=200>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+
+fn annotate(vcf_body: &str, with_annotation: bool) -> Vec<String> {
+    let (ann, genome) = setup();
+    let input = format!("{VCF_HEADER}{vcf_body}");
+    let mut out = Vec::new();
+    annotate_vcf(input.as_bytes(), &mut out, if with_annotation { Some(&ann) } else { None }, &genome).unwrap();
+    String::from_utf8(out).unwrap().lines().map(str::to_string).collect()
+}
+
+#[test]
+fn the_header_gets_the_five_info_definitions_before_the_column_line() {
+    let lines = annotate("", true);
+
+    assert_eq!(lines[0], "##fileformat=VCFv4.2");
+    assert_eq!(lines[1], "##contig=<ID=c1,length=200>");
+    for id in ["EFFECT", "GENE", "TRANSCRIPT", "AA", "NTX"] {
+        assert!(lines.iter().any(|l| l.starts_with(&format!("##INFO=<ID={id},"))), "missing {id}");
+    }
+    assert_eq!(lines.last().unwrap(), "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO");
+}
+
+#[test]
+fn a_record_keeps_its_info_and_gains_the_effect_tags() {
+    let lines = annotate("c1\t28\t.\tC\tA\t.\tPASS\tDP=20;AF=1.0000\n", true);
+
+    assert_eq!(
+        lines.last().unwrap(),
+        "c1\t28\t.\tC\tA\t.\tPASS\tDP=20;AF=1.0000;EFFECT=missense;GENE=G1;TRANSCRIPT=tx1;AA=A2D;NTX=1"
+    );
+}
+
+#[test]
+fn an_empty_info_field_is_replaced_not_extended() {
+    let lines = annotate("c1\t150\t.\tT\tA\t.\tPASS\t.\n", true);
+
+    assert_eq!(lines.last().unwrap(), "c1\t150\t.\tT\tA\t.\tPASS\tEFFECT=intergenic");
+}
+
+#[test]
+fn without_an_annotation_every_record_is_unannotated() {
+    let lines = annotate("c1\t28\t.\tC\tA\t.\tPASS\tDP=20\n", false);
+
+    assert_eq!(lines.last().unwrap(), "c1\t28\t.\tC\tA\t.\tPASS\tDP=20;EFFECT=unannotated");
+}
+
+#[test]
+fn a_multi_allele_record_gets_one_effect_per_allele_in_the_same_order() {
+    // Position 28 is C in codon 2 (GCT). C to A gives GAT (D, missense). C to T gives GTT (V, missense).
+    let lines = annotate("c1\t28\t.\tC\tA,T\t.\tPASS\t.\n", true);
+
+    assert_eq!(
+        lines.last().unwrap(),
+        "c1\t28\t.\tC\tA,T\t.\tPASS\tEFFECT=missense,missense;GENE=G1;TRANSCRIPT=tx1;AA=A2D,A2V;NTX=1"
+    );
+}
+
+#[test]
+fn a_record_with_too_few_fields_is_an_error() {
+    let (ann, genome) = setup();
+    let input = format!("{VCF_HEADER}c1\t28\t.\tC\n");
+
+    assert!(annotate_vcf(input.as_bytes(), &mut Vec::new(), Some(&ann), &genome).is_err());
 }

@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    calls_from_freebayes_vcf, left_align_calls, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -160,12 +160,33 @@ fn call(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{out_path}: {e}"))
 }
 
+/// `qmutfind annotate`: add the effect of each variant on the canonical transcript to a VCF.
+fn annotate(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let vcf_path = required(&flags, "vcf")?;
+    let reference_path = required(&flags, "reference")?;
+    let out_path = required(&flags, "out")?;
+
+    let genome = Genome::new(read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?);
+    let annotation = match flags.get("gff") {
+        Some(path) => Some(Annotation::from_gff(open_input(path)?).map_err(|e| format!("{path}: {e}"))?),
+        None => {
+            eprintln!("qmutfind: no GFF given, so every effect is unannotated");
+            None
+        }
+    };
+    let out = File::create(out_path).map_err(|e| format!("cannot create {out_path}: {e}"))?;
+    annotate_vcf(open_input(vcf_path)?, &mut BufWriter::new(out), annotation.as_ref(), &genome)
+        .map_err(|e| format!("{vcf_path}: {e}"))
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("call") => call(&args[1..]),
+        Some("annotate") => annotate(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -413,3 +413,67 @@ fn coding_snp(ann: &Annotation, genome: &Genome, tx: &Transcript, idx: u64, alt:
     let aa = format!("{}{}{}", ref_aa as char, codon_no + 1, alt_aa as char);
     effect_of(label, Some(tx), Some(aa), ann)
 }
+
+const INFO_DEFINITIONS: [&str; 5] = [
+    "##INFO=<ID=EFFECT,Number=A,Type=String,Description=\"Effect on the canonical transcript, one per alternate allele (the _derived labels come from exons and CDS, not from UTR or intron features)\">",
+    "##INFO=<ID=GENE,Number=1,Type=String,Description=\"Gene (locus tag) of the canonical transcript\">",
+    "##INFO=<ID=TRANSCRIPT,Number=1,Type=String,Description=\"Canonical transcript: the one with the longest CDS\">",
+    "##INFO=<ID=AA,Number=A,Type=String,Description=\"Protein change of a coding SNP, for example L424I; * is a stop\">",
+    "##INFO=<ID=NTX,Number=1,Type=Integer,Description=\"Number of transcripts of the gene\">",
+];
+
+/// Read a VCF and write it with `EFFECT`, `GENE`, `TRANSCRIPT`, `AA` and `NTX` added to INFO.
+/// With no annotation every record is `EFFECT=unannotated`. The records keep their order and fields.
+pub fn annotate_vcf<R: BufRead, W: io::Write>(
+    reader: R,
+    out: &mut W,
+    ann: Option<&Annotation>,
+    genome: &Genome,
+) -> io::Result<()> {
+    for line in reader.lines() {
+        let line = line?;
+        if line.starts_with("#CHROM") {
+            for definition in INFO_DEFINITIONS {
+                writeln!(out, "{definition}")?;
+            }
+            writeln!(out, "{line}")?;
+            continue;
+        }
+        if line.starts_with('#') || line.trim().is_empty() {
+            writeln!(out, "{line}")?;
+            continue;
+        }
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 8 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("VCF line has {} fields, needs at least 8: {line}", f.len())));
+        }
+        let pos: u64 = f[1]
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("bad VCF position in: {line}")))?;
+        let tags = match ann {
+            None => "EFFECT=unannotated".to_string(),
+            Some(ann) => {
+                let effects: Vec<Effect> = f[4].split(',').map(|alt| classify_effect(ann, genome, f[0], pos, f[3], alt)).collect();
+                let mut tags = format!("EFFECT={}", effects.iter().map(|e| e.label.as_str()).collect::<Vec<_>>().join(","));
+                if let Some(first) = effects.first() {
+                    if let (Some(gene), Some(tx)) = (&first.gene, &first.transcript) {
+                        tags.push_str(&format!(";GENE={gene};TRANSCRIPT={tx}"));
+                    }
+                    if effects.iter().any(|e| e.aa.is_some()) {
+                        let aas: Vec<&str> = effects.iter().map(|e| e.aa.as_deref().unwrap_or(".")).collect();
+                        tags.push_str(&format!(";AA={}", aas.join(",")));
+                    }
+                    if first.gene.is_some() {
+                        tags.push_str(&format!(";NTX={}", first.n_transcripts));
+                    }
+                }
+                tags
+            }
+        };
+        let info = if f[7] == "." || f[7].is_empty() { tags } else { format!("{};{}", f[7], tags) };
+        let mut fields: Vec<String> = f.iter().map(|s| s.to_string()).collect();
+        fields[7] = info;
+        writeln!(out, "{}", fields.join("\t"))?;
+    }
+    Ok(())
+}
