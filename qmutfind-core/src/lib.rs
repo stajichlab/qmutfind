@@ -3,11 +3,13 @@
 
 mod caller;
 mod freebayes;
+mod normalize;
 mod parse;
 mod sam;
 mod vcf;
 pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
 pub use freebayes::calls_from_freebayes_vcf;
+pub use normalize::left_align_calls;
 pub use parse::{read_fasta, FastqReader};
 pub use sam::{parse_sam_line, SamRecord};
 pub use vcf::write_vcf;

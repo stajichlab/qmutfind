@@ -214,3 +214,91 @@ fn bwa_mem2_with_freebayes_finds_the_snp_and_labels_it_with_the_sample_name() {
     assert_eq!(recs[0][..5], ["chrA", "30001", ".", &(seq[30_000] as char).to_string(), &(alt as char).to_string()]);
     assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AO=10;AF=1.0000"), "{}", recs[0][7]);
 }
+
+fn reverse_complement(seq: &[u8]) -> Vec<u8> {
+    seq.iter()
+        .rev()
+        .map(|&b| match b {
+            b'A' => b'T',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'T' => b'A',
+            other => other,
+        })
+        .collect()
+}
+
+/// Ten read pairs from 300 bp fragments. Mate 1 is the first 100 bp, mate 2 is the reverse complement of
+/// the last 100 bp. Only mate 2 covers position 30_000, and only there is the base `alt`.
+fn write_pairs_with_the_snp_in_mate2(dir: &Path, seq: &[u8], alt: u8) {
+    let (mut r1, mut r2) = (String::new(), String::new());
+    for i in 1..=10 {
+        let start = 29_700 + i * 8;
+        let frag = &seq[start..start + 300];
+        let mate1 = frag[..100].to_vec();
+        let mut mate2_fwd = frag[200..300].to_vec();
+        mate2_fwd[30_000 - (start + 200)] = alt;
+        let mate2 = reverse_complement(&mate2_fwd);
+        r1.push_str(&format!("@p{i}/1\n{}\n+\n{}\n", String::from_utf8_lossy(&mate1), "I".repeat(100)));
+        r2.push_str(&format!("@p{i}/2\n{}\n+\n{}\n", String::from_utf8_lossy(&mate2), "I".repeat(100)));
+    }
+    fs::write(dir.join("reads.fq"), r1).unwrap();
+    fs::write(dir.join("reads2.fq"), r2).unwrap();
+}
+
+fn assert_the_mate2_snp_is_called(dir: &Path, seq: &[u8], alt: u8, out: &std::process::Output) {
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let vcf = fs::read_to_string(dir.join("out.vcf")).unwrap();
+    let recs = records(&vcf);
+    assert_eq!(recs.len(), 1, "{vcf}");
+    assert_eq!(recs[0][..5], ["chrA", "30001", ".", &(seq[30_000] as char).to_string(), &(alt as char).to_string()]);
+    assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AO=10;AF=1.0000"), "{}", recs[0][7]);
+}
+
+#[test]
+fn reads2_is_mapped_as_the_second_mate_by_bwa_mem2() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    let alt = if seq[30_000] == b'G' { b'T' } else { b'G' };
+    write_pairs_with_the_snp_in_mate2(dir.path(), &seq, alt);
+
+    let out = run_with(dir.path(), &["--aligner", "bwa-mem2", "--reads2", "reads2.fq"]);
+
+    assert_the_mate2_snp_is_called(dir.path(), &seq, alt, &out);
+}
+
+#[test]
+fn reads2_is_mapped_as_more_single_end_reads_by_the_rammap_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    let alt = if seq[30_000] == b'G' { b'T' } else { b'G' };
+    write_pairs_with_the_snp_in_mate2(dir.path(), &seq, alt);
+
+    let out = run_with(dir.path(), &["--reads2", "reads2.fq"]);
+
+    assert_the_mate2_snp_is_called(dir.path(), &seq, alt, &out);
+}
+
+#[test]
+fn bwa_mem2_accepts_zstd_compressed_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    let alt = if seq[30_000] == b'G' { b'T' } else { b'G' };
+    write_pairs_with_the_snp_in_mate2(dir.path(), &seq, alt);
+    for name in ["reads.fq", "reads2.fq"] {
+        let plain = fs::read(dir.path().join(name)).unwrap();
+        fs::write(dir.path().join(format!("{name}.zst")), zstd::encode_all(&plain[..], 3).unwrap()).unwrap();
+    }
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq.zst", "--reads2", "reads2.fq.zst"])
+        .args(["--sample", "s1", "--preset", "short", "--out", "out.vcf", "--aligner", "bwa-mem2"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_the_mate2_snp_is_called(dir.path(), &seq, alt, &out);
+}
