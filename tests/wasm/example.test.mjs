@@ -1,4 +1,4 @@
-// The browser example cannot run in a real browser here. This checks what Node can check:
+// The browser page cannot run in a real browser from Node. This checks what Node can check:
 // the JavaScript parses as ES modules, the page refers to files that exist, and the worker
 // imports the package path that `pixi run build-wasm-web` writes. It is not a browser test.
 import test from 'node:test';
@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const DIR = join(process.cwd(), 'examples', 'browser');
+const DIR = join(process.cwd(), 'site');
 
 for (const file of ['worker.js', 'app.js']) {
   test(`${file} parses as an ES module`, () => {
@@ -31,10 +31,10 @@ test('the page loads the app script and the app starts the worker, and both file
   assert.match(readFileSync(join(DIR, 'app.js'), 'utf8'), /new Worker\('worker\.js', \{ type: 'module' \}\)/);
 });
 
-test('the worker imports the web package from the path the build writes and uses the four exports', () => {
+test('the worker imports the web package from the path the build writes and uses the exports of the three steps', () => {
   const worker = readFileSync(join(DIR, 'worker.js'), 'utf8');
-  assert.match(worker, /from '\.\.\/\.\.\/pkg-web\/qmutfind_wasm\.js'/);
-  for (const name of ['Session', 'annotate', 'stats', 'report']) {
+  assert.match(worker, /from '\.\/pkg-web\/qmutfind_wasm\.js'/);
+  for (const name of ['Session', 'annotate', 'stats', 'report', 'genome_plot']) {
     assert.match(worker, new RegExp(`\\b${name}\\b`), `worker does not use ${name}`);
   }
 });

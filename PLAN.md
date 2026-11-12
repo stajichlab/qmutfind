@@ -857,6 +857,24 @@ Reading:
 - Every number here is from simulated reads. Real reads have repeats and systematic errors that ART and Badread do not
   model, so real-data precision is expected to be lower. No real-data truth set exists yet.
 
+## 12b. The site as three steps (2026-11-12)
+
+Requested by the user: the region box is not useful before the variants are known. The page `site/index.html` now has
+three steps that carry state: (1) Call (reference + reads -> VCF, kept in the page); (2) Summarize (statistics table and
+a genome-wide plot; uses the VCF from step 1 or a VCF file the user chooses; takes contig lengths from the VCF `##contig`
+lines or the reference); (3) Draw (annotate with the GFF, a table of variants with effect, gene, protein change, AF and
+DP, a filter by effect, and a Draw button per variant that draws the locus with a window of 2.5 kb on each side).
+Core `genome_plot_svg` (13 tests), `qmutfind plot`, and the WASM `genome_plot` give identical SVG (Node parity tests).
+The browser tests (19) compare every output with the native CLI. Mutation checks caught: step 2 ignoring the carried
+VCF, a wrong window, and (after adding a test) a stale annotated VCF surviving a new run.
+The genome plot: top panel, calls per bin; bottom panel, the allele fraction of each call (Manhattan-style; there is no
+p-value, so the y axis is the allele fraction, not -log10 p). Calls with no `AF` go on a separate lane.
+Real-data check in Firefox (not an automated test): EVOL20_3 VCF (31 variants at the current defaults) with the RefSeq
+genome and GFF: step 2 and step 3 ran, and Draw on the `hrmA` variant drew the missense change in AFUA_5G14900's
+neighbourhood. NOT done: the window is a fixed size around the variant, not the gene extent; a whole-genome VCF with
+thousands of calls was not tried in the browser; Chrome and Safari were not tried. `examples/browser` was removed:
+`site/` is the only browser UI now.
+
 ## 13. Planned work (2026-11-12, agreed with the user)
 
 1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.

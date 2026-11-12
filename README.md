@@ -57,6 +57,10 @@ of calls with a fraction from 0.2 to 0.8, and clustering.
 `qmutfind report --vcf FILE --gff GFF --region CONTIG:START-END --out page.html` writes one HTML file with
 the gene models and one circle per variant, coloured by effect.
 
+`qmutfind plot --vcf FILE [--reference FA] --out genome.svg` draws every call along the contigs: calls per bin on top and
+the allele fraction of each call below (a Manhattan-style plot). Contig lengths come from the VCF `##contig` lines, or
+from `--reference`.
+
 `qmutfind fetch --organism "Aspergillus fumigatus Af293" --out-dir genome` downloads the genome FASTA and GFF of one
 FungiDB organism as `.gz` files. The organism list is public. The FASTA needs an API key from your FungiDB account
 (Web Services Access). Put the key in the environment variable `EUPATHDB_KEY`, or in a file named by `--eupathdb-key-file`
@@ -86,13 +90,12 @@ const vcf = session.vcf();
 Node: `node scripts/wasm-run.mjs --reference ref.fa.gz --reads r1.fq.gz --reads r2.fq.gz --sample S --kind short --out S.vcf`
 prints the read count, the times and the memory in use.
 
-Browser: [examples/browser](examples/browser) is a page and a worker. `pixi run test-browser` runs it in
-headless Firefox on a small synthetic data set and compares the VCF, statistics and report with the native CLI.
-Chrome and Safari are not tested. Large real data sets have not been run in a browser.
-
-The landing page is in `site/`. `bash scripts/build-site.sh` assembles it in `dist-site/` (run `pixi run build-wasm-web`
-first). It has five styles, chosen with the buttons or with `?theme=slate|lab|grey|mono|quest`. The workflow
-`.github/workflows/pages.yml` publishes it to <https://qmutfind.fungalgenomes.org/> on every push to `main`.
+Browser: the page in [site](site) has three steps. (1) Call: map the reads and call variants; the VCF stays in the page.
+(2) Summarize: statistics and a genome-wide plot of where the variants are (`genome_plot`, the same code as
+`qmutfind plot`). (3) Draw: add gene effects, list the variants, press Draw on one to see its locus. Each step uses the
+result of the one before, or a VCF file you choose. `pixi run test-browser` runs the page in headless Firefox on a small
+synthetic data set and compares every output with the native CLI. Chrome and Safari are not tested. Large real data sets
+have been run only in Firefox (EVOL20_3, 2.9 million reads) in step 1.
 
 ## Tests
 

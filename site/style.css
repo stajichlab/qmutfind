@@ -133,6 +133,21 @@ html[data-theme="quest"] .foot { color: #fff; }
 html[data-theme="quest"] .foot a { color: #ffff55; }
 html[data-theme="quest"] iframe { border: 3px solid #000; background: #fff; }
 
+/* Steps, tables and the variant list (all themes) */
+.step h2 .num { display: inline-block; min-width: 1.6em; text-align: center; margin-right: 6px; padding: 0 4px; background: var(--accent); color: var(--accent-fg); border-radius: var(--radius); }
+.hint { color: var(--muted); margin-top: 0; }
+table.stats, #variant-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: .92rem; }
+table.stats th, table.stats td, #variant-table th, #variant-table td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; vertical-align: top; }
+table.stats th { width: 42%; font-weight: 600; }
+#variant-table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); margin: 8px 0; }
+#variant-table th { position: sticky; top: 0; background: var(--panel); }
+#variant-controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 8px 0; }
+#variant-controls input[type=number] { width: 6em; }
+#genome-plot svg { width: 100%; height: auto; background: transparent; margin-top: 8px; }
+button.draw-row, #draw { font: inherit; font-size: .85rem; padding: 1px 10px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+#variant-table-wrap:has(#variant-table[hidden]) { display: none; }
+
 /* Layout shared by all themes */
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--font); }
