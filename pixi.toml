@@ -20,6 +20,11 @@ samtools = "*"
 art = "*"
 badread = "*"
 
+# Selectable backends. Versions equal those of the genomics-wasm ports (BWA-MEM2 2.2.1,
+# FreeBayes 1.3.6), so native and browser builds run the same upstream releases.
+bwa-mem2 = "==2.2.1"
+freebayes = "==1.3.6"
+
 # Helper scripts and their tests.
 python = ">=3.11"
 zstd = "*"
@@ -34,3 +39,9 @@ test = "cargo test --workspace"
 build-wasm = { cmd = "cargo build --release --target wasm32-unknown-unknown -p qmutfind-wasm", env = { RUSTFLAGS = "-C target-feature=+simd128" } }
 # Test the benchmark helper scripts in bench/.
 test-bench = "pytest bench/tests -q"
+# Install Emscripten 3.1.64 (exact, from the official emsdk) into ./.emsdk. Not on conda-forge
+# at this version. Needs git, python and network access.
+setup-emsdk = "bash scripts/setup-emsdk.sh"
+# Check the Emscripten install.
+test-emsdk = "pytest tests -q"
+

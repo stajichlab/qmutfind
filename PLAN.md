@@ -396,6 +396,9 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      (1 false). Overall 3,670 of 3,700, 53 false calls. 45 symbolic records. At the two sites checked
      by hand: `NC_007194.1:28986` SVLEN 242 (truth 244), AO 26 of DP 29; `NC_007194.1:560432` SVLEN
      415 (truth 417), AO 23 of DP 25. Run time and memory of v3 were not recorded separately.
+     ART v3 is identical to ART v2 in every cell and has 0 symbolic records (no short-read regression).
+     The run times printed by the v3 job script are NOT v3 timings: a `sed` edit left the timing
+     file path pointing at the v2 file. v3 timing and memory are unknown.
      CAUTION: the fix was designed after studying this same truth set (one seed), so 100 of 100 is a
      result on the data it was tuned on. It needs a second truth set with a new seed and new reads.
      The `bcftools` large-indel numbers below used the same tolerant rule.
@@ -418,6 +421,21 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Limits: simulated reads, one seed, `qmutfind` single-end vs `bcftools` paired on ART, untuned
      thresholds on both sides, run times not comparable (jobs shared 4 CPUs). `qmutfind` ignores base
      quality and mapping quality; this is a known gap that simulated reads may hide.
+   - BWA-MEM2 + FREEBAYES BASELINE, ART reads (2026-11-11; `bwa-mem2` 2.2.1 AVX2, mates mapped as pairs,
+     `samtools sort`, `freebayes` 1.3.6 `--ploidy 1` with default settings, `vcfallelicprimitives -k`
+     then `bcftools norm -f -m -any`; same truth set and tested comparison tool). Raw: 18,342 records
+     (17,747 SNP records, 14,769 of them false, mostly near-zero QUAL such as 3.8e-15 for 2 supporting
+     reads), so raw FreeBayes output must be filtered. Filtered with `INFO/DP>=5 && INFO/AO/INFO/DP>=0.5`:
+     SNP 2,978 of 3,000 found (99.27%), 0 false. Small indel 587 of 600 (97.83%), 3 false. Large indel
+     2 of 100. Overall 3,567 of 3,700, 3 false calls. For comparison (filtered, same ART reads): qmutfind
+     SNP 2,985 / 7 false, small indel 582 / 12; bcftools SNP 2,986 / 0, small indel 561 / 31.
+     Timing (shared CPUs, not a speed comparison): `bwa-mem2 mem` 1:46 wall with 3 threads and 1.10 GB peak;
+     whole map-and-sort stage 160 s; FreeBayes 2:20 wall. The FreeBayes peak memory printed by the
+     job (21 MB) looks too low and was not checked, so it is not recorded as a result.
+     `bwa-mem2 index` of the 29.75 Mb genome: 9.8 s, 715 MB peak, index files about 162 MB.
+     Notes: BWA-MEM2 without `-R` gives the sample name `unknown` in the VCF. `vcfallelicprimitives`
+     in vcflib 1.0.15 has `-k` (keep INFO) and no `-g`; it says `vcfwave` is preferred. My first run
+     used `-g` and failed; the post-processing was redone.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`

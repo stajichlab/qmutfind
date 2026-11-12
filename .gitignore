@@ -49,3 +49,6 @@ scratch/
 __pycache__/
 *.pyc
 .claude/
+
+# Emscripten toolchain (pixi run setup-emsdk)
+.emsdk/
