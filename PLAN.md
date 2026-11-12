@@ -6,21 +6,26 @@ ASSUMED: "only" and not "or later". Change `license` in `Cargo.toml` if you want
 `rammap` declares `license = "MIT"` in its workspace `Cargo.toml` (read 2026-11-11). I did not read its
 `LICENSE` file. The legal effect of combining MIT and GPL-3.0 code is not checked here.
 
-Status (2026-11-12). Works and is tested (95 Rust tests, 25 Python tests, 2 Emscripten tests, 7 Node
-WASM tests; CI passed on GitHub on 2026-11-12):
+Status (2026-11-12). Works and is tested (125 Rust tests, 25 Python tests, 2 Emscripten tests, 19 Node tests;
+CI passed on GitHub on 2026-11-12 for the commit before the effect annotation; later commits have not run in CI):
 - `qmutfind call` with selectable backends: `--aligner rammap|bwa-mem2`, `--caller builtin|freebayes`,
-  `--reads2`, `--threads`, `--min-depth`, `--min-snp-fraction`, `--min-indel-fraction`. The `rammap` path runs the
-  same `Engine` as the browser build.
+  `--reads2`, `--threads`, `--min-depth`, `--min-snp-fraction`, `--min-indel-fraction`, `--min-mapq`. The
+  `rammap` path runs the same `Engine` as the browser build.
 - `qmutfind annotate`: the effect of each variant on the canonical transcript of a gene, for any VCF
   (`EFFECT`, `GENE`, `TRANSCRIPT`, `AA`, `NTX`). The tag names and the canonical-transcript rule are ASSUMED:
   the user did not answer question 43 before going offline.
-- WebAssembly: `Session` (reference bytes, read chunks, VCF out) built with `pixi run build-wasm-node` or
-  `build-wasm-web`; `pixi run test-wasm` checks that the WASM VCF equals the CLI VCF. Emscripten 3.1.64 is
-  installed by `pixi run setup-emsdk`.
-Not built: statistics, the report (SVG locus views), the "possible large indel, unresolved" report for short
-reads, mapping-quality and base-quality filters, WASM bindings for `annotate`, the genomics-wasm BWA-MEM2 and
-FreeBayes builds, a real-browser test. Defaults for thresholds were set from data and are tuned on the data
-they were measured on (see section 11).
+- `qmutfind stats`: JSON and TSV statistics from a VCF. `qmutfind report`: one HTML page with an SVG of the
+  gene models and the variants of a genomic range.
+- WebAssembly: `Session` (reference bytes, read chunks, VCF out) and the functions `annotate`, `stats` and
+  `report`, built with `pixi run build-wasm-node` or `build-wasm-web`; `pixi run test-wasm` checks that the WASM
+  output equals the CLI output for all four. Emscripten 3.1.64 is installed by `pixi run setup-emsdk`.
+- `README.md` documents the commands. `examples/browser` is a page and a worker, checked for syntax and file
+  references only; it has never run in a real browser.
+Not built: the statistics that need depth, the reference or per-strand counts (callable-genome rate,
+trinucleotide context, strand bias, expected N:S), the "possible large indel, unresolved" report for short
+reads, base-quality filtering, the genomics-wasm BWA-MEM2 and FreeBayes builds, a real-browser test, a
+second simulated seed. The defaults for thresholds were set from data and are tuned on the data they were
+measured on (see section 11).
 The original voice-note text is kept in `PLAN.original-voice-notes.md`.
 
 Markers used in this file:
@@ -512,6 +517,18 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      (`NC_007201.1:884,282` and `884,357`, 75 bp apart), and an intron change in `AFUA_6G11620`. The other 55
      are intergenic and unexplained. `AFUA_5G13710` has no variant. Limits: UTRs and introns are derived,
      and 41% of Af293 mRNAs have no derivable UTR, so a variant in such a UTR is labeled intergenic.
+   - STATISTICS ON THE REAL CALLS (2026-11-12; `qmutfind stats` on the annotated `rammap` + built-in calls at
+     the new defaults). Af293 parent: 75 calls (50 SNP, 25 small indel), Ts/Tv 1.0 (25 transitions, 25
+     transversions), 15% of calls with a fraction from 0.2 to 0.8, 32 calls within 100 bp of another call.
+     EVOL20_3: 103 calls (68 SNP, 35 small indel), Ts/Tv 4.67 (56 transitions, 12 transversions), SNP
+     classes C>T 33 and T>C 23 of 68, 37% of calls with a fraction from 0.2 to 0.8, 41 clustered calls.
+     Reading (an inference, not a result): the parent looks like noise (Ts/Tv near what random errors give);
+     EVOL20 is richer in transitions, but 34% of its calls are indels and 37% are at mid-range fractions,
+     so noise is still present.
+   - LOCUS VIEWS OF THE TWO CANDIDATE GENES (2026-11-12): `qmutfind report` pages for `hrmA` and `ssk1` in
+     EVOL20_3 (3.8 KB each; the `hrmA` page shows 3 transcripts and 4 CDS blocks in its window and the one
+     variant with the tooltip `NC_007198.1:3852237 A>G missense D304G AFUA_5G14900`). Written to
+     `qmutfind_data/reports/`, outside the repository. Not inspected in a browser.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
