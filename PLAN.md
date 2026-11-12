@@ -479,6 +479,16 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      1,044 by one. The gene names come partly from patent text and are unverified.
      Rough wall times (3 threads, one run each; parent / EVOL20): `rammap` + built-in 89 / 44 s;
      `bwa-mem2` + built-in 75 / 42 s; `bwa-mem2` + FreeBayes 168 / 86 s; `minimap2` + `bcftools` 134 / 84 s.
+   - NEW DEFAULTS (2026-11-12; `CallerConfig::defaults_for`: depth 5, SNP fraction 0.8 for short reads and
+     0.7 for long reads, indel fraction 0.5; accepted by the user; set from the sweeps above, so tuned on
+     the same data they were measured on). Real data, calls old -> new (parent / EVOL20 / EVOL20-only):
+     `rammap` + built-in 646 -> 75 / 1,010 -> 103 / 700 -> 61; `bwa-mem2` + built-in 1,335 -> 111 /
+     1,849 -> 172 / 1,192 -> 114; `bwa-mem2` + FreeBayes 874 -> 127 / 1,315 -> 154 / 923 -> 100
+     (`bcftools`: 88 / 79 / 36). Parent calls shared with the 88 `bcftools` calls: 53, 61 and 66. The
+     `ssk1` insertion and the `hrmA` SNV are still EVOL20-only in all three pipelines.
+     Simulated truth set, new defaults (found / false): ART `rammap` + built-in SNP 2,972 / 1, small indel 582 / 12,
+     large 4; ART `bwa-mem2` + built-in SNP 2,973 / 0, small 580 / 11, large 0; ART `bwa-mem2` + FreeBayes
+     SNP 2,979 / 0, small 580 / 10, large 2; ONT `rammap` + built-in SNP 2,991 / 0, small 571 / 42, large 100 / 1 false.
    - Large insertions, direct check (2026-11-11, `minimap2` alignments of the same reads, not `rammap`):
      at `NC_007194.1:28986` (truth 244 bp) 26 of 33 primary reads show an insertion of 20 bp or more,
      with lengths 234 to 247. The most common length (242) is in 8 reads (24%). At `NC_007194.1:560432`
