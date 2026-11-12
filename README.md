@@ -129,6 +129,8 @@ genomes, and two GenBank genomes, *A. fumigatus* A1163 and CEA10. CEA10 has no G
 reference only. `site/genomes/fungidb.json` lists the FungiDB organisms; FungiDB blocks
 downloads from web pages, so for those the page shows the `qmutfind fetch` command. `?genomes=PATH` uses another list,
 but only a path on the site.
+In "Load data from the web", a read limit box (default 2,000,000 reads per file, 0 keeps all) keeps only the first reads of
+each file and stops the download there. The first reads are not a random sample.
 
 ### Example data
 

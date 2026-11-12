@@ -958,3 +958,16 @@ the page cannot follow a redirect whose first hop has no `access-control-allow-o
 The page therefore rewrites those links (`directAddress` in `site/app.js`; the `dl` and `raw` options are dropped). Other
 hosts are not rewritten, and there is no general fix without a proxy, which was rejected. Not tested: a real browser
 download of the 596 MB Dropbox file (headers only), and whether the `st=` part of a link expires.
+
+### Read limit in the web import (2026-11-12)
+A box "Keep the first this many reads per file" (default 2,000,000; 0 or empty = all) applies to SRA runs and to read
+addresses. `downloadFirstReads` in `site/app.js` streams the file, unpacks gzip with fflate, counts four lines per read,
+stops the download at the limit (`reader.cancel()`) and packs the kept reads again as gzip (level 3), so the page holds
+only the kept reads. Both files of a pair are cut at the same read number. With a limit, a file above the 2 GB download
+limit is allowed, because the download stops early. The expected read count after mapping is files x min(limit, reads
+per file). The source line says "(first N reads of each file)".
+- Not a random sample: the first reads of a run are used. Bias on real runs was not measured.
+- A record is four lines, so multi-line FASTQ is not supported. Data after the cut point is never parsed.
+- Live check (Firefox, headless, from the cluster): the 596 MB Dropbox R2 file with limit 100,000 loaded in 3.3 s and kept
+  8.1 MB (about 160 MB expected at the default 2 M reads, extrapolated, not measured). Mapping a large kept set in the
+  browser, and a limit applied to files chosen from disk, were not tested or built.

@@ -810,6 +810,100 @@ def test_a_read_count_that_differs_from_the_enas_gives_a_warning_after_mapping(d
     assert "WARNING" in result and "999" in result, result
 
 
+# Read limit: the page keeps only the first N reads of each reads file and stops downloading
+
+def set_max_reads(driver, value):
+    box = driver.find_element(By.ID, "max-reads")
+    box.clear()
+    box.send_keys(value)
+
+
+def load_urls_and_run(driver, server, inputs, reads_name, limit):
+    open_web(driver, server)
+    set_max_reads(driver, limit)
+    driver.find_element(By.ID, "url-reads").send_keys(f"{server}/dist-site/_test_example/{reads_name}")
+    driver.find_element(By.ID, "url-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
+    loaded = driver.find_element(By.ID, "web-status").text
+    if not loaded.startswith("Loaded"):
+        return loaded
+    choose(driver, "reference", inputs / "ref.fa")
+    return press(driver, "run", "status")
+
+
+def test_the_read_limit_box_has_a_default_and_says_it_is_reads_per_file(driver, server):
+    open_web(driver, server)
+
+    box = driver.find_element(By.ID, "max-reads")
+    assert box.get_attribute("value") == "2000000"
+    assert "per file" in driver.find_element(By.CSS_SELECTOR, "label[for=max-reads]").text
+
+
+def test_a_gzip_reads_file_is_cut_to_the_first_n_reads(driver, server, inputs, example_site):
+    result = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "4")
+
+    assert result.startswith("Done: 4 reads"), result
+    assert "first 4 reads" in source_text(driver, "reads")
+
+
+def test_a_limit_above_the_number_of_reads_keeps_them_all(driver, server, inputs, example_site):
+    result = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "100")
+
+    assert result.startswith("Done: 10 reads"), result
+    assert "first" not in source_text(driver, "reads")
+
+
+def test_a_plain_fastq_is_cut_the_same_way(driver, server, inputs, example_site):
+    _shutil.copy(inputs / "reads.fq", EXAMPLE_DIR / "reads.fq")
+
+    result = load_urls_and_run(driver, server, inputs, "reads.fq", "3")
+
+    assert result.startswith("Done: 3 reads"), result
+
+
+def test_the_download_stops_at_the_limit_so_data_after_it_is_never_read(driver, server, inputs, example_site):
+    # A valid gzip member of 10 reads followed by 3 MB of noise. Reading past the reads would fail.
+    (EXAMPLE_DIR / "tail.fq.gz").write_bytes(gzip.compress(snp_reads().encode()) + os.urandom(3_000_000))
+
+    result = load_urls_and_run(driver, server, inputs, "tail.fq.gz", "4")
+
+    assert result.startswith("Done: 4 reads"), result
+
+
+def test_zero_or_an_empty_box_means_no_limit_and_a_bad_value_is_refused(driver, server, inputs, example_site):
+    assert load_urls_and_run(driver, server, inputs, "reads.fq.gz", "0").startswith("Done: 10 reads")
+    assert load_urls_and_run(driver, server, inputs, "reads.fq.gz", "").startswith("Done: 10 reads")
+    bad = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "-5")
+    assert bad.startswith("Error") and "read limit" in bad, bad
+
+
+def test_an_sra_run_is_cut_to_the_limit_and_the_read_count_check_uses_the_cut_count(driver, server, inputs, ena_site):
+    fix_host(server)
+    open_web(driver, server)
+    set_max_reads(driver, "4")
+    sra_lookup(driver, "SRR9999991")
+    driver.find_element(By.ID, "sra-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
+    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
+    choose(driver, "reference", inputs / "ref.fa")
+
+    result = press(driver, "run", "status")
+
+    assert result.startswith("Done: 4 reads") and "WARNING" not in result, result
+
+
+def test_a_run_above_the_size_limit_is_allowed_when_a_read_limit_is_set(driver, server, ena_site):
+    ena_site(fastq_bytes=str(5 * 10**9))
+    fix_host(server)
+    open_web(driver, server)
+    set_max_reads(driver, "1000")
+
+    info = sra_lookup(driver, "SRR9999991")
+
+    assert "too large" not in info and "first 1,000 reads" in info, info
+    assert driver.find_element(By.ID, "sra-load").is_displayed()
+
+
 @pytest.mark.parametrize("accession,fragment", [("hello", "does not look like"), ("SRR1", "does not look like"), ("PRJNA417720", "run accession")])
 def test_something_that_is_not_a_run_accession_is_refused_before_any_request(driver, server, ena_site, accession, fragment):
     open_web(driver, server)
@@ -829,6 +923,7 @@ def test_an_unknown_run_a_run_without_fastq_an_unsupported_platform_and_a_huge_r
         ena_site(**changes)
         fix_host(server)
         open_web(driver, server)
+        set_max_reads(driver, "0")  # with a read limit a big run is allowed (tested separately)
         info = sra_lookup(driver, "SRR9999991")
         assert fragment in info, (changes, info)
         assert not driver.find_element(By.ID, "sra-load").is_displayed(), changes

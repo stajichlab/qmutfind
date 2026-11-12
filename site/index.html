@@ -57,6 +57,8 @@
   <p class="hint">Public data only. Your browser downloads straight from the data server, so the server must allow that (NCBI and
   ENA do; many others do not). The page cannot use files that need a password or a key.</p>
   <div class="form">
+    <label for="max-reads">Keep the first this many reads per file (0 keeps all). The download stops after them. It applies to SRA runs and to read addresses.</label>
+    <input id="max-reads" type="number" min="0" step="1" value="2000000">
     <label for="sra-accession">Reads from an SRA run (the page looks the run up in ENA). Give a run accession: SRR, ERR or DRR and digits.</label>
     <input id="sra-accession" type="text" placeholder="SRR6277229" autocomplete="off">
     <p><button id="sra-lookup" type="button">Look up</button></p>
@@ -75,7 +77,7 @@
     <summary>Limits and risks of loading from the web</summary>
     <ul>
       <li>Only https addresses are accepted, and addresses with a user name or password are refused.</li>
-      <li>A download is limited to 2 GB. The whole file is held in memory (and a large one takes minutes), so a big run can slow or stop your browser tab.</li>
+      <li>A download is limited to 2 GB. The whole file is held in memory (and a large one takes minutes), so a big run can slow or stop your browser tab. With a read limit, the page stops downloading after that many reads per file and keeps only those reads, so a bigger file is allowed. The first reads of a file are not a random sample.</li>
       <li>A file that unpacks to more than 1 GB is refused for the reference, genes, VCF and coverage files.</li>
       <li>The page checks the file size, and for an SRA run the read count, against ENA's record. It does not check ENA's MD5 sums.</li>
       <li>The accession you look up is sent to ENA, and the files come from the data server. Nothing is sent to this site.</li>

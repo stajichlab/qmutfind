@@ -1,4 +1,6 @@
 // The page: three steps (call, summarize, draw). The result of each step is kept here and the next step uses it.
+import { Gunzip, Gzip } from './vendor/fflate.js';
+
 const $ = (id) => document.getElementById(id);
 const worker = new Worker('worker.js', { type: 'module' });
 
@@ -334,6 +336,64 @@ async function download(item, base, label, statusId = 'example-status', signal =
   return new File(parts, name);
 }
 
+/** The number in the read-limit box: reads kept per file. 0 (or an empty box) means no limit. */
+function readLimit() {
+  const text = $('max-reads').value.trim();
+  if (text === '') return 0;
+  const n = Number(text);
+  if (!Number.isInteger(n) || n < 0) throw new Error('The read limit must be a whole number of reads per file (0 keeps all reads).');
+  return n;
+}
+
+/**
+ * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download. The kept reads
+ * are packed again as gzip, so the page holds the compressed reads only. A record is taken to be four lines. Returns
+ * { file, reads, cut }: `cut` is true when the download stopped at the limit.
+ */
+async function downloadFirstReads(item, base, label, statusId, signal, maxReads) {
+  const url = checkUrl(new URL(item.url, base).href, label);
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
+  const reader = response.body.getReader();
+  const target = maxReads * 4; // lines
+  const packed = [];
+  let packedBytes = 0;
+  const gzip = new Gzip({ level: 3 }, (chunk) => { packed.push(chunk); packedBytes += chunk.length; });
+  let lines = 0;
+  let cut = false;
+  let downloaded = 0;
+  let gunzip = null;
+  const feed = (bytes) => {
+    if (cut) return;
+    let seen = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 10 && ++seen + lines === target) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
+    }
+    lines += seen;
+    gzip.push(bytes, false);
+    if (packedBytes > MAX_DOWNLOAD) throw new Error(`${label}: the kept reads are too large (more than ${mb(MAX_DOWNLOAD)}).`);
+  };
+  for (let first = true; !cut; first = false) {
+    const { done, value } = await reader.read();
+    if (done) {
+      if (gunzip) gunzip.push(new Uint8Array(0), true); // a gzip file that ends early stops here with an error
+      break;
+    }
+    downloaded += value.length;
+    if (first && value.length > 1 && value[0] === 0x1f && value[1] === 0x8b) gunzip = new Gunzip((chunk) => feed(chunk));
+    try {
+      if (gunzip) gunzip.push(value, false); else feed(value);
+    } catch (error) {
+      if (!cut) throw error; // data after the limit may be anything, so an error there is ignored
+    }
+    show(statusId, `Reading ${label}: ${mb(downloaded)} downloaded, ${Math.floor(lines / 4).toLocaleString()} reads kept`);
+  }
+  if (cut) await reader.cancel();
+  gzip.push(new Uint8Array(0), true);
+  const name = `${item.name.replace(/\.gz$/, '')}.gz`;
+  return { file: new File(packed, name), reads: Math.floor(lines / 4), cut };
+}
+
 /** An address the page may download from: https (or this site), and no user name or password. */
 function checkUrl(text, label) {
   let url;
@@ -614,8 +674,10 @@ async function sraLookup() {
     return;
   }
   const total = sizes.reduce((a, b) => a + b, 0);
-  if (total > MAX_DOWNLOAD) {
-    say(`${accession} is too large for this page (${mb(total)}; the limit is ${mb(MAX_DOWNLOAD)}). Use the command-line tool.`);
+  let limit;
+  try { limit = readLimit(); } catch (error) { say(error.message); return; }
+  if (total > MAX_DOWNLOAD && !limit) {
+    say(`${accession} is too large for this page (${mb(total)}; the limit is ${mb(MAX_DOWNLOAD)}). Use the command-line tool, or set a read limit.`);
     return;
   }
   const paired = record.library_layout === 'PAIRED';
@@ -625,10 +687,11 @@ async function sraLookup() {
     `${platform}${record.instrument_model ? `, ${record.instrument_model}` : ''}; library ${record.library_layout}; ${paired ? `${count.toLocaleString()} read pairs` : `${count.toLocaleString()} reads`} in ${addresses.length} file(s), ${mb(total)}.`,
   ];
   if (paired) lines.push('The page maps each mate as a separate read (the command-line tool can map pairs).');
-  if (total > WARN_DOWNLOAD) lines.push(`Large download: it can take minutes and the page holds all of it in memory.`);
+  if (limit) lines.push(`Only the first ${limit.toLocaleString()} reads of each file will be kept; the download stops there.`);
+  else if (total > WARN_DOWNLOAD) lines.push(`Large download: it can take minutes and the page holds all of it in memory.`);
   say(lines.join('\n'));
   pendingRun = {
-    accession, platform, count: paired ? count * 2 : count,
+    accession, platform, count: paired ? count * 2 : count, reads: count, paired,
     files: addresses.map((a, i) => ({ name: a.split('/').pop(), url: /^https?:/.test(a) ? a : `https://${a}`, bytes: sizes[i] || 0 })),
   };
   $('sra-load').hidden = false;
@@ -662,11 +725,24 @@ $('web-cancel').addEventListener('click', () => { if (webAbort) webAbort.abort()
 $('sra-load').addEventListener('click', () => runWebDownload(async (signal) => {
   const run = pendingRun;
   if (!run) return;
+  const limit = readLimit();
   const files = [];
-  for (const [i, item] of run.files.entries()) files.push(await download(item, location.href, `${run.accession} file ${i + 1} of ${run.files.length}`, 'web-status', signal));
+  let anyCut = false;
+  for (const [i, item] of run.files.entries()) {
+    const label = `${run.accession} file ${i + 1} of ${run.files.length}`;
+    if (limit) {
+      const result = await downloadFirstReads(item, location.href, label, 'web-status', signal, limit);
+      files.push(result.file);
+      anyCut ||= result.cut;
+    } else {
+      files.push(await download(item, location.href, label, 'web-status', signal));
+    }
+  }
   example.reads = files;
-  example.expectedReads = run.count;
-  example.source.reads = `ENA run ${run.accession} (${new URL(run.files[0].url).host})`;
+  // ENA's count is in reads (or pairs) per file; the page counts each mate, so the expected total is per file x files.
+  const perFile = run.paired ? run.reads : Math.round(run.reads / run.files.length);
+  example.expectedReads = limit ? run.files.length * Math.min(limit, perFile) : run.count;
+  example.source.reads = `ENA run ${run.accession} (${new URL(run.files[0].url).host})${anyCut ? ` (first ${limit.toLocaleString()} reads of each file)` : ''}`;
   $('kind').value = KIND_OF_PLATFORM[run.platform];
   describeSources();
   show('web-status', `Loaded: the reads of ${run.accession} (${mb(files.reduce((a, f) => a + f.size, 0))}). Press Run in step 1.`);
@@ -679,6 +755,7 @@ $('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
     ['reads', 'the reads', $('url-reads').value.split('\n').map((x) => x.trim()).filter(Boolean)],
   ];
   if (wanted.every(([, , list]) => !list.length)) throw new Error('Type at least one https address.');
+  const limit = readLimit();
   let changed = false;
   for (const entry of wanted) {
     entry[2] = entry[2].map((u) => { const d = directAddress(u); changed ||= d !== u; return d; });
@@ -689,9 +766,17 @@ $('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
     for (const text of list) {
       const url = new URL(text);
       const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
-      const file = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal);
+      let file;
+      let note = '';
+      if (slot === 'reads' && limit) {
+        const result = await downloadFirstReads({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal, limit);
+        file = result.file;
+        if (result.cut) note = ` (first ${limit.toLocaleString()} reads of each file)`;
+      } else {
+        file = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal);
+      }
       if (slot === 'reads') got.reads.push(file); else got[slot] = file;
-      example.source[slot] = `the address ${url.host}${url.pathname}`;
+      example.source[slot] = `the address ${url.host}${url.pathname}${note}`;
     }
   }
   void urls;
