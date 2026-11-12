@@ -544,6 +544,25 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Nanopore set (seed 1) `--min-mapq` 0, 10 and 20 give the same result (SNP 2,991 found / 0 false, small
      indel 571 / 42 at q0 and 571 / 41 at q10 and q20, large indel 100 / 1), so the filter is neutral there
      and no real long-read data exists to show a benefit. The long-read default stays 0.
+   - SEED 2, AN INDEPENDENT TRUTH SET (2026-11-12; `af293_s2`: 3,000 SNPs, 600 small indels, 100 large indels,
+     seed 2; ART 30x, 2,880,680 pairs, seed 2; Badread 15.8x (58,757 reads, 470,224,613 bases, four runs of 4x,
+     seeds 11 to 14; lower coverage than seed 1); calls with the defaults in force at that time, short
+     mapq 20, SNP 0.8 and 0.7, indel 0.5, nothing re-tuned). ART (found / false): SNP 2,970 / 3, small
+     indel 586 / 6, large 2 of 100. This matches seed 1. ONT (found / false): SNP 2,974 / 1, small indel
+     555 / 234, large indel 99 of 100. The large-insertion fix holds on new data. The Nanopore small
+     indels do not: 234 false calls against 42 on seed 1 (precision 70%). Coverage and seed are
+     confounded (15.8x against 27.7x), so the cause cannot be separated with these data.
+     Profile of the 234 false small indels: 219 deletions and 15 insertions, median size 1 bp, median DP 9
+     (true small indels: 15), median supporting reads 5 (true: 12), 204 of 234 at a fraction from 0.5 to
+     0.6. This is the Nanopore 1 bp homopolymer deletion error at low local depth.
+     Minimum supporting reads for indels, applied offline to the existing calls (small indel found / false;
+     large indel found): seed 1: floor 0 571 / 42, 5 571 / 19, 6 571 / 16, 7 571 / 13, 8 571 / 13, 10 568 / 13
+     (large 100 throughout). Seed 2: floor 0 555 / 234, 5 552 / 126, 6 549 / 72, 7 536 / 38, 8 509 / 20
+     (large 97), 10 426 / 6 (large 86). SNPs unchanged (2,991 and 2,974).
+     DECISION (assistant, user offline): default minimum supporting reads for indels 6 for long reads, 0
+     for short reads (a floor of 6 would remove every call at 7x coverage; `hrmA` has 5 reads). Chosen as a
+     balance: no loss on seed 1, 6 true indels lost on seed 2. This is tuned on both seeds, so it has no
+     independent check yet. Floors of 7 and 8 remove more false calls and lose more true ones.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and
