@@ -30,6 +30,13 @@ python = ">=3.11"
 zstd = "*"
 pytest = "*"
 
+# A separate environment for the validation tools, so the default one stays small.
+[feature.validate.dependencies]
+snpeff = "*"
+
+[environments]
+validate = { features = ["validate"], no-default-feature = true }
+
 [tasks]
 # Run the whole workspace test suite.
 test = "cargo test --workspace"

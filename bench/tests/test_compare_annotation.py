@@ -1,5 +1,6 @@
 from compare_annotation import (
     compare_annotations,
+    parse_snpeff_ann,
     effect_matches,
     parse_bcsq,
     parse_csq_aa,
@@ -117,3 +118,45 @@ def test_the_examples_list_the_disagreements_with_both_tools_calls():
     assert "disagree" in kinds and "aa_disagree" in kinds
     first = next(e for e in r["examples"] if e["kind"] == "disagree")
     assert first["key"] == ("c", 20, "C", "T") and first["mine"] == "synonymous"
+
+
+ANN_MISSENSE = "G|missense_variant|MODERATE|g1|GENE_x|transcript|rna-XM_1.1|protein_coding|1/1|c.689T>C|p.Val230Ala|689/1197|689/1197|230/398||"
+ANN_UPSTREAM = "G|upstream_gene_variant|MODIFIER|g2|gene-g2|transcript|XM_2.1|protein_coding||c.-4462A>G|||||4462|"
+
+
+def test_snpeff_entries_use_my_term_names_the_transcript_id_and_the_same_amino_acid_form():
+    entries = parse_snpeff_ann(f"CLASS=SNP;ANN={ANN_MISSENSE},{ANN_UPSTREAM}")
+
+    assert len(entries) == 1  # the upstream entry says the variant is outside the gene and is dropped
+    e = entries[0]
+    assert (e["terms"], e["transcript"], e["aa"]) == (["missense"], "rna-XM_1.1", "230V>230A")
+
+
+def test_snpeff_terms_are_normalised_to_the_names_the_comparison_uses():
+    def terms(annotation):
+        return parse_snpeff_ann(f"ANN=T|{annotation}|HIGH|g|G|transcript|rna-X|protein_coding|1/1|c.1A>T||||||")[0]["terms"]
+
+    assert terms("stop_gained") == ["stop_gained"]
+    assert terms("frameshift_variant") == ["frameshift"]
+    assert terms("splice_donor_variant&intron_variant") == ["splice_donor", "intron"]
+    assert terms("5_prime_UTR_variant") == ["5_prime_utr"]
+    assert terms("3_prime_UTR_variant") == ["3_prime_utr"]
+    assert terms("disruptive_inframe_insertion") == ["inframe_insertion"]
+    assert terms("conservative_inframe_deletion") == ["inframe_deletion"]
+    assert terms("synonymous_variant") == ["synonymous"]
+    assert terms("non_coding_transcript_exon_variant") == ["non_coding"]
+
+
+def test_snpeff_protein_changes_are_converted_from_three_letter_hgvs():
+    def aa(hgvs):
+        return parse_snpeff_ann(f"ANN=T|missense_variant|MODERATE|g|G|transcript|rna-X|protein_coding|1/1|c.1A>T|{hgvs}||||||")[0]["aa"]
+
+    assert aa("p.Val230Ala") == "230V>230A"
+    assert aa("p.Trp9*") == "9W>9*"
+    assert aa("p.Glu3Glu") == "3E"          # synonymous: one residue, as bcftools csq writes it
+    assert aa("p.Glu11fs") == ""             # a frameshift has no single change
+    assert aa("") == ""
+
+
+def test_a_record_without_ann_has_no_snpeff_entries():
+    assert parse_snpeff_ann("DP=20") == []

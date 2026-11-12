@@ -52,6 +52,58 @@ def parse_bcsq(info):
     return []
 
 
+THREE_TO_ONE = {
+    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C", "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H",
+    "Ile": "I", "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P", "Ser": "S", "Thr": "T", "Trp": "W",
+    "Tyr": "Y", "Val": "V", "Ter": "*", "*": "*",
+}
+SNPEFF_TERMS = {
+    "frameshift_variant": "frameshift",
+    "disruptive_inframe_insertion": "inframe_insertion",
+    "conservative_inframe_insertion": "inframe_insertion",
+    "disruptive_inframe_deletion": "inframe_deletion",
+    "conservative_inframe_deletion": "inframe_deletion",
+    "5_prime_UTR_variant": "5_prime_utr",
+    "3_prime_UTR_variant": "3_prime_utr",
+    "non_coding_transcript_exon_variant": "non_coding",
+}
+# SnpEff entries that say the variant lies outside the transcript.
+SNPEFF_OUTSIDE = {"upstream_gene_variant", "downstream_gene_variant", "intergenic_region"}
+
+
+def _snpeff_aa(hgvs):
+    """A csq-style amino-acid string from SnpEff HGVS.p, for example p.Val230Ala -> 230V>230A."""
+    m = re.fullmatch(r"p\.([A-Za-z*]{1,3}?)(\d+)([A-Za-z*]{1,3}|=)", hgvs or "")
+    if not m or m.group(3).endswith("fs"):
+        return ""
+    ref, pos, alt = THREE_TO_ONE.get(m.group(1)), m.group(2), THREE_TO_ONE.get(m.group(3), m.group(1) if m.group(3) == "=" else None)
+    if not ref or not alt:
+        return ""
+    return f"{pos}{ref}" if ref == alt else f"{pos}{ref}>{pos}{alt}"
+
+
+def parse_snpeff_ann(info):
+    """The SnpEff ANN entries of one INFO string, in the same form as parse_bcsq. Entries that only say
+    the variant is upstream or downstream of a gene are dropped."""
+    for part in info.split(";"):
+        if part.startswith("ANN="):
+            entries = []
+            for raw in part[len("ANN="):].split(","):
+                f = raw.split("|") + [""] * 16
+                names = [t for t in f[1].split("&") if t]
+                if all(n in SNPEFF_OUTSIDE for n in names):
+                    continue
+                terms = []
+                for name in names:
+                    terms.append(SNPEFF_TERMS.get(name, name[:-len("_variant")] if name.endswith("_variant") else name))
+                entries.append({
+                    "terms": terms, "gene": f[4], "transcript": f[6], "biotype": f[7], "strand": "",
+                    "aa": _snpeff_aa(f[10]), "dna": f[9],
+                })
+            return entries
+    return []
+
+
 def parse_csq_aa(text):
     """(reference residue, position, alternate residue) from a bcftools csq amino-acid field, or None."""
     m = re.fullmatch(r"(\d+)([A-Z*])>(\d+)([A-Z*])", text or "")
@@ -165,6 +217,17 @@ def load_mine(path):
     return mine
 
 
+def load_snpeff(path):
+    out = {}
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            out[(f[0], int(f[1]), f[3], f[4])] = parse_snpeff_ann(f[7])
+    return out
+
+
 def load_csq(path):
     csq = {}
     with open(path) as fh:
@@ -195,12 +258,16 @@ def load_gene_aliases(gff_path):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Compare qmutfind annotate with bcftools csq.")
     ap.add_argument("--mine", required=True)
-    ap.add_argument("--csq", required=True)
+    ap.add_argument("--csq", help="a VCF annotated by bcftools csq")
+    ap.add_argument("--snpeff", help="a VCF annotated by SnpEff")
     ap.add_argument("--examples", type=int, default=15)
     ap.add_argument("--gff", help="a GFF3 for the gene Name aliases that bcftools csq may write")
     args = ap.parse_args(argv)
     aliases = load_gene_aliases(args.gff) if args.gff else None
-    r = compare_annotations(load_mine(args.mine), load_csq(args.csq), max_examples=max(args.examples * 4, 50), gene_aliases=aliases)
+    if bool(args.csq) == bool(args.snpeff):
+        ap.error("give exactly one of --csq and --snpeff")
+    other = load_csq(args.csq) if args.csq else load_snpeff(args.snpeff)
+    r = compare_annotations(load_mine(args.mine), other, max_examples=max(args.examples * 4, 50), gene_aliases=aliases)
     for name in ("total", "agree", "disagree", "csq_other_transcript", "both_silent", "csq_silent_mine_genic",
                  "mine_intergenic_csq_genic", "not_comparable", "utr_vs_csq_intron", "aa_compared", "aa_agree", "aa_disagree"):
         print(f"{name}\t{r[name]}")

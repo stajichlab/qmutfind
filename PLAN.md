@@ -596,6 +596,21 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      ignores the GFF phase column, was not tested on partial CDS (it would be wrong on a GFF that has them).
      `csq` with `-p a` (haplotype mode) writes `BCSQ=@pos` pointers and looks silent for those records;
      local mode (`-l`) was used. SnpEff was not run.
+   - INDEPENDENT CHECK AGAINST SnpEff 5.4c (2026-11-12; database built in 13 s from the same RefSeq FASTA and
+     GFF3 with `-gff3 -noCheckCds -noCheckProtein`, in the pixi environment `validate`, which holds only SnpEff
+     (1.8 GB); the same comparison script with `--snpeff`, 39 bench tests). SnpEff derives UTRs and introns
+     itself, so it checks my derived labels. On the 3,700 truth variants: effect agrees 2,620, disagrees 7,
+     both silent (intergenic) 1,055, SnpEff silent where I label a gene 6, not comparable 12. Amino-acid
+     changes reported by both: 1,548, all identical. My `5UTR_derived` agrees with SnpEff's 5_prime_UTR_variant
+     for 290 variants (14 more are refined by SnpEff to a premature start-codon gain), `3UTR_derived` with
+     3_prime_UTR_variant for 206, `intron_derived` with intron_variant for 175. The 7 disagreements are large
+     deletions at exon boundaries where SnpEff reports exon_loss, inframe_deletion or splice_region and I
+     report splice_site or frameshift (a difference of priority). The 6 records where SnpEff is silent have
+     lowercase letters in the REF allele (soft-masked reference), a SnpEff behaviour, not mine. Together with
+     the `csq` check, the derived UTR and intron labels are supported by two independent derivations.
+     Real calls against SnpEff: EVOL20 103 variants, 24 agree, 0 disagree, 79 intergenic in both, 9 of 9 amino-acid
+     changes identical; parent 75 variants, 34 agree, 0 disagree, 41 intergenic in both, 9 of 9 identical.
+     Limits: both tools read the same GFF; neither is ground truth.
    - WASM PARITY OF annotate, stats AND report ON REAL DATA (2026-11-12, Node 22.23.4; the full Af293 RefSeq
      GFF3 and gzip reference, the 103 real EVOL20_3 calls): `annotate` in WASM took 0.48 s (225 MB resident,
      plus 0.29 s to load the files) and its output is byte-identical to `qmutfind annotate`. The `stats` JSON and
