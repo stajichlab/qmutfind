@@ -1,0 +1,51 @@
+# Rust / Cargo
+/target/
+**/target/
+# Binary crates commit Cargo.lock. Remove this note if a library-only layout is chosen.
+**/*.rs.bk
+*.pdb
+
+# WASM build output
+/pkg/
+**/pkg/
+*.wasm
+wasm-pack.log
+node_modules/
+
+# Temporary and editor files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Logs and SLURM output
+*.log
+slurm-*.out
+logs/
+
+# Data (keep large files on /bigdata, outside the repository)
+*.fastq
+*.fastq.gz
+*.fastq.zst
+*.fq
+*.fq.gz
+*.sra
+*.bam
+*.cram
+*.sam
+*.fa.fai
+*.fai
+*.vcf.gz.tbi
+data/
+scratch/
+
+# Environments
+.pixi/
+.venv/
+__pycache__/
+*.pyc
+.claude/
