@@ -477,3 +477,20 @@ pub fn annotate_vcf<R: BufRead, W: io::Write>(
     }
     Ok(())
 }
+
+/// Annotate VCF text. `reference_fasta` is plain FASTA bytes and `gff` is plain GFF3 bytes. With no
+/// GFF every record is `EFFECT=unannotated`. The browser build calls this; it does no file access.
+pub fn annotate_text(vcf: &str, reference_fasta: &[u8], gff: Option<&[u8]>) -> Result<String, String> {
+    let contigs = crate::read_fasta(reference_fasta).map_err(|e| format!("reference FASTA: {e}"))?;
+    if contigs.is_empty() {
+        return Err("the reference FASTA has no sequences".to_string());
+    }
+    let genome = Genome::new(contigs);
+    let annotation = match gff {
+        Some(bytes) => Some(Annotation::from_gff(bytes).map_err(|e| format!("GFF: {e}"))?),
+        None => None,
+    };
+    let mut out = Vec::new();
+    annotate_vcf(vcf.as_bytes(), &mut out, annotation.as_ref(), &genome).map_err(|e| format!("VCF: {e}"))?;
+    String::from_utf8(out).map_err(|e| e.to_string())
+}

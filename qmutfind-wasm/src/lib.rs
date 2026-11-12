@@ -52,3 +52,10 @@ impl Session {
         self.engine.vcf().map_err(|e| JsError::new(&e))
     }
 }
+
+/// Add the effect of each variant to VCF text. `reference_fasta` and `gff` are plain bytes
+/// (decompress in JavaScript first). Pass `undefined` for `gff` to mark every record unannotated.
+#[wasm_bindgen]
+pub fn annotate(vcf: &str, reference_fasta: &[u8], gff: Option<Vec<u8>>) -> Result<String, JsError> {
+    qmutfind_core::annotate_text(vcf, reference_fasta, gff.as_deref()).map_err(|e| JsError::new(&e))
+}

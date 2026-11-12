@@ -7,7 +7,7 @@
 //! Contig c3 (60 bp), a minus-strand gene, exon 11-40, CDS 20-31: forward 32-40 is the 5' UTR, 11-19 the 3' UTR.
 //! Contig c4 (60 bp), a plus-strand non-coding RNA, exons 11-20 and 31-40, intron 21-30.
 
-use qmutfind_core::{annotate_vcf, classify_effect, Annotation, Genome};
+use qmutfind_core::{annotate_text, annotate_vcf, classify_effect, Annotation, Genome};
 
 fn c1() -> Vec<u8> {
     let mut s = String::new();
@@ -286,4 +286,27 @@ fn a_record_with_too_few_fields_is_an_error() {
     let input = format!("{VCF_HEADER}c1\t28\t.\tC\n");
 
     assert!(annotate_vcf(input.as_bytes(), &mut Vec::new(), Some(&ann), &genome).is_err());
+}
+
+
+#[test]
+fn annotate_text_gives_the_same_output_as_annotate_vcf_with_and_without_a_gff() {
+    let fasta = format!(">c1\n{}\n>c2\n{}\n", String::from_utf8(c1()).unwrap(), String::from_utf8(c2()).unwrap());
+    let body = "c1\t28\t.\tC\tA\t.\tPASS\tDP=20\nc1\t150\t.\tT\tA\t.\tPASS\t.\n";
+    let vcf = format!("{VCF_HEADER}{body}");
+
+    let with_gff = annotate_text(&vcf, fasta.as_bytes(), Some(GFF.as_bytes())).unwrap();
+    let without = annotate_text(&vcf, fasta.as_bytes(), None).unwrap();
+
+    assert_eq!(with_gff.lines().map(str::to_string).collect::<Vec<_>>(), annotate(body, true));
+    assert_eq!(without.lines().map(str::to_string).collect::<Vec<_>>(), annotate(body, false));
+}
+
+#[test]
+fn annotate_text_reports_a_bad_gff_or_an_empty_reference_as_an_error() {
+    let fasta = format!(">c1\n{}\n", String::from_utf8(c1()).unwrap());
+    let vcf = format!("{VCF_HEADER}c1\t28\t.\tC\tA\t.\tPASS\t.\n");
+
+    assert!(annotate_text(&vcf, fasta.as_bytes(), Some(b"c1\tsrc\tgene\tnot-a-number\t5\t.\t+\t.\tID=g\n")).is_err());
+    assert!(annotate_text(&vcf, b"", Some(GFF.as_bytes())).is_err());
 }
