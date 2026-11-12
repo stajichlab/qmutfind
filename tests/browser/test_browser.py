@@ -403,3 +403,122 @@ def test_a_mosdepth_file_alone_gives_a_coverage_plot_and_the_contig_order_can_be
     driver.find_element(By.CSS_SELECTOR, "#order option[value=input]").click()
     assert press(driver, "summarize", "summarize-status").startswith("Done")
     assert labels() == ["chr10", "chr2", "chr1"]
+
+
+# Examples: files that the page downloads by itself, listed in a manifest
+
+import json
+import shutil as _shutil
+
+EXAMPLE_DIR = ROOT / "dist-site" / "_test_example"
+
+
+@pytest.fixture
+def example_site(inputs):
+    """A manifest and files on the test server, so the tests never use NCBI or ENA."""
+    EXAMPLE_DIR.mkdir(parents=True, exist_ok=True)
+    for name in ("ref.fa.gz", "genes.gff3", "reads.fq.gz"):
+        _shutil.copy(inputs / name, EXAMPLE_DIR / name)
+
+    def write(expected_reads=10, reads_bytes=None, reads_name="reads.fq.gz"):
+        size = lambda n: (EXAMPLE_DIR / n).stat().st_size
+        manifest = {
+            "description": "A test example.", "sample": "ex", "kind": "short",
+            "reference": {"name": "ref.fa.gz", "url": "ref.fa.gz", "bytes": size("ref.fa.gz")},
+            "gff": {"name": "genes.gff3", "url": "genes.gff3", "bytes": size("genes.gff3")},
+            "examples": [{"id": "small", "label": "Small test example", "expected_reads": expected_reads,
+                          "reads": [{"name": "reads.fq.gz", "url": reads_name, "bytes": reads_bytes or size("reads.fq.gz")}]}],
+        }
+        (EXAMPLE_DIR / "manifest.json").write_text(json.dumps(manifest))
+
+    write()
+    yield write
+    _shutil.rmtree(EXAMPLE_DIR, ignore_errors=True)
+
+
+def load_example(driver, server):
+    # A new query string each time: the test server answers 304 for a file rewritten within the same second.
+    driver.get(f"{server}/{SITE}?example=_test_example/manifest.json%3Fv%3D{time.time_ns()}")
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "example-section").is_displayed())
+    driver.find_element(By.CSS_SELECTOR, "[data-example=small]").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "example-status").text.startswith(("Loaded", "Error")))
+    return driver.find_element(By.ID, "example-status").text
+
+
+def test_an_example_fills_in_the_files_and_step_1_runs_without_choosing_any(driver, server, inputs, example_site):
+    expected = cli_results(inputs)
+
+    status = load_example(driver, server)
+    assert status.startswith("Loaded"), status
+    assert driver.find_element(By.ID, "sample").get_attribute("value") == "ex"
+    result = press(driver, "run", "status")
+
+    assert result.startswith("Done") and "WARNING" not in result, result
+    assert download_text(driver, "download-vcf").replace("SAMPLE=ex", "SAMPLE=s1") == expected["vcf"].replace("SAMPLE=s1", "SAMPLE=s1")
+
+
+def test_the_gene_file_of_the_example_is_used_by_step_3(driver, server, inputs, example_site):
+    assert load_example(driver, server).startswith("Loaded")
+    assert press(driver, "run", "status").startswith("Done")
+
+    status = press(driver, "annotate", "annotate-status")
+
+    assert "1 of 1 variants" in status, status
+
+
+def test_a_file_chosen_by_the_user_replaces_the_examples_file(driver, server, inputs, example_site):
+    clean = "".join(f"@c{i}\n{CHR_A[49_900 + i * 10 : 50_050 + i * 10]}\n+\n{'I' * 150}\n" for i in range(10))
+    (inputs / "clean.fq").write_text(clean)
+    assert load_example(driver, server).startswith("Loaded")
+    choose(driver, "reads", inputs / "clean.fq")
+
+    result = press(driver, "run", "status")
+
+    assert result.startswith("Done"), result
+    assert "Calls: 0." in driver.find_element(By.ID, "summary").text
+
+
+def test_a_read_count_that_differs_from_the_manifest_gives_a_warning(driver, server, inputs, example_site):
+    example_site(expected_reads=999)
+    assert load_example(driver, server).startswith("Loaded")
+
+    result = press(driver, "run", "status")
+
+    assert "WARNING" in result and "999" in result, result
+
+
+def test_a_download_with_the_wrong_size_is_an_error_and_loads_nothing(driver, server, inputs, example_site):
+    example_site(reads_bytes=12345)
+
+    status = load_example(driver, server)
+
+    assert status.startswith("Error") and "incomplete" in status, status
+    assert "Choose" in press(driver, "run", "status")
+
+
+def test_a_missing_example_file_is_an_error_that_names_the_status_code(driver, server, inputs, example_site):
+    example_site(reads_name="missing.fq.gz")
+
+    status = load_example(driver, server)
+
+    assert status.startswith("Error") and "404" in status, status
+
+
+def test_the_manifest_address_must_be_a_path_on_the_site(driver, server):
+    driver.get(f"{server}/{SITE}?example=https://example.org/manifest.json")
+    # The default manifest is used instead, so the real example buttons appear and the other address is never fetched.
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "example-section").is_displayed())
+    assert len(driver.find_elements(By.CSS_SELECTOR, "[data-example]")) == 2
+
+
+def test_the_real_manifest_lists_https_files_on_ncbi_and_ena_and_a_site_file_of_the_stated_size():
+    manifest = json.loads((ROOT / "site" / "example" / "manifest.json").read_text())
+    hosts = {"ftp.ncbi.nlm.nih.gov", "ftp.sra.ebi.ac.uk"}
+    from urllib.parse import urlparse
+    for item in [manifest["reference"], manifest["gff"]] + [r for e in manifest["examples"] for r in e["reads"] if r["url"].startswith("http")]:
+        parsed = urlparse(item["url"])
+        assert parsed.scheme == "https" and parsed.netloc in hosts, item["url"]
+        assert item["bytes"] > 0
+    local = [r for e in manifest["examples"] for r in e["reads"] if not r["url"].startswith("http")]
+    assert local and all((ROOT / "site" / "example" / r["url"]).stat().st_size == r["bytes"] for r in local)
+    assert [e["id"] for e in manifest["examples"]] == ["small", "full"]

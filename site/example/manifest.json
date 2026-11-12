@@ -1,0 +1,36 @@
+{
+  "description": "Aspergillus fumigatus Af293 reference and gene models from NCBI RefSeq, with Illumina reads of an evolved strain (SRR6277229, BioProject PRJNA417720). The small example has reads from 8 regions only, so the coverage plot shows peaks only at those regions. The full example downloads about 137 MB from ENA and maps 2.9 million reads, which takes a few minutes.",
+  "sample": "EVOL20_3",
+  "kind": "short",
+  "reference": {
+    "name": "GCF_000002655.1_ASM265v1_genomic.fna.gz",
+    "url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/655/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.fna.gz",
+    "bytes": 9003172,
+    "source": "NCBI RefSeq GCF_000002655.1 (Af293)"
+  },
+  "gff": {
+    "name": "GCF_000002655.1_ASM265v1_genomic.gff.gz",
+    "url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/002/655/GCF_000002655.1_ASM265v1/GCF_000002655.1_ASM265v1_genomic.gff.gz",
+    "bytes": 1984609,
+    "source": "NCBI RefSeq GCF_000002655.1 (Af293)"
+  },
+  "examples": [
+    {
+      "id": "small",
+      "label": "Small example (about 12 MB)",
+      "expected_reads": 33729,
+      "reads": [
+        { "name": "EVOL20_3_regions.fastq.gz", "url": "reads.fastq.gz", "bytes": 1031557, "source": "Reads of SRR6277229 that map within 25 kb of 8 loci (see example/README.txt)" }
+      ]
+    },
+    {
+      "id": "full",
+      "label": "Full example (about 148 MB)",
+      "expected_reads": 2854974,
+      "reads": [
+        { "name": "SRR6277229_1.fastq.gz", "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR627/009/SRR6277229/SRR6277229_1.fastq.gz", "bytes": 63389773, "source": "ENA SRR6277229, mate 1" },
+        { "name": "SRR6277229_2.fastq.gz", "url": "https://ftp.sra.ebi.ac.uk/vol1/fastq/SRR627/009/SRR6277229/SRR6277229_2.fastq.gz", "bytes": 73227390, "source": "ENA SRR6277229, mate 2" }
+      ]
+    }
+  ]
+}

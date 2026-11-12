@@ -52,9 +52,17 @@
   file from another tool.</p>
 </section>
 
+<section class="panel" id="example-section" hidden>
+  <h2>Try an example</h2>
+  <p id="example-text"></p>
+  <p id="example-buttons"></p>
+  <div id="example-status" role="status" class="readout"></div>
+</section>
+
 <section class="panel" id="files-section">
   <h2>Your files</h2>
   <div class="form">
+    <p class="hint">A file you choose here replaces the same file of the example.</p>
     <label for="reference">Reference genome (FASTA, <code>.gz</code> allowed). All three steps use it.</label>
     <input id="reference" type="file">
     <label for="gff">Genes (GFF3, optional). Step 3 needs it.</label>

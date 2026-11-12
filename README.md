@@ -110,6 +110,14 @@ result of the one before, or a VCF file you choose. `pixi run test-browser` runs
 synthetic data set and compares every output with the native CLI. Chrome and Safari are not tested. Large real data sets
 have been run only in Firefox (EVOL20_3, 2.9 million reads) in step 1.
 
+### Example data
+
+`site/example/manifest.json` lists the examples the page can load: the Af293 genome and gene models from NCBI RefSeq
+(downloaded by the browser; NCBI allows this), and reads of an evolved-strain sample (SRR6277229). The small example keeps
+1 MB of reads in this repository (`site/example/reads.fastq.gz`, made by `bench/make_example_reads.sh`); the full example
+downloads 137 MB from ENA (ENA allows this too). The page checks each download's size and the read count. See
+`site/example/README.txt` for the sources. `?example=PATH` uses another manifest, but only a path on the site.
+
 ## Tests
 
 ```bash

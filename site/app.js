@@ -26,6 +26,12 @@ function offer(id, name, text, type) {
 
 const sampleName = () => $('sample').value || 'sample';
 
+// Files from an example. A file chosen in an input always wins over the example's file.
+const example = { reference: null, gff: null, reads: [], expectedReads: null };
+const refFile = () => $('reference').files[0] || example.reference;
+const gffFile = () => $('gff').files[0] || example.gff;
+const readFiles = () => ($('reads').files.length ? [...$('reads').files] : example.reads);
+
 /** The VCF the next step should use: a chosen file, else the annotated VCF, else the step 1 result. */
 function currentVcf() {
   const file = $('vcf-file').files[0];
@@ -64,8 +70,8 @@ function needVcf(statusId) {
 
 // Step 1
 $('run').addEventListener('click', () => {
-  const reference = $('reference').files[0];
-  const reads = [...$('reads').files];
+  const reference = refFile();
+  const reads = readFiles();
   if (!reference || reads.length === 0) {
     show('status', 'Choose a reference FASTA and at least one reads file.');
     return;
@@ -78,7 +84,7 @@ $('summarize').addEventListener('click', () => {
   const vcf = currentVcf();
   const bed = currentDepth();
   if (!vcf && !bed) { show('summarize-status', 'There is no VCF or coverage yet. Run step 1, or choose a VCF or coverage file.'); return; }
-  send('summarize', { vcf, bed, reference: $('reference').files[0] || null, order: $('order').value }, 'summarize-status');
+  send('summarize', { vcf, bed, reference: refFile() || null, order: $('order').value }, 'summarize-status');
 });
 
 function statsTable(s) {
@@ -104,8 +110,8 @@ function statsTable(s) {
 $('annotate').addEventListener('click', () => {
   const vcf = needVcf('annotate-status');
   if (!vcf) return;
-  const reference = $('reference').files[0];
-  const gff = $('gff').files[0];
+  const reference = refFile();
+  const gff = gffFile();
   if (!reference || !gff) {
     show('annotate-status', 'Choose the reference genome and the GFF3 file in "Your files".');
     return;
@@ -187,7 +193,7 @@ function loadVariants(vcfText) {
 function draw(region) {
   const vcf = state.annotated || currentVcf();
   if (!vcf) { show('report-status', 'There is no VCF yet.'); return; }
-  send('report', { vcf, gff: $('gff').files[0] || null, region }, 'report-status');
+  send('report', { vcf, gff: gffFile() || null, region }, 'report-status');
 }
 
 $('variant-table').addEventListener('click', (event) => {
@@ -224,7 +230,11 @@ worker.onmessage = (event) => {
     state.vcf = m.vcf;
     state.depth = m.depth;
     state.annotated = null;
-    show('status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s`);
+    let warning = '';
+    if (example.expectedReads && !$('reads').files.length && m.reads !== example.expectedReads) {
+      warning = ` WARNING: the example should have ${example.expectedReads.toLocaleString()} reads, so a download may be incomplete.`;
+    }
+    show('status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s.${warning}`);
     show('summary', `Calls: ${m.vcf.split('\n').filter((l) => l && l[0] !== '#').length.toLocaleString()}. Go on to step 2 or step 3.`);
     offer('download-vcf', `${sampleName()}.vcf`, m.vcf, 'text/plain');
     offer('download-depth-bed', `${sampleName()}.depth.bed`, m.depth, 'text/plain');
@@ -257,3 +267,80 @@ worker.onmessage = (event) => {
 };
 
 describeSource();
+
+
+// ---- Examples -------------------------------------------------------------------------------------------------
+// The list of examples is example/manifest.json. A page address with ?example=PATH uses another manifest, but only
+// a path on this site (no http:// or // address), so a link cannot make the page fetch a manifest from elsewhere.
+const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
+let loading = false;
+
+async function download(item, base, label) {
+  const url = new URL(item.url, base);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
+  const reader = response.body.getReader();
+  const parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    got += value.length;
+    show('example-status', `Downloading ${label}: ${mb(got)} of ${mb(item.bytes)}`);
+  }
+  if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
+  return new File(parts, item.name);
+}
+
+async function loadExample(manifest, base, chosen) {
+  if (loading || busy) return;
+  loading = true;
+  for (const b of document.querySelectorAll('#example-buttons button')) b.disabled = true;
+  try {
+    example.reference = await download(manifest.reference, base, 'the reference genome');
+    example.gff = await download(manifest.gff, base, 'the gene models');
+    example.reads = [];
+    for (const [i, item] of chosen.reads.entries()) {
+      example.reads.push(await download(item, base, `reads file ${i + 1} of ${chosen.reads.length}`));
+    }
+    example.expectedReads = chosen.expected_reads || null;
+    if (manifest.sample) $('sample').value = manifest.sample;
+    if (manifest.kind) $('kind').value = manifest.kind;
+    show('example-status', `Loaded: ${chosen.label}. Press Run in step 1.`);
+  } catch (error) {
+    example.reference = example.gff = null;
+    example.reads = [];
+    show('example-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
+  } finally {
+    loading = false;
+    for (const b of document.querySelectorAll('#example-buttons button')) b.disabled = false;
+  }
+}
+
+async function setupExamples() {
+  const asked = new URLSearchParams(location.search).get('example');
+  const path = asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/') ? asked : 'example/manifest.json';
+  const base = new URL(path, location.href);
+  let manifest;
+  try {
+    const response = await fetch(base, { cache: 'no-cache' });
+    if (!response.ok) return;
+    manifest = await response.json();
+  } catch (error) {
+    return;
+  }
+  $('example-text').textContent = manifest.description || '';
+  const holder = $('example-buttons');
+  for (const chosen of manifest.examples || []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = chosen.label;
+    button.dataset.example = chosen.id;
+    button.addEventListener('click', () => loadExample(manifest, base, chosen));
+    holder.appendChild(button);
+  }
+  $('example-section').hidden = false;
+}
+
+setupExamples();
