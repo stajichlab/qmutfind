@@ -121,3 +121,96 @@ fn a_corrupt_zstd_file_fails_with_a_message_and_a_non_zero_exit_status() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("bad.fq.zst"));
 }
+
+fn run_with(dir: &Path, extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1"])
+        .args(["--preset", "short", "--out", "out.vcf"])
+        .args(extra)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn an_unknown_aligner_or_caller_is_rejected_with_the_allowed_values() {
+    let (dir, _seq, _alt) = setup_with_snp_reads();
+
+    let aligner = run_with(dir.path(), &["--aligner", "bowtie"]);
+    let caller = run_with(dir.path(), &["--caller", "gatk"]);
+
+    assert!(!aligner.status.success());
+    assert!(String::from_utf8_lossy(&aligner.stderr).contains("--aligner must be rammap or bwa-mem2"));
+    assert!(!caller.status.success());
+    assert!(String::from_utf8_lossy(&caller.stderr).contains("--caller must be builtin or freebayes"));
+}
+
+#[test]
+fn freebayes_with_the_rammap_aligner_is_rejected_because_it_needs_a_bam_from_an_external_aligner() {
+    let (dir, _seq, _alt) = setup_with_snp_reads();
+
+    let out = run_with(dir.path(), &["--aligner", "rammap", "--caller", "freebayes"]);
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("freebayes needs an external aligner"));
+    assert!(!dir.path().join("out.vcf").exists());
+}
+
+/// The external-tool tests need bwa-mem2, samtools and freebayes on PATH.
+/// Run them with `pixi run test`, which puts the pinned tools on PATH.
+#[test]
+fn bwa_mem2_with_the_builtin_caller_finds_the_same_snp_as_the_rammap_path() {
+    let (dir, seq, alt) = setup_with_snp_reads();
+
+    let out = run_with(dir.path(), &["--aligner", "bwa-mem2", "--caller", "builtin"]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let vcf = fs::read_to_string(dir.path().join("out.vcf")).unwrap();
+    let recs = records(&vcf);
+    assert_eq!(recs.len(), 1, "{vcf}");
+    assert_eq!(recs[0][..5], ["chrA", "30001", ".", &(seq[30_000] as char).to_string(), &(alt as char).to_string()]);
+    assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AO=10;AF=1.0000"), "{}", recs[0][7]);
+}
+
+#[test]
+fn the_bwa_mem2_backend_removes_its_temporary_files_when_it_finishes() {
+    let (dir, _seq, _alt) = setup_with_snp_reads();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let out = run_with(dir.path(), &["--aligner", "bwa-mem2", "--tmpdir", tmp.path().to_str().unwrap()]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0, "temporary files were left behind");
+}
+
+#[test]
+fn a_missing_external_tool_is_named_in_the_error_with_a_hint() {
+    let (dir, _seq, _alt) = setup_with_snp_reads();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1"])
+        .args(["--preset", "short", "--out", "out.vcf", "--aligner", "bwa-mem2"])
+        .env("PATH", "/nonexistent")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("bwa-mem2 was not found on PATH"), "{stderr}");
+    assert!(stderr.contains("pixi run"), "{stderr}");
+}
+
+#[test]
+fn bwa_mem2_with_freebayes_finds_the_snp_and_labels_it_with_the_sample_name() {
+    let (dir, seq, alt) = setup_with_snp_reads();
+
+    let out = run_with(dir.path(), &["--aligner", "bwa-mem2", "--caller", "freebayes"]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let vcf = fs::read_to_string(dir.path().join("out.vcf")).unwrap();
+    let recs = records(&vcf);
+    assert_eq!(recs.len(), 1, "{vcf}");
+    assert_eq!(recs[0][..5], ["chrA", "30001", ".", &(seq[30_000] as char).to_string(), &(alt as char).to_string()]);
+    assert!(recs[0][7].starts_with("SAMPLE=s1;CLASS=SNP;DP=10;AO=10;AF=1.0000"), "{}", recs[0][7]);
+}

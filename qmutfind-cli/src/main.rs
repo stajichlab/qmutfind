@@ -1,12 +1,14 @@
 //! qmutfind command-line tool.
 
+mod external;
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqReader, ReadKind, RammapAligner,
+    calls_from_freebayes_vcf, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqReader, ReadKind, RammapAligner,
 };
 
 // Provisional defaults. They are `UNMEASURED` and are set from the benchmark (PLAN.md section 5).
@@ -54,25 +56,61 @@ fn call(args: &[String]) -> Result<(), String> {
         other => return Err(format!("--preset must be short or long, not {other}")),
     };
 
+    let aligner_name = flags.get("aligner").map(String::as_str).unwrap_or("rammap");
+    let caller_name = flags.get("caller").map(String::as_str).unwrap_or("builtin");
+    if !matches!(aligner_name, "rammap" | "bwa-mem2") {
+        return Err(format!("--aligner must be rammap or bwa-mem2, not {aligner_name}"));
+    }
+    if !matches!(caller_name, "builtin" | "freebayes") {
+        return Err(format!("--caller must be builtin or freebayes, not {caller_name}"));
+    }
+    if caller_name == "freebayes" && aligner_name == "rammap" {
+        return Err("freebayes needs an external aligner that gives a BAM: use --aligner bwa-mem2".to_string());
+    }
+    let threads: u32 = match flags.get("threads") {
+        Some(v) => v.parse().map_err(|_| format!("--threads must be a whole number, not {v}"))?,
+        None => 1,
+    };
+
     let reference = read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?;
     let contigs: Vec<(String, usize)> = reference.iter().map(|(n, s)| (n.clone(), s.len())).collect();
 
-    let aligner = RammapAligner::new(reference.clone(), kind);
     let config = CallerConfig {
         min_depth: DEFAULT_MIN_DEPTH,
         min_alt_fraction: DEFAULT_MIN_ALT_FRACTION,
         large_indel_min: DEFAULT_LARGE_INDEL_MIN,
     };
-    let mut caller = Caller::new(reference, config);
-    for record in FastqReader::new(open_input(reads_path)?) {
-        let (name, seq) = record.map_err(|e| format!("{reads_path}: {e}"))?;
-        for alignment in aligner.align(&name, &seq) {
-            caller.add(&alignment, &seq);
+    let mut caller = Caller::new(reference.clone(), config);
+    let mut freebayes_calls = None;
+    if aligner_name == "bwa-mem2" {
+        let work = external::Workdir::create(&external::default_tmpdir(flags.get("tmpdir")))?;
+        let plain_reference = external::write_plain_copy(&work, "ref.fa", &mut *open_input(reference_path)?)?;
+        external::bwa_mem2_index(&work, &plain_reference)?;
+        let reads = [reads_path.clone()];
+        if caller_name == "freebayes" {
+            let bam = external::map_to_sorted_bam(&work, &plain_reference, &reads, sample, threads)?;
+            let vcf = external::run_freebayes(&work, &plain_reference, &bam)?;
+            let file = File::open(&vcf).map_err(|e| format!("cannot read {}: {e}", vcf.display()))?;
+            freebayes_calls = Some(
+                calls_from_freebayes_vcf(BufReader::new(file), &config).map_err(|e| format!("freebayes output: {e}"))?,
+            );
+        } else {
+            let mut child = external::spawn_bwa_mem2(&work, &plain_reference, &reads, sample, threads)?;
+            external::for_each_sam_record(&work, &mut child, |record| caller.add_sam(record))?;
+        }
+    } else {
+        let aligner = RammapAligner::new(reference, kind);
+        for record in FastqReader::new(open_input(reads_path)?) {
+            let (name, seq) = record.map_err(|e| format!("{reads_path}: {e}"))?;
+            for alignment in aligner.align(&name, &seq) {
+                caller.add(&alignment, &seq);
+            }
         }
     }
 
     let out = File::create(out_path).map_err(|e| format!("cannot create {out_path}: {e}"))?;
-    write_vcf(&mut BufWriter::new(out), &contigs, sample, &caller.calls(), DEFAULT_LARGE_INDEL_MIN)
+    let calls = freebayes_calls.unwrap_or_else(|| caller.calls());
+    write_vcf(&mut BufWriter::new(out), &contigs, sample, &calls, DEFAULT_LARGE_INDEL_MIN)
         .map_err(|e| format!("{out_path}: {e}"))
 }
 

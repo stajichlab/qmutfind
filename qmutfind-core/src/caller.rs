@@ -62,12 +62,23 @@ impl Caller {
 
     /// Add one alignment. `read` is the sequence that was given to the aligner.
     pub fn add(&mut self, alignment: &Alignment, read: &[u8]) {
-        let Some(ci) = self.reference.iter().position(|(n, _)| *n == alignment.contig) else {
+        let aligned = alignment.aligned_read(read);
+        self.add_parts(&alignment.contig, alignment.ref_start, alignment.cigar_ops(), &aligned);
+    }
+
+    /// Add one record read from a SAM file.
+    pub fn add_sam(&mut self, record: &crate::SamRecord) {
+        self.add_parts(&record.contig, record.ref_start, &record.cigar_ops, &record.seq);
+    }
+
+    /// Walk the CIGAR operations and count the bases. `aligned` holds the aligned bases in
+    /// reference orientation, without clipped bases.
+    fn add_parts(&mut self, contig: &str, ref_start: usize, ops: &[CigarOp], aligned: &[u8]) {
+        let Some(ci) = self.reference.iter().position(|(n, _)| n == contig) else {
             return;
         };
-        let aligned = alignment.aligned_read(read);
-        let (mut qi, mut ri) = (0usize, alignment.ref_start);
-        for op in alignment.cigar_ops() {
+        let (mut qi, mut ri) = (0usize, ref_start);
+        for op in ops {
             match *op {
                 CigarOp::Match(n) => {
                     for i in 0..n as usize {
