@@ -40,9 +40,10 @@ fn mock(bare: bool) -> Mock {
                 );
                 ("200 OK", json)
             } else if path.contains("raw-files") {
-                if ok_auth { ("200 OK", FASTA.to_string()) } else { ("401 Unauthorized", "Valid API Key required for this endpoint.".to_string()) }
+                if ok_auth { ("200 OK", if path.contains("/gff/") { GFF } else { FASTA }.to_string()) } else { ("401 Unauthorized", "Valid API Key required for this endpoint.".to_string()) }
             } else if path.contains("downloads") {
-                ("200 OK", GFF.to_string())
+                // The real site lists /common/downloads URLs that now answer 404; the file is under raw-files.
+                ("404 Not Found", String::new())
             } else {
                 ("404 Not Found", String::new())
             };

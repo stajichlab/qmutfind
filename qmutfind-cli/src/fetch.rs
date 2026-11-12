@@ -95,6 +95,10 @@ fn get(agent: &ureq::Agent, url: &str, auth: Option<&str>, key_host: &str) -> Re
 /// Download `url` into `out_dir`, compressing with gzip unless the name already ends in `.gz`.
 fn download(agent: &ureq::Agent, url: &str, key: Option<&str>, base: &str, out_dir: &Path) -> Result<String, String> {
     // Never send the key over plain http when the site is https.
+    // The organism list gives `/common/downloads/` URLs. They answer 404 on the real site (2026-11-12). The same
+    // file is served, with the key, under `/a/service/raw-files/`.
+    let url = url.replace("/common/downloads/", "/a/service/raw-files/");
+    let url = url.as_str();
     let url = if base.starts_with("https://") && url.starts_with("http://") { format!("https://{}", &url["http://".len()..]) } else { url.to_string() };
     let key_host = host_of(base).ok_or_else(|| format!("--base-url must start with http:// or https://, not {base}"))?;
     let name = url.rsplit('/').next().filter(|n| !n.is_empty()).ok_or_else(|| format!("cannot find a file name in {url}"))?;
