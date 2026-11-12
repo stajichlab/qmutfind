@@ -351,6 +351,32 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      paired, seed 1: 2,880,107 pairs, about 29x by my arithmetic (3:02 wall time, 46 MB). Files
      `af293_s1_art_1.fq.gz` and `af293_s1_art_2.fq.gz`. Paired files kept for the later pairing
      comparison (item 15).
+   - FIRST MEASUREMENT (2026-11-11, `af293_s1` truth, ART 29x, `qmutfind call --preset short`, mates
+     mapped as single-end, provisional thresholds `min_depth` 5 and `min_alt_fraction` 0.5 which are
+     `UNMEASURED` and untuned; exploratory comparison script, both VCFs normalized with `bcftools norm`):
+     SNP 2,985 of 3,000 found (99.50%), 7 false calls. Small indel 582 of 600 (97.00%), 12 false calls.
+     Large indel 4 of 100 (4.00%), 0 false calls. Overall 3,571 of 3,700 found, 19 false calls.
+     Run time 3:49 single-threaded, peak memory 476 MB, for 5,760,214 reads (release build).
+     Limits: one seed, simulated clean reads, no `bcftools` comparison yet, thresholds not tuned,
+     the comparison script is not yet part of the repository and has no tests. The low large-indel
+     sensitivity is the design limit of short reads (decision: large indels from long reads only).
+   - NANOPORE MEASUREMENT, first version (2026-11-11, `af293_s1_ont`: 102,791 reads, 822,777,529
+     bases, about 27.7x by my arithmetic; `qmutfind call --preset long`; same provisional thresholds;
+     tested comparison tool `bench/compare_calls.py`, both VCFs normalized with `bcftools norm`):
+     SNP 2,999 of 3,000 found (99.97%), 10 false calls. Small indel 535 of 600 (89.17%), 42 false calls.
+     Large indel 55 of 100 (55.00%), 1 false call. Overall 3,589 of 3,700, 53 false calls.
+     Run time 3:34.6 single-threaded, peak memory 1.91 GB. Badread job time: 2,701 s for 4 parallel runs.
+     Breakdown of the misses: large deletions 55 of 55 found, large insertions 0 of 45 found. Small
+     insertions of 7 to 10 bp 59.3% found (70 of 118), small deletions of 7 to 10 bp 96.4% (108 of 112).
+     Hypothesis (not proven): the caller counted insertions by exact inserted sequence, and per-read
+     errors split the evidence across keys. A synthetic test reproduces that failure. The fix groups
+     insertions by anchor and length and reports the per-position majority base. The rerun (v2) is
+     the check on the real simulated reads.
+   - Bugs found by running on real data, each fixed test-first: (1) the Af293 reference has IUPAC codes
+     (for example `M`, `R`); the caller wrote them into the VCF `REF` field and `bcftools norm`
+     rejected the file. The caller now skips any variant whose reference footprint is not A, C, G or T.
+     (2) the insertion splitting described above. Synthetic tests missed both because they had no
+     ambiguity codes and no per-read errors inside insertions.
    - Nanopore reads: Badread 0.4.2, fragment length mean 8000 and sd 6000 (my choice), default
      identity and error models (not inspected). Speed measured at 1x: 3:55 single-threaded (3,642
      reads, 29.4 Mb). The 28x set is four runs of 7x with seeds 1 to 4, in one background job.

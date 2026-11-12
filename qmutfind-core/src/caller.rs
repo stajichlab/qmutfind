@@ -23,13 +23,20 @@ pub struct Call {
     pub alt_count: u32,
 }
 
+/// Reads that support one insertion, with base counts per inserted position.
+struct InsertionEvidence {
+    count: u32,
+    bases: Vec<[u16; 4]>,
+}
+
 pub struct Caller {
     reference: Vec<(String, Vec<u8>)>,
     counts: Vec<Vec<[u16; 4]>>,
     /// (contig index, 0-based anchor position, deleted length) -> supporting reads
     deletions: HashMap<(usize, usize, usize), u32>,
-    /// (contig index, 0-based anchor position, inserted bases) -> supporting reads
-    insertions: HashMap<(usize, usize, Vec<u8>), u32>,
+    /// (contig index, 0-based anchor position, inserted length) -> evidence. Reads are grouped by
+    /// length, not by exact sequence, because long reads carry errors inside the inserted bases.
+    insertions: HashMap<(usize, usize, usize), InsertionEvidence>,
     config: CallerConfig,
 }
 
@@ -70,8 +77,16 @@ impl Caller {
                 }
                 CigarOp::Insertion(n) => {
                     if let Some(anchor) = ri.checked_sub(1) {
-                        let inserted = aligned[qi..qi + n as usize].to_vec();
-                        *self.insertions.entry((ci, anchor, inserted)).or_insert(0) += 1;
+                        let ev = self
+                            .insertions
+                            .entry((ci, anchor, n as usize))
+                            .or_insert_with(|| InsertionEvidence { count: 0, bases: vec![[0u16; 4]; n as usize] });
+                        ev.count += 1;
+                        for (i, &b) in aligned[qi..qi + n as usize].iter().enumerate() {
+                            if let Some(bi) = base_index(b) {
+                                ev.bases[i][bi] = ev.bases[i][bi].saturating_add(1);
+                            }
+                        }
                     }
                     qi += n as usize;
                 }
@@ -94,9 +109,11 @@ impl Caller {
                 if depth < self.config.min_depth {
                     continue;
                 }
-                let ref_idx = base_index(seq[pos]);
+                let Some(ref_idx) = base_index(seq[pos]) else {
+                    continue; // no valid REF allele at an ambiguous reference base
+                };
                 let best = (0..4)
-                    .filter(|&b| Some(b) != ref_idx)
+                    .filter(|&b| b != ref_idx)
                     .max_by_key(|&b| c[b])
                     .unwrap();
                 let alt_count = c[best] as u32;
@@ -114,6 +131,9 @@ impl Caller {
         }
         for (&(ci, anchor, len), &alt_count) in &self.deletions {
             let seq = &self.reference[ci].1;
+            if !seq[anchor..anchor + 1 + len].iter().all(|&b| base_index(b).is_some()) {
+                continue; // REF would hold a base that VCF does not allow
+            }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
                 && alt_count as f64 / depth as f64 >= self.config.min_alt_fraction
@@ -128,15 +148,21 @@ impl Caller {
                 }));
             }
         }
-        for ((ci, anchor, inserted), &alt_count) in &self.insertions {
-            let (ci, anchor) = (*ci, *anchor);
+        for (&(ci, anchor, _len), ev) in &self.insertions {
+            let alt_count = ev.count;
             let seq = &self.reference[ci].1;
+            if base_index(seq[anchor]).is_none() {
+                continue; // anchor base is ambiguous
+            }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
                 && alt_count as f64 / depth as f64 >= self.config.min_alt_fraction
             {
                 let mut alt = vec![seq[anchor]];
-                alt.extend_from_slice(inserted);
+                alt.extend(ev.bases.iter().map(|c| {
+                    let best = (0..4).max_by_key(|&b| c[b]).unwrap();
+                    b"ACGT"[best]
+                }));
                 out.push((ci, Call {
                     contig: self.reference[ci].0.clone(),
                     pos: anchor as u64 + 1,

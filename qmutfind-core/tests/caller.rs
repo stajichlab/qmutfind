@@ -141,3 +141,80 @@ fn ten_reads_with_a_three_bp_insertion_give_one_insertion_call_in_vcf_form() {
     assert_eq!(c.depth, 10);
     assert_eq!(c.alt_count, 10);
 }
+
+#[test]
+fn a_snp_at_a_site_where_the_reference_has_an_iupac_code_is_not_called() {
+    let truth = reference();
+    let mut ambiguous = truth.clone();
+    ambiguous[0].1[50_000] = b'M'; // A or C; the real genome has such codes
+    let reads = reads_with_alt_at_50000(&truth, other_base(truth[0].1[50_000]), 10);
+
+    let calls = call_with(&ambiguous, &reads, config());
+
+    assert!(calls.is_empty(), "{calls:?}");
+}
+
+#[test]
+fn a_deletion_whose_reference_bases_include_an_iupac_code_is_not_called() {
+    let truth = reference();
+    let mut ambiguous = truth.clone();
+    ambiguous[0].1[50_002] = b'R'; // inside the two deleted bases (50_001 and 50_002)
+    let reads = reads_with_two_bp_deletion(&truth, 10);
+
+    let calls = call_with(&ambiguous, &reads, config());
+
+    assert!(calls.is_empty(), "{calls:?}");
+}
+
+/// Ten 3 kb reads that all carry a 100 bp insertion after 0-based position 71_500.
+/// Each read has two substitution errors inside the inserted bases, at different places,
+/// as real long reads do. Returns the reads and the true inserted sequence.
+fn noisy_long_reads_with_insertion(refs: &[(String, Vec<u8>)]) -> (Vec<Vec<u8>>, Vec<u8>) {
+    let mut rng = common::Lcg(7);
+    let mut inserted: Vec<u8> = (0..100).map(|_| rng.base()).collect();
+    // If the last inserted base equals the anchor base, the same insertion can also be written one
+    // base to the left, and an aligner reports the leftmost form. Avoid that ambiguity here.
+    let last = inserted.len() - 1;
+    if inserted[last] == refs[0].1[71_500] {
+        inserted[last] = other_base(inserted[last]);
+    }
+    let reads = (0..10)
+        .map(|i| {
+            let start = 70_000 + i * 20;
+            let mut read = refs[0].1[start..start + 2_900].to_vec();
+            let mut ins = inserted.clone();
+            for pos in [(i * 7 + 3) % 100, (i * 13 + 50) % 100] {
+                ins[pos] = other_base(ins[pos]);
+            }
+            let at = 71_501 - start;
+            for (k, &b) in ins.iter().enumerate() {
+                read.insert(at + k, b);
+            }
+            read
+        })
+        .collect();
+    (reads, inserted)
+}
+
+#[test]
+fn a_shared_insertion_is_called_with_the_consensus_sequence_despite_per_read_errors() {
+    let refs = reference();
+    let (reads, inserted) = noisy_long_reads_with_insertion(&refs);
+    let aligner = RammapAligner::new(refs.clone(), ReadKind::Long);
+    let mut caller = Caller::new(refs.clone(), config());
+
+    for (i, read) in reads.iter().enumerate() {
+        for a in aligner.align(&format!("l{i}"), read) {
+            caller.add(&a, read);
+        }
+    }
+    let calls = caller.calls();
+
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let c = &calls[0];
+    assert_eq!(c.pos, 71_501);
+    let anchor = (refs[0].1[71_500] as char).to_string();
+    assert_eq!(c.reference, anchor);
+    assert_eq!(c.alt, format!("{anchor}{}", String::from_utf8(inserted).unwrap()));
+    assert_eq!(c.alt_count, 10);
+}
