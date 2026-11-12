@@ -12,6 +12,7 @@
       root.setAttribute('data-theme', theme);
       try { localStorage.setItem('qmutfind-theme', theme); } catch (e) {}
       mark();
+      document.dispatchEvent(new Event('qmutfind-theme'));
     });
   });
   mark();

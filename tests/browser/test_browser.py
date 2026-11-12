@@ -661,3 +661,296 @@ def test_choosing_a_genome_after_loading_an_example_drops_the_examples_reads(dri
 
     # The example's reads belong to another genome, so step 1 must ask for reads again.
     assert "Choose a reference FASTA and at least one reads file" in press(driver, "run", "status")
+
+
+# Where the data came from: every input says so, and the web import (an SRA run or https addresses) checks what it gets
+
+ENA_DIR = ROOT / "dist-site" / "_test_ena"
+
+
+def source_text(driver, slot):
+    return driver.find_element(By.ID, f"source-{slot}").text
+
+
+def test_every_input_says_where_its_data_comes_from(driver, server, inputs, example_site):
+    open_site(driver, server)
+    assert all(source_text(driver, s).startswith("Not set") for s in ("reference", "gff", "reads"))
+
+    choose(driver, "reference", inputs / "ref.fa")
+    assert source_text(driver, "reference").startswith("Local file: ref.fa")
+
+    assert load_example(driver, server).startswith("Loaded")
+    assert source_text(driver, "reference").startswith("From the example")
+    assert "ref.fa.gz" in source_text(driver, "reference") and "127.0.0.1" in source_text(driver, "reference")
+    assert source_text(driver, "reads").startswith("From the example") and "reads.fq.gz" in source_text(driver, "reads")
+
+    choose(driver, "reads", inputs / "reads.fq")
+    assert source_text(driver, "reads").startswith("Local file: reads.fq")  # a chosen file replaces the example's
+
+
+def test_a_genome_from_the_menu_names_its_accession_and_the_ncbi_host_in_the_source_line(driver, server, genome_site):
+    open_menu(driver, server)
+
+    choose_genome(driver, "ncbi:GCF_1.1")
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Loaded"))
+
+    assert source_text(driver, "reference").startswith("From the genome menu") and "GCF_1.1" in source_text(driver, "reference")
+    assert source_text(driver, "gff").startswith("From the genome menu")
+
+
+@pytest.fixture
+def ena_site(inputs):
+    ENA_DIR.mkdir(parents=True, exist_ok=True)
+    _shutil.copy(inputs / "reads.fq.gz", ENA_DIR / "reads.fq.gz")
+    size = (ENA_DIR / "reads.fq.gz").stat().st_size
+
+    def write(**changes):
+        record = {"run_accession": "SRR9999991", "fastq_ftp": f"{HOST_PLACEHOLDER}/_test_ena/reads.fq.gz", "fastq_bytes": str(size),
+                  "read_count": "10", "library_layout": "SINGLE", "instrument_platform": "ILLUMINA", "instrument_model": "Illumina Test",
+                  "scientific_name": "Testus fungus", "sample_title": "a test sample"}
+        record.update(changes)
+        (ENA_DIR / "filereport").write_text(json.dumps([record]))
+
+    write()
+    yield write
+    _shutil.rmtree(ENA_DIR, ignore_errors=True)
+
+
+HOST_PLACEHOLDER = "{HOST}"
+
+
+def open_web(driver, server, ena_dir="_test_ena"):
+    driver.get(f"{server}/{SITE}?enaapi={ena_dir}/%3Fv%3D{time.time_ns()}")
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-section").is_displayed())
+
+
+def fix_host(server):
+    """The mock's file address must point at the test server."""
+    path = ENA_DIR / "filereport"
+    path.write_text(path.read_text().replace(HOST_PLACEHOLDER, server))
+
+
+def sra_lookup(driver, accession):
+    box = driver.find_element(By.ID, "sra-accession")
+    box.clear()
+    box.send_keys(accession)
+    driver.find_element(By.ID, "sra-lookup").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "sra-info").text.strip() != "")
+    return driver.find_element(By.ID, "sra-info").text
+
+
+def test_an_sra_run_is_looked_up_shown_and_downloaded_with_its_checks(driver, server, inputs, ena_site):
+    expected = cli_results(inputs)
+    fix_host(server)
+    open_web(driver, server)
+
+    info = sra_lookup(driver, "srr9999991")
+
+    assert "Testus fungus" in info and "ILLUMINA" in info and "SINGLE" in info and "10 reads" in info, info
+    driver.find_element(By.ID, "sra-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
+    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
+    assert "SRR9999991" in source_text(driver, "reads") and "ENA" in source_text(driver, "reads")
+    assert driver.find_element(By.ID, "kind").get_attribute("value") == "short"
+
+    choose(driver, "reference", inputs / "ref.fa")
+    driver.find_element(By.ID, "sample").clear()
+    driver.find_element(By.ID, "sample").send_keys("s1")
+    result = press(driver, "run", "status")
+
+    assert result.startswith("Done") and "WARNING" not in result, result
+    assert download_text(driver, "download-vcf") == expected["vcf"]
+
+
+def test_a_read_count_that_differs_from_the_enas_gives_a_warning_after_mapping(driver, server, inputs, ena_site):
+    ena_site(read_count="999")
+    fix_host(server)
+    open_web(driver, server)
+    sra_lookup(driver, "SRR9999991")
+    driver.find_element(By.ID, "sra-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith("Loaded"))
+    choose(driver, "reference", inputs / "ref.fa")
+
+    result = press(driver, "run", "status")
+
+    assert "WARNING" in result and "999" in result, result
+
+
+@pytest.mark.parametrize("accession,fragment", [("hello", "does not look like"), ("SRR1", "does not look like"), ("PRJNA417720", "run accession")])
+def test_something_that_is_not_a_run_accession_is_refused_before_any_request(driver, server, ena_site, accession, fragment):
+    open_web(driver, server)
+
+    assert fragment in sra_lookup(driver, accession)
+
+
+def test_an_unknown_run_a_run_without_fastq_an_unsupported_platform_and_a_huge_run_are_each_refused_with_a_reason(driver, server, ena_site):
+    fix_host(server)
+    open_web(driver, server)
+    cases = [
+        ({"fastq_ftp": "", "fastq_bytes": ""}, "no FASTQ"),
+        ({"instrument_platform": "PACBIO_SMRT"}, "not supported"),
+        ({"fastq_bytes": str(5 * 10**9)}, "too large"),
+    ]
+    for changes, fragment in cases:
+        ena_site(**changes)
+        fix_host(server)
+        open_web(driver, server)
+        info = sra_lookup(driver, "SRR9999991")
+        assert fragment in info, (changes, info)
+        assert not driver.find_element(By.ID, "sra-load").is_displayed(), changes
+
+    (ENA_DIR / "filereport").write_text("[]")
+    open_web(driver, server)
+    assert "not found" in sra_lookup(driver, "SRR9999992")
+
+
+def test_a_paired_run_is_flagged_because_the_page_maps_each_mate_as_a_separate_read(driver, server, ena_site):
+    ena_site(library_layout="PAIRED")
+    fix_host(server)
+    open_web(driver, server)
+
+    info = sra_lookup(driver, "SRR9999991")
+
+    assert "PAIRED" in info and "separate" in info, info
+
+
+def test_https_addresses_load_each_file_and_say_where_they_came_from(driver, server, inputs, example_site):
+    expected = cli_results(inputs)
+    _shutil.copy(inputs / "ref.fa.gz", EXAMPLE_DIR / "refdata")  # no .gz in the name, but gzip inside
+    open_web(driver, server)
+    driver.find_element(By.ID, "url-reference").send_keys(f"{server}/dist-site/_test_example/refdata")
+    driver.find_element(By.ID, "url-gff").send_keys(f"{server}/dist-site/_test_example/genes.gff3")
+    driver.find_element(By.ID, "url-reads").send_keys(f"{server}/dist-site/_test_example/reads.fq.gz")
+
+    driver.find_element(By.ID, "url-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
+    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
+    assert source_text(driver, "reference").startswith("From the address") and "refdata" in source_text(driver, "reference")
+    driver.find_element(By.ID, "sample").clear()
+    driver.find_element(By.ID, "sample").send_keys("s1")
+
+    assert press(driver, "run", "status").startswith("Done")
+    assert download_text(driver, "download-vcf") == expected["vcf"]
+
+
+@pytest.mark.parametrize("address,fragment", [
+    ("http://example.org/ref.fa.gz", "https"),
+    ("ftp://example.org/ref.fa.gz", "https"),
+    ("https://user:secret@example.org/ref.fa.gz", "user name"),
+    ("not a url", "address"),
+])
+def test_an_unsafe_or_malformed_address_is_refused_before_any_request(driver, server, address, fragment):
+    open_web(driver, server)
+    driver.find_element(By.ID, "url-reference").send_keys(address)
+
+    driver.find_element(By.ID, "url-load").click()
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-status").text.startswith("Error"))
+
+    assert fragment in driver.find_element(By.ID, "web-status").text
+
+
+def test_a_file_that_unpacks_to_more_than_the_limit_is_refused_instead_of_filling_the_memory(driver, server, inputs):
+    big = "".join(f">c{i}\n{'ACGT' * 25_000}\n" for i in range(20))  # about 2 MB of bases
+    (inputs / "big.fa").write_text(big)
+    driver.get(f"{server}/{SITE}?limit_mb=1")
+    choose(driver, "reference", inputs / "big.fa")
+    choose(driver, "reads", inputs / "reads.fq")
+
+    result = press(driver, "run", "status")
+
+    assert result.startswith("Error") and "too large" in result, result
+
+
+# Gene names and products in the variant table
+
+def test_the_variant_table_shows_the_gene_name_and_the_product_from_the_gff(driver, server, inputs):
+    named = GFF.replace("ID=gene1;locus_tag=G1", "ID=gene1;locus_tag=G1;Name=hrmA;gene=hrmA").replace(
+        "ID=tx1;Parent=gene1", "ID=tx1;Parent=gene1;product=protein%20hrmA%3B%20test")
+    (inputs / "named.gff3").write_text(named)
+    assert step1(driver, server, inputs).startswith("Done")
+    choose(driver, "gff", inputs / "named.gff3")
+
+    status = press(driver, "annotate", "annotate-status")
+
+    assert "1 of 1 variants" in status, status
+    headers = [h.text for h in driver.find_elements(By.CSS_SELECTOR, "#variant-table thead th")]
+    assert "Name" in headers and "Product" in headers, headers
+    cells = {h: c.text for h, c in zip(headers, driver.find_elements(By.CSS_SELECTOR, "#variant-table tbody tr td"))}
+    assert cells["Gene"] == "G1" and cells["Name"] == "hrmA" and cells["Product"] == "protein hrmA; test", cells
+    driver.find_element(By.CSS_SELECTOR, "#variant-table button.draw-row").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "report-status").text.startswith("Drawn"))
+    assert "hrmA (G1)" in driver.find_element(By.ID, "report").get_attribute("srcdoc")
+
+
+# Plots must be readable in every theme
+
+CONTRAST_JS = """
+const parse = (c) => { const m = c.match(/rgba?\\(([^)]+)\\)/); const v = m[1].split(',').map(Number); return {r: v[0], g: v[1], b: v[2], a: v.length > 3 ? v[3] : 1}; };
+const lin = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((p, q) => q - p); return (hi + 0.05) / (lo + 0.05); };
+const backdrop = (el) => { for (let e = el; e; e = e.parentElement) { const c = parse(e.ownerDocument.defaultView.getComputedStyle(e).backgroundColor); if (c.a > 0.5) return c; } return {r: 255, g: 255, b: 255, a: 1}; };
+const blend = (f, o, bg) => ({r: f.r * o + bg.r * (1 - o), g: f.g * o + bg.g * (1 - o), b: f.b * o + bg.b * (1 - o)});
+const worst = (els, kind) => {
+  let min = Infinity, what = '';
+  for (const el of els) {
+    const cs = el.ownerDocument.defaultView.getComputedStyle(el);
+    const bg = backdrop(el);
+    let fg = parse(cs.fill);
+    if (kind === 'mark') fg = blend(fg, parseFloat(cs.fillOpacity || '1'), bg);
+    const r = ratio(fg, bg);
+    if (r < min) { min = r; what = (el.getAttribute('class') || el.tagName) + ' ' + (el.getAttribute('data-class') || el.getAttribute('data-effect') || ''); }
+  }
+  return [min, what, els.length];
+};
+const q = (root, sel) => [...root.querySelectorAll(sel)];
+const frame = document.getElementById('report').contentDocument;
+const out = {};
+out.genome_text = worst(q(document, '#genome-plot svg text'), 'text');
+out.depth_text = worst(q(document, '#depth-plot svg text'), 'text');
+out.genome_marks = worst(q(document, '#genome-plot svg .call, #genome-plot svg .bin'), 'mark');
+out.depth_marks = worst(q(document, '#depth-plot svg .depth'), 'mark');
+out.locus_text = worst(q(frame, 'svg text'), 'text');
+out.locus_marks = worst(q(frame, 'svg .variant, svg .cds'), 'mark');
+const body = frame.body, cs = frame.defaultView.getComputedStyle(body);
+out.locus_body = [ratio(parse(cs.color), parse(cs.backgroundColor)), 'body text', 1];
+out.locus_vs_panel = [ratio(parse(cs.backgroundColor), backdrop(document.getElementById('report'))), 'iframe background against its panel (1 = same)', 1];
+return out;
+"""
+
+
+def test_plot_text_and_marks_are_readable_against_their_background_in_every_theme(driver, server, inputs):
+    refs = CHR_A
+    snp_ref = refs[50_000]
+    snp_alt = "A" if snp_ref != "A" else "C"
+    vcf = ("##fileformat=VCFv4.2\n##contig=<ID=chrA,length=120000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+           f"chrA\t50001\t.\t{snp_ref}\t{snp_alt}\t.\tPASS\tCLASS=SNP;AF=1.0000;DP=10\n"
+           f"chrA\t50101\t.\t{refs[50100:50102]}\t{refs[50100]}\t.\tPASS\tCLASS=SMALL_INDEL;AF=0.6000;DP=10\n"
+           f"chrA\t10000\t.\t{refs[9999]}\t{'A' if refs[9999] != 'A' else 'C'}\t.\tPASS\tCLASS=SNP;AF=0.9000;DP=10\n"
+           f"chrA\t60000\t.\t{refs[59999]}\t<INS>\t.\tPASS\tCLASS=LARGE_INDEL;AF=0.8000;DP=10;SVLEN=120\n")
+    (inputs / "marks.vcf").write_text(vcf)
+    (inputs / "cov.bed").write_text("".join(f"chrA\t{s}\t{s + 10000}\t{8 + (s // 10000) % 5}\n" for s in range(0, 120_000, 10_000)))
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    choose(driver, "gff", inputs / "genes.gff3")
+    choose(driver, "vcf-file", inputs / "marks.vcf")
+    choose(driver, "depth-file", inputs / "cov.bed")
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    assert press(driver, "annotate", "annotate-status").startswith("4 of 4")
+    driver.find_element(By.CSS_SELECTOR, "#variant-table button.draw-row[data-pos='50001']").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "report-status").text.startswith("Drawn"))
+    time.sleep(0.5)
+
+    problems = []
+    for theme in THEMES:
+        driver.find_element(By.CSS_SELECTOR, f"[data-set-theme={theme}]").click()
+        time.sleep(0.4)
+        result = driver.execute_script(CONTRAST_JS)
+        for name, (ratio, what, count) in result.items():
+            assert count > 0 or name == "locus_vs_panel", (theme, name, "nothing measured")
+            needed = 1.0 if name == "locus_vs_panel" else (3.0 if name.endswith("marks") else 4.5)
+            if name == "locus_vs_panel":
+                continue
+            if ratio < needed:
+                problems.append(f"{theme}: {name} {ratio:.2f} < {needed} ({what})")
+    assert not problems, "\n".join(problems)

@@ -24,6 +24,10 @@ pub struct Transcript {
     /// CDS blocks, sorted by position.
     pub cds: Vec<(u64, u64)>,
     pub transl_table: u8,
+    /// The gene's name (for example `hrmA`) when the GFF gives one that is not just the locus tag.
+    pub gene_name: Option<String>,
+    /// The product (for example `response regulator`), from the mRNA or else the CDS line.
+    pub product: Option<String>,
 }
 
 impl Transcript {
@@ -110,12 +114,43 @@ fn attribute<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
     attrs.split(';').find_map(|kv| kv.trim().strip_prefix(key)?.strip_prefix('='))
 }
 
+/// Decode the `%XX` escapes of a GFF3 attribute value. A `%` that is not followed by two hex digits stays as it is.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 0 && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit() {
+            out.push(u8::from_str_radix(&text[i + 1..i + 3], 16).unwrap());
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Encode a value for a VCF INFO field: the characters that would end or break the field become `%XX`.
+pub(crate) fn percent_encode_info(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        match c {
+            '%' | ';' | '=' | ',' | ' ' | '\t' | '\n' | '\r' => out.push_str(&format!("%{:02X}", c as u32)),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 struct Feature {
     kind: String,
     contig: String,
     strand: Strand,
     parent: Option<String>,
     label: String,
+    name: Option<String>,
+    product: Option<String>,
 }
 
 impl Annotation {
@@ -138,6 +173,7 @@ impl Annotation {
         let mut exons: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
         let mut cds: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
         let mut tables: HashMap<String, u8> = HashMap::new();
+        let mut cds_products: HashMap<String, String> = HashMap::new();
         for line in reader.lines() {
             let line = line?;
             if line.starts_with('#') || line.trim().is_empty() {
@@ -162,6 +198,9 @@ impl Annotation {
                             if let Some(t) = attribute(attrs, "transl_table").and_then(|t| t.parse().ok()) {
                                 tables.insert(parent.to_string(), t);
                             }
+                            if let Some(p) = attribute(attrs, "product") {
+                                cds_products.entry(parent.to_string()).or_insert_with(|| percent_decode(p));
+                            }
                         }
                     }
                 }
@@ -171,6 +210,11 @@ impl Annotation {
                         .or_else(|| attribute(attrs, "Name"))
                         .unwrap_or(id)
                         .to_string();
+                    // A gene's name: the `gene` attribute, or for a gene line a `Name` that is not the locus tag itself.
+                    let name = attribute(attrs, "gene")
+                        .map(percent_decode)
+                        .or_else(|| if matches!(kind, "gene" | "pseudogene") { attribute(attrs, "Name").map(percent_decode) } else { None })
+                        .filter(|n| !n.is_empty() && *n != label);
                     features.insert(
                         id.to_string(),
                         Feature {
@@ -179,6 +223,8 @@ impl Annotation {
                             strand,
                             parent: attribute(attrs, "Parent").map(|p| p.split(',').next().unwrap_or("").to_string()),
                             label,
+                            name,
+                            product: attribute(attrs, "product").map(percent_decode),
                         },
                     );
                 }
@@ -189,13 +235,10 @@ impl Annotation {
         let mut per_gene: HashMap<String, Vec<Transcript>> = HashMap::new();
         for id in exons.keys().chain(cds.keys()).collect::<std::collections::BTreeSet<_>>() {
             let Some(feature) = features.get(id) else { continue };
-            let gene = feature
-                .parent
-                .as_ref()
-                .and_then(|p| features.get(p))
-                .filter(|g| g.kind != "mRNA")
-                .map(|g| g.label.clone())
-                .unwrap_or_else(|| feature.label.clone());
+            let gene_feature = feature.parent.as_ref().and_then(|p| features.get(p)).filter(|g| g.kind != "mRNA");
+            let gene = gene_feature.map(|g| g.label.clone()).unwrap_or_else(|| feature.label.clone());
+            let gene_name = gene_feature.and_then(|g| g.name.clone()).or_else(|| feature.name.clone());
+            let product = feature.product.clone().or_else(|| cds_products.get(id).cloned());
             let mut ex = exons.get(id).cloned().unwrap_or_default();
             let mut cd = cds.get(id).cloned().unwrap_or_default();
             if ex.is_empty() {
@@ -211,6 +254,8 @@ impl Annotation {
                 exons: ex,
                 cds: cd,
                 transl_table: tables.get(id).copied().unwrap_or(1),
+                gene_name,
+                product,
             });
         }
         let mut by_contig: HashMap<String, Vec<Transcript>> = HashMap::new();
@@ -253,6 +298,8 @@ pub struct Effect {
     pub transcript: Option<String>,
     pub aa: Option<String>,
     pub n_transcripts: usize,
+    pub gene_name: Option<String>,
+    pub product: Option<String>,
 }
 
 fn complement(b: u8) -> u8 {
@@ -295,6 +342,8 @@ fn effect_of(label: &str, tx: Option<&Transcript>, aa: Option<String>, ann: &Ann
         transcript: tx.map(|t| t.id.clone()),
         aa,
         n_transcripts: tx.map(|t| ann.transcripts_per_gene.get(&t.gene).copied().unwrap_or(1)).unwrap_or(0),
+        gene_name: tx.and_then(|t| t.gene_name.clone()),
+        product: tx.and_then(|t| t.product.clone()),
     }
 }
 
@@ -519,6 +568,12 @@ pub fn annotate_vcf<R: BufRead, W: io::Write>(
                 if let Some(first) = effects.first() {
                     if let (Some(gene), Some(tx)) = (&first.gene, &first.transcript) {
                         tags.push_str(&format!(";GENE={gene};TRANSCRIPT={tx}"));
+                        if let Some(name) = &first.gene_name {
+                            tags.push_str(&format!(";GENENAME={}", percent_encode_info(name)));
+                        }
+                        if let Some(product) = &first.product {
+                            tags.push_str(&format!(";PRODUCT={}", percent_encode_info(product)));
+                        }
                     }
                     if effects.iter().any(|e| e.aa.is_some()) {
                         let aas: Vec<&str> = effects.iter().map(|e| e.aa.as_deref().unwrap_or(".")).collect();

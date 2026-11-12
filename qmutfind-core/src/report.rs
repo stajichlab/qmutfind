@@ -42,6 +42,10 @@ pub struct ReportVariant {
     pub effect: String,
     pub aa: Option<String>,
     pub gene: Option<String>,
+    /// The gene's name (for example `hrmA`), when the annotated VCF has one.
+    pub gene_name: Option<String>,
+    /// The product of the gene (for example `response regulator`).
+    pub product: Option<String>,
 }
 
 /// Read the variants of a VCF. A record with no `EFFECT` tag is `unannotated`. For a multi-allele
@@ -66,9 +70,28 @@ pub fn read_report_variants<R: BufRead>(reader: R) -> Result<Vec<ReportVariant>,
             effect: info("EFFECT").and_then(|e| e.split(',').next()).unwrap_or("unannotated").to_string(),
             aa: info("AA").and_then(|a| a.split(',').next()).filter(|a| *a != ".").map(str::to_string),
             gene: info("GENE").map(str::to_string),
+            gene_name: info("GENENAME").map(decode_info),
+            product: info("PRODUCT").map(decode_info),
         });
     }
     Ok(out)
+}
+
+/// Undo `percent_encode_info`: turn `%XX` back into the character. Anything else is left as it is.
+fn decode_info(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 0 && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit() {
+            out.push(u8::from_str_radix(&text[i + 1..i + 3], 16).unwrap());
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub(crate) fn escape(text: &str) -> String {
@@ -138,7 +161,10 @@ fn draw_transcript(svg: &mut String, tx: &Transcript, scale: &Scale, region: &Re
     svg.push_str(&format!(
         "<text x=\"{LEFT}\" y=\"{:.1}\" font-size=\"13\" style=\"fill:var(--fg,#222)\">{}</text>",
         y + 6.0,
-        escape(&tx.gene)
+        escape(&match &tx.gene_name {
+            Some(name) => format!("{name} ({})", tx.gene),
+            None => tx.gene.clone(),
+        })
     ));
     let (x1, x2) = scale.span(tx.exons.first().map(|e| e.0).unwrap_or(0).max(region.start), tx.exons.last().map(|e| e.1).unwrap_or(0).min(region.end));
     svg.push_str(&format!(
@@ -243,6 +269,9 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
             tip.push(' ');
             tip.push_str(extra);
         }
+        if let Some(name) = &v.gene_name {
+            tip.push_str(&format!(" ({name})"));
+        }
         body.push_str(&format!(
             "<line x1=\"{x:.1}\" y1=\"{baseline}\" x2=\"{x:.1}\" y2=\"{cy:.1}\" style=\"stroke:var(--fg,#222)\" stroke-opacity=\"0.5\"/>\
 <circle class=\"variant\" data-effect=\"{}\" data-pos=\"{}\" cx=\"{x:.2}\" cy=\"{cy:.1}\" r=\"5\" fill=\"{}\" stroke=\"#222\" stroke-width=\"0.5\"><title>{}</title></circle>",
@@ -282,7 +311,8 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
         let x = LEFT + (i % 4) as f64 * 220.0;
         let y = legend_y + (i / 4) as f64 * 18.0;
         body.push_str(&format!(
-            "<circle cx=\"{:.1}\" cy=\"{y:.1}\" r=\"5\" fill=\"{}\" stroke=\"#222\" stroke-width=\"0.5\"/><text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12\" style=\"fill:var(--fg,#222)\">{}</text>",
+            "<circle class=\"variant-legend\" data-effect=\"{}\" cx=\"{:.1}\" cy=\"{y:.1}\" r=\"5\" fill=\"{}\" stroke=\"#222\" stroke-width=\"0.5\"/><text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12\" style=\"fill:var(--fg,#222)\">{}</text>",
+            escape(effect),
             x + 5.0,
             colour(effect),
             x + 16.0,
@@ -346,18 +376,20 @@ pub fn report_page(vcf: &str, gff: Option<&[u8]>, region: &str, title: &str) -> 
             .iter()
             .map(|v| {
                 format!(
-                    "<tr><td>{}:{}</td><td>{} &gt; {}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    "<tr><td>{}:{}</td><td>{} &gt; {}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                     escape(&v.contig),
                     group(v.pos),
                     escape(&v.reference),
                     escape(&v.alt),
                     escape(&v.effect),
                     escape(v.gene.as_deref().unwrap_or("")),
-                    escape(v.aa.as_deref().unwrap_or(""))
+                    escape(v.gene_name.as_deref().unwrap_or("")),
+                    escape(v.aa.as_deref().unwrap_or("")),
+                    escape(v.product.as_deref().unwrap_or(""))
                 )
             })
             .collect();
-        format!("<table class=\"variants\"><thead><tr><th>Position</th><th>Change</th><th>Effect</th><th>Gene</th><th>Protein change</th></tr></thead><tbody>{rows}</tbody></table>")
+        format!("<table class=\"variants\"><thead><tr><th>Position</th><th>Change</th><th>Effect</th><th>Gene</th><th>Name</th><th>Protein change</th><th>Product</th></tr></thead><tbody>{rows}</tbody></table>")
     };
     Ok(render_report_html_with_table(title, &svg, &summary, &table))
 }

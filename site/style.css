@@ -82,7 +82,6 @@ html[data-theme="lab"] button.primary { box-shadow: 0 0 14px rgba(39, 224, 255, 
 html[data-theme="lab"] .themes button[aria-pressed="true"] { box-shadow: 0 0 10px rgba(39, 224, 255, .7); }
 html[data-theme="lab"] .limits { border-color: #ffb000; }
 html[data-theme="lab"] .limits h2 { color: #ffb000; text-shadow: 0 0 10px rgba(255, 176, 0, .5); }
-html[data-theme="lab"] iframe { filter: invert(.92) hue-rotate(180deg); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 50% { opacity: 0; } }
 
@@ -132,6 +131,31 @@ html[data-theme="quest"] .limits > h2 { background: #aa0000; }
 html[data-theme="quest"] .foot { color: #fff; }
 html[data-theme="quest"] .foot a { color: #ffff55; }
 html[data-theme="quest"] iframe { border: 3px solid #000; background: #fff; }
+
+/* Plot colours. Every theme sets a palette that has at least 3:1 contrast against the panel behind the plots
+   (the browser test checks this). Light panels get dark marks, dark panels light marks, the grey panel of the quest theme
+   dark marks. The plots use the text colour of the panel, not of the page, for their labels and outlines. */
+:root {
+  --plot-snp: #0072B2; --plot-indel: #B36B00; --plot-large: #B83A00; --plot-bar: #56677f; --plot-depth: #0072B2; --plot-median: #B83A00;
+}
+html[data-theme="lab"] { --plot-snp: #56B4E9; --plot-indel: #F5B942; --plot-large: #FF7F50; --plot-bar: #7C93B0; --plot-depth: #56B4E9; --plot-median: #FF7F50; }
+html[data-theme="quest"] { --plot-snp: #0000AA; --plot-indel: #6B3F00; --plot-large: #8A0000; --plot-bar: #333333; --plot-depth: #0000AA; --plot-median: #8A0000; }
+#genome-plot svg, #depth-plot svg { --fg: var(--panel-fg); }
+#genome-plot svg .call, #depth-plot svg .call { stroke: var(--panel-fg); stroke-width: .9; }
+#genome-plot svg .call[data-class="SNP"] { fill: var(--plot-snp); }
+#genome-plot svg .call[data-class="SMALL_INDEL"] { fill: var(--plot-indel); }
+#genome-plot svg .call[data-class="LARGE_INDEL"] { fill: var(--plot-large); }
+#genome-plot svg .bin { fill: var(--plot-bar); }
+#depth-plot svg .depth { fill: var(--plot-depth); }
+#depth-plot svg .depth[data-clipped] { fill: var(--plot-large); }
+#depth-plot svg .median { stroke: var(--plot-median); }
+#depth-plot svg .vtick[data-class="SNP"] { stroke: var(--plot-snp); }
+#depth-plot svg .vtick[data-class="SMALL_INDEL"] { stroke: var(--plot-indel); }
+#depth-plot svg .vtick[data-class="LARGE_INDEL"] { stroke: var(--plot-large); }
+/* the legends of the variant plot (circle, square, triangle without a class) follow the same palette */
+#genome-plot svg circle:not([class]) { fill: var(--plot-snp); stroke: var(--panel-fg); }
+#genome-plot svg rect[width="7"]:not([class]) { fill: var(--plot-indel); stroke: var(--panel-fg); }
+#genome-plot svg polygon:not([class]) { fill: var(--plot-large); stroke: var(--panel-fg); }
 
 /* Steps, tables and the variant list (all themes) */
 .step h2 .num { display: inline-block; min-width: 1.6em; text-align: center; margin-right: 6px; padding: 0 4px; background: var(--accent); color: var(--accent-fg); border-radius: var(--radius); }

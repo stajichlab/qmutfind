@@ -897,6 +897,22 @@ thousands of calls was not tried in the browser; Chrome and Safari were not trie
   copy (`sra-pub-run-odp.s3.amazonaws.com`) is a `.sra` file (96 MB for SRR6277229, not FASTQ) with no CORS header. ENA is
   the only browser-readable source found. DDBJ was not tested.
 
+## 12d. Gene names and products; readable plots in every theme (2026-11-12)
+
+- The GFF3 `gene=` attribute (or, on a gene line, a `Name` that is not the locus tag) gives `GENENAME`; `product` on the
+  mRNA, else on the CDS, gives `PRODUCT` (percent-encoded in the VCF so `;`, `=`, `,` and spaces cannot break the INFO
+  field). The step 3 table has Name and Product columns and the locus drawing labels a gene `hrmA (AFUA_5G14900)`.
+  On the RefSeq Af293 GFF 1,579 of 10,085 genes have a `gene=` name. The two candidate genes are named in the annotation:
+  `hrmA` (AFUA_5G14900, product `protein hrmA`) and `ssk1` (AFUA_5G08390, product `response regulator`), which replaces the
+  earlier note that these names came from unverified patent text.
+- Plots: the browser test measures contrast in all five themes (text 4.5:1, marks 3:1, WCAG levels). Before the fix it
+  found plot text at 2.3:1 in the quest theme (the plots used the page's foreground, white, on a grey panel), marks
+  at 1.0 to 2.9:1 in several themes (the orange of the Okabe-Ito palette is 2.1:1 on white) and the locus drawing's
+  missense colour at 2.25:1. Fix: one palette each for light, dark and mid panels, outlines in the panel's text
+  colour, and the locus drawing (an iframe) receives its panel's colours and the matching palette after it loads and when the
+  theme changes. Category colours are kept, but several are darker or lighter than the printed CLI report's.
+  The standalone SVG and HTML files that the CLI writes keep the original palette.
+
 ## 13. Planned work (2026-11-12, agreed with the user)
 
 1. Held-out validation (seeds 3 to 7): record the pooled results with confidence intervals. No re-tuning.

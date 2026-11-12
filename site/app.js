@@ -119,6 +119,12 @@ $('annotate').addEventListener('click', () => {
   send('annotate', { vcf, reference, gff }, 'annotate-status');
 });
 
+/** A VCF INFO value with its %XX escapes undone (qmutfind writes `;`, `=`, `,`, spaces and `%` that way). */
+function decodeInfo(value) {
+  if (!value) return '';
+  try { return decodeURIComponent(value); } catch (error) { return value; }
+}
+
 /** The variants in a VCF as table rows. Uses the INFO tags written by qmutfind annotate. */
 function parseVariants(vcfText) {
   const rows = [];
@@ -134,7 +140,7 @@ function parseVariants(vcfText) {
     rows.push({
       contig: f[0], pos: Number(f[1]), ref: f[3], alt: f[4].split(',')[0],
       cls: info.CLASS || '', effect: (info.EFFECT || 'unannotated').split(',')[0],
-      gene: info.GENE || '', aa: info.AA && info.AA !== '.' ? info.AA : '', af: info.AF || '', dp: info.DP || '',
+      gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '', af: info.AF || '', dp: info.DP || '',
     });
   }
   return rows;
@@ -149,7 +155,7 @@ function renderTable() {
   const table = $('variant-table');
   table.replaceChildren();
   const head = table.createTHead().insertRow();
-  for (const name of ['Position', 'Change', 'Class', 'Effect', 'Gene', 'Protein', 'AF', 'DP', '']) {
+  for (const name of ['Position', 'Change', 'Class', 'Effect', 'Gene', 'Name', 'Protein change', 'Product', 'AF', 'DP', '']) {
     const th = document.createElement('th');
     th.textContent = name;
     head.appendChild(th);
@@ -158,7 +164,7 @@ function renderTable() {
   for (const v of shown.slice(0, MAX_ROWS)) {
     const row = body.insertRow();
     row.append(cell(`${v.contig}:${v.pos.toLocaleString()}`), cell(`${v.ref.length > 12 ? v.ref.slice(0, 12) + '…' : v.ref} > ${v.alt.length > 12 ? v.alt.slice(0, 12) + '…' : v.alt}`),
-      cell(v.cls), cell(v.effect), cell(v.gene), cell(v.aa), cell(v.af), cell(v.dp));
+      cell(v.cls), cell(v.effect), cell(v.gene), cell(v.geneName), cell(v.aa), cell(v.product), cell(v.af), cell(v.dp));
     const last = row.insertCell();
     const button = document.createElement('button');
     button.type = 'button';
@@ -445,3 +451,44 @@ async function setupGenomes() {
 }
 
 setupGenomes();
+
+
+// ---- The locus drawing in its iframe ------------------------------------------------------------------------------
+// The drawing is a separate page with its own colours. After it loads, and when the theme changes, the page gives it the
+// colours of the panel around it, and a palette with enough contrast for that kind of background (light, dark or mid).
+const PALETTES = {
+  light: { missense: '#B36B00', nonsense: '#B83A00', frameshift: '#B0457F', inframe: '#007A5A', splice: '#0072B2', utr: '#1F78B4', synonymous: '#707070', intergenic: '#8A7B00', unannotated: '#707070', cds: '#3d5a80', utrfill: '#7a8aa0' },
+  dark: { missense: '#F5B942', nonsense: '#FF7F50', frameshift: '#E08FC0', inframe: '#4FD1A5', splice: '#56B4E9', utr: '#6FC3F0', synonymous: '#B0B0B0', intergenic: '#F0E442', unannotated: '#BBBBBB', cds: '#8fb0d8', utrfill: '#7C93B0' },
+  mid: { missense: '#6B3F00', nonsense: '#8A2B00', frameshift: '#7A1F55', inframe: '#00573F', splice: '#00467A', utr: '#1A4F7A', synonymous: '#444444', intergenic: '#5F5500', unannotated: '#444444', cds: '#1B2F4A', utrfill: '#3B4E66' },
+};
+const EFFECT_GROUPS = {
+  missense: ['missense'], nonsense: ['nonsense', 'start_lost', 'stop_lost'], frameshift: ['frameshift', 'large_indel_in_cds'],
+  inframe: ['inframe_insertion', 'inframe_deletion'], splice: ['splice_site'], utr: ['5UTR_derived', '3UTR_derived', 'intron_derived', 'non_coding'],
+  synonymous: ['synonymous'], intergenic: ['intergenic'], unannotated: ['unannotated'],
+};
+
+function luminance(rgb) {
+  const [r, g, b] = rgb.match(/[\d.]+/g).slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function themeReport() {
+  const doc = $('report').contentDocument;
+  if (!doc || !doc.documentElement || !$('report').getAttribute('srcdoc')) return;
+  const panel = getComputedStyle($('step3'));
+  const bg = panel.backgroundColor;
+  const fg = panel.color;
+  const l = luminance(bg);
+  const p = PALETTES[l > 0.5 ? 'light' : l < 0.2 ? 'dark' : 'mid'];
+  let css = `:root{--bg:${bg};--fg:${fg};--line:${fg};--cds:${p.cds};--utr:${p.utrfill}}body{background:${bg};color:${fg}}` +
+    `.variant,.variant-legend{stroke:${fg};stroke-width:1}.cds{fill:${p.cds}}.utr{fill:${p.utrfill}}`;
+  for (const [key, labels] of Object.entries(EFFECT_GROUPS)) {
+    css += labels.map((e) => `[data-effect="${e}"]`).join(',') + `{fill:${p[key]}}`;
+  }
+  let style = doc.getElementById('qmutfind-theme');
+  if (!style) { style = doc.createElement('style'); style.id = 'qmutfind-theme'; doc.head.appendChild(style); }
+  style.textContent = css;
+}
+
+$('report').addEventListener('load', themeReport);
+document.addEventListener('qmutfind-theme', themeReport);
