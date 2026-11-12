@@ -1,6 +1,16 @@
 # qmutfind: plan
 
-Status: design agreed in a question-and-answer review on 2026-11-11. No code exists yet.
+Licence (user decision, 2026-11-11): GPL-3.0. `LICENSE` holds the standard text (35,149 bytes,
+byte-identical to the copy in pinbo/bwa-samtools-web). The Cargo manifests declare `GPL-3.0-only`.
+ASSUMED: "only" and not "or later". Change `license` in `Cargo.toml` if you want "or later".
+`rammap` declares `license = "MIT"` in its workspace `Cargo.toml` (read 2026-11-11). I did not read its
+`LICENSE` file. The legal effect of combining MIT and GPL-3.0 code is not checked here.
+
+Status (2026-11-11): design agreed in a question-and-answer review. The `rammap` spike passed.
+The Cargo workspace exists with three crates. `qmutfind-core` has the `Aligner` trait, `ReadKind::Short`
+and a `RammapAligner` backend, with one passing test (`qmutfind-core/tests/aligner_backend.rs`).
+Not yet built: `pixi.toml`, the CLI, the WASM wrapper, the caller, the classifier, the statistics,
+the report, the benchmark inputs. Nothing is committed.
 The original voice-note text is kept in `PLAN.original-voice-notes.md`.
 
 Markers used in this file:
@@ -58,11 +68,43 @@ Decision: test `rammap` first.
 - `UNVERIFIED`: whether `rammap` builds for `wasm32-unknown-unknown`, its maturity,
   and its dependencies (threads, C code).
 
-Spike (do this before any other build work):
-1. Build `rammap` for native and for `wasm32-unknown-unknown`.
-2. Map one Illumina test file and one Nanopore test file to a small fungal genome.
-3. Compare the output with native `minimap2` on the same input.
-4. Record build outcome, time and peak memory.
+Spike (run 2026-11-11 on a SLURM node: 4 CPUs, 8 GB; `rammap` v1.2.0, commit 3702b34, `minimap2` 2.30,
+Rust 1.96.0, Node 22.23.1). The test script is `spike/rammap/wasm_run.cjs`. Data are outside the repository
+in `/bigdata/stajichlab/jstajich/projects/qmutfind_data` (Af293 FASTA and GFF3 with MD5 checked, three runs
+with read counts checked against ENA).
+
+Result: `rammap` passes every test that was run. Details:
+
+| Test | Result |
+|---|---|
+| Native build (`cargo build --release -p rammap`) | OK. 55.9 s, peak 420 MB. |
+| WASM build (`-p rammap-core --no-default-features --target wasm32-unknown-unknown`, `RUSTFLAGS="-C target-feature=+simd128"`) | OK. 25.9 s, peak 481 MB. `.wasm` is 861 KB raw and 425 KB after `wasm-bindgen`. |
+| Native versus `minimap2`, Illumina (SRR6277229, 1,427,487 pairs, `-x sr`, 4 threads) | All 2,855,733 SAM records identical on fields 1-9 and the `NM` tag. 2,400,691 mapped (84.07%) in both. `minimap2` 14.6 s, 865 MB. `rammap` 19.4 s, 1.26 GB. |
+| Native versus `minimap2`, Nanopore (SRR28035789, 624,929 reads, `-x map-ont`, 4 threads) | 739,669 records identical including `NM` and `AS` (99.97%). `minimap2` only: 210. `rammap` only: 194. Of these, 207 and 191 are secondary or supplementary records. 3 reads differ in the primary record, and each of the 3 differs in MAPQ (for example 27 versus 28). Unmapped reads are equal (63,871). `minimap2` 2:21.8, 4.09 GB. `rammap` 2:13.1, 4.11 GB. |
+| WASM (Node) versus native `rammap`, Illumina, first 300k reads, single-end, 1 thread | 300,089 of 300,089 records identical on fields 1-6. WASM 6.7 s (index 1.4 s, align 4.9 s), peak 377 MB. Native 4.9 s, peak 532 MB. |
+| WASM (Node) versus native `rammap`, Nanopore, first 100k reads, 1 thread | 117,836 of 117,836 records identical on fields 1-6. WASM 86.8 s (index 1.5 s), peak 555 MB. Native 46.8 s, peak 1.06 GB. |
+
+Notes and cautions:
+- The first WASM build did not use `+simd128`. The repository sets the flag in `.cargo/config.toml`, and
+  Cargo reads that file from the current directory, not from `--manifest-path`. Pass `RUSTFLAGS` explicitly.
+- The `wasm-bindgen` CLI version must equal the library version in `Cargo.lock` (0.2.114). The CLI
+  installed on this machine was 0.2.130 and would not match.
+- WASM was 1.4x slower than native single-thread on short reads and 1.9x slower on Nanopore reads
+  (these are single measurements on one machine).
+- Extrapolation, `UNMEASURED`: a full Nanopore run of 625k reads would take about 9 minutes in
+  single-threaded WASM if time scales linearly with read count.
+- Not tested: a real browser (only Node, which uses the same V8 engine), the multi-threaded build (needs
+  nightly Rust and `SharedArrayBuffer`), gzip reference input, runs larger than 100k reads in WASM,
+  Nanopore comparison against `minimap2` on a second genome.
+- `AlignSession` (the streaming WASM API) takes one FASTQ stream. It has no paired-end mode.
+  Short-read pairs would be mapped as independent single-end reads in the browser. The native CLI
+  maps pairs. This is a gap for the browser build (see open items).
+- `rammap` also has a Rust library API (`Aligner`, `map_seq`) that is compatible with `minimap2-rs`.
+  `UNVERIFIED`: that this API builds and runs for `wasm32` without the `wasm-bindgen` entry points.
+  Our `qmutfind-core` would use the library API, not `AlignSession`.
+
+Decision consequence: keep `rammap` as the aligner. The C `minimap2` fallback is not needed unless a
+browser test fails. Keep the `Aligner` trait anyway, because it costs little.
 
 Fallback if the spike fails: C `minimap2` built with Emscripten or WASI.
 This keeps the browser build but loses the "pure Rust, one build" goal.
@@ -74,7 +116,23 @@ Facts found about other options:
   Source: https://docs.rs/minimap2
 - `kira-ls-aligner` is an early Rust aligner (v0.1.x). WASM status unknown.
 - `yara-mapper` is built on C++ (SeqAn2). Ruled out.
-- BWA is C and hard to build for WASM. Not used.
+- BWA is C. Earlier text said it is hard to build for WASM. That was wrong: https://github.com/pinbo/bwa-samtools-web
+  (user-supplied link, read 2026-11-11) has BWA 0.7.17 and samtools 1.11 built with Emscripten, from biowasm
+  patches. Only `bwa index`, `bwa mem`, `samtools sort` and `samtools index` are kept. `pthread` is removed
+  (single-threaded). The author edited the C code so the last argument is the output file. 1 star,
+  last push 2026-10-18, GPL-3.0. Not built or tested by us. `UNMEASURED`: its speed, memory and accuracy.
+  `bwa mem` accepts paired files, so it could fill the paired-end gap of `rammap`'s streaming API.
+  Weaknesses: separate C build (breaks the one-source goal), no known strong Nanopore mode, GPL-3.0
+  licence effects on our project (the project is now GPL-3.0, see below; the legal effect of bundling
+  GPL-3.0 code is not checked). Status: candidate second backend behind the `Aligner`
+  trait. Not used in version 1. samtools is not needed in the core, because the caller reads the
+  alignment stream and needs no sorted BAM.
+- biowasm (https://github.com/biowasm/biowasm, MIT, 280 stars, not archived; created 2019, last push
+  2026-11-10, checked via the GitHub API on 2026-11-11). It is actively maintained. Its `tools` folder
+  lists, among others: bcftools, samtools, htslib, minimap2, bwa, bowtie2, wgsim, fastp, seqtk, ssw,
+  gffread and rammap. A `rammap` entry exists there. `UNVERIFIED`: what version it builds, how it is
+  packaged, and whether it adds anything over our own `wasm-bindgen` build. A hosted biowasm `rammap`
+  or `bcftools` could serve as a cross-check in the browser. Not used in version 1.
 - MATPredict (`../MATPredict`) has no Rust aligner. It has C tools with WASM build
   scripts in `web/spike/native/` (miniprot, exonerate, losat, mmseqs2). `miniprot`
   aligns proteins to a genome. It does not map reads. Its own README says no Emscripten
@@ -115,7 +173,10 @@ Needs a GFF3 with CDS features. UTR labels need UTR features.
 Labels:
 - SNP in CDS: synonymous, missense, nonsense (stop gained), stop lost, start lost.
 - Indel in CDS: frameshift, in-frame insertion, in-frame deletion.
-- Other: splice site (within 2 bp of an exon boundary), 5' UTR, 3' UTR, intron, intergenic.
+- Other: splice site, 5' UTR, 3' UTR, intron, intergenic.
+- Splice site (changed 2026-11-11; the earlier text said "within 2 bp of an exon boundary"): the first 2
+  and last 2 bases of an intron (the donor and acceptor positions). Exon bases next to a boundary keep
+  their coding or UTR label. A "splice region" label for those exon bases is not in version 1.
 
 Rules:
 - An indel in a CDS is a frameshift when its length is not a multiple of 3.
@@ -124,7 +185,22 @@ Rules:
 - An indel outside a CDS has no frame. It gets a non-coding label.
 - An indel that crosses an exon boundary or splice site is labeled `splice-disrupting`
   or `complex`. The tool does not guess a frame.
-- With no UTR features, the tool labels the site `non-coding`. It does not claim a UTR.
+- UTR labels (DECIDED, user, 2026-11-11): use UTR features from the GFF when present. When absent,
+  derive UTRs from the file: within each mRNA, the exon bases outside the CDS span are UTR.
+  Bases on the 5' side of the start codon are 5' UTR. Bases on the 3' side of the stop codon are 3' UTR.
+  Label derived UTRs `UTR (derived)`, so a user can tell them from UTRs given in the GFF.
+- Limit, measured on Af293 (2026-11-11, `GCF_000002655.1` GFF3): of 9,823 mRNAs, 5,797 (59.0%) have a
+  derivable UTR (3,563 both, 1,641 only 5', 593 only 3'). 4,026 (41.0%) have exons that end at the CDS
+  ends, so no UTR can be derived. Median derived length: 268 bp (5') and 283 bp (3').
+  A mutation just outside the CDS of such a gene is labeled intergenic, even if it lies in an
+  unannotated UTR. Print this limit in the report.
+- Introns (DECIDED, user suggestion, 2026-11-11): use intron features from the GFF when present. When
+  absent, derive them as the gaps between consecutive exons of the same mRNA. Label derived introns
+  `intron (derived)`. Splice sites are the first 2 and last 2 bases of each intron.
+- Check on Af293 (2026-11-11): 21,586 derived intron instances (counted per mRNA, so introns shared by
+  alternative transcripts are counted more than once) in 8,144 multi-exon mRNAs. Length min 1 bp, median 60 bp,
+  max 17,227 bp. Ends: GT..AG 99.2%, GC..AG 0.6%, AT..AC 0.1%, other 0.1%. The 1 bp minimum is unexplained.
+- If a GFF has no exon features and no UTR features, the tool labels the site `non-coding`. It does not claim a UTR.
 - With no GFF at all, every effect label is `unannotated`. The tool still calls SNPs and
   indels and writes summary statistics. It cannot show gene context. It prints a warning
   at the start of the run.
@@ -159,8 +235,9 @@ A separate command: `qmutfind report`.
   - by feature (overlap with gene X in the GFF);
   - by computed property (for example "non-synonymous only").
 - The report also shows the statistics from section 9.
-- Locus views may use a static image first. A JBrowse view is a later option.
-  The original plan named JBrowse. No decision was made on it.
+- Version 1 draws locus views as self-contained SVG in an HTML page (gene models with derived UTRs and
+  introns, mutations colored by effect). It also writes the VCF, BED and GFF for JBrowse 2 or IGV.
+  Embedded JBrowse is a later option (decision 13 in section 12).
 
 ## 9. Statistics
 
@@ -187,7 +264,7 @@ Version 1:
     within a set window.
 12. Strand bias as a per-record VCF field. Not a hard filter at depth under about 20.
 13. Trinucleotide context (96 channels), shown only above a minimum mutation count.
-    The minimum is `UNMEASURED` and needs a decision.
+    DECIDED: the minimum is 100 mutations, adjustable (`UNMEASURED`, see open item 6).
 
 Later: per-gene counts, genic versus intergenic enrichment, variants in repeats
 (needs a repeat or mappability track, which the tool does not have).
@@ -246,6 +323,12 @@ CORS test (2026-11-11, one `HEAD` request with an `Origin` header):
      Illumina: wgsim, ART, DWGSIM, InSilicoSeq, Mason, NEAT (compared in Milhaven and Pfeifer,
      Heredity 2022, https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9905089/; InSilicoSeq has the
      widest range of platform error models). Long reads: Badread (Nanopore), PBSIM3 (PacBio and Nanopore).
+   - DECIDED (user, 2026-11-11): insert mutations with our own script (writes an exact truth VCF);
+     simulate Illumina reads with ART and Nanopore reads with Badread. PBSIM3 and PacBio are out of version 1.
+   - Availability checked 2026-11-11 (anaconda.org API): ART is in bioconda `linux-64`, latest 2016.06.05
+     (an old release). Badread is in bioconda `noarch`, latest 0.4.2, and not in conda-forge.
+   - Simulated reads are cleaner than real reads, so simulation overstates real accuracy. State this
+     in the results. The real-data agreement tests cover the gap.
    - For my caller and for `bcftools`, compute sensitivity and precision by class.
    - Use this test to set the default depth and allele-fraction thresholds, per read type.
 2. Real data, agreement only.
@@ -307,12 +390,14 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
 
 ## 12. Open items
 
-1. Run the `rammap` spike (section 4).
-2. DONE for accessions (section 10). Still open: download each GFF3 and check that it has CDS and UTR features.
-3. Choose the read simulator for the truth set (shortlist in section 11). Needs a user decision.
+1. DONE (2026-11-11): the `rammap` spike passed (section 4). Follow-up tests are items 14 to 17.
+2. DONE for accessions (section 10). Af293 GFF3 checked: no UTR features (item 18). Still open: check the A1163 and S288C GFF3 files.
+3. DECIDED (user, 2026-11-11): own mutation-insertion script, ART (Illumina), Badread (Nanopore). Section 11.
 4. DONE in part: long-read candidates listed (section 11). The Nanopore list was cut at 40 rows.
 5. Read the full text of the real-data papers. PRJNA417720 and PRJNA1094460 have partial mutation lists. PRJNA757188 and PRJNA1347423 were not resolved.
-6. Set the minimum mutation count for the trinucleotide statistic.
+6. DECIDED (user, 2026-11-11): the trinucleotide (96-channel) statistic is shown only at 100 or more
+   mutations. The value is adjustable and has no data behind it (`UNMEASURED`). Below the gate, the plain
+   12-type and 6-class counts are always shown. Revisit with the benchmark, for example by subsampling calls.
 7. Merged VCF layout: DECIDED (one record per sample per mutation). Large indels from long reads only: DECIDED.
 8. DECIDED: run PRJNA1094460 against both the CEA10 assembly and A1163. Still open: the A1163 versus CEA10 relationship (sources conflict).
 9. FungiDB: API-key requirement and CORS are still unverified. Test with a key, supplied by the user.
@@ -323,10 +408,43 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
     Pin: Rust toolchain and `wasm32-unknown-unknown` target, `wasm-pack` or `wasm-bindgen-cli`,
     `minimap2`, `bcftools`, `samtools`, and the chosen simulators. UNVERIFIED: which of these exist on
     conda-forge and bioconda for `linux-64`. Check each one when writing the file.
+    Checked 2026-11-11 (anaconda.org API): bioconda `linux-64` has `art`, `bcftools` (up to 1.25),
+    `samtools` (up to 1.25), `minimap2` (up to 2.31). Bioconda `noarch` has `badread` 0.4.2.
+    Conda-forge has `wasm-bindgen-cli` (0.2.114 and later, 0.2.114 matches the `rammap` lockfile),
+    `wasm-pack` (0.14.0 to 0.15.1) and `rust`. Not yet checked: the stable `rust` version string and the
+    `wasm32-unknown-unknown` standard-library package for conda.
 12. DECIDED (user, 2026-11-11): a pre-loaded genome bundle is one gzip FASTA, one gzip GFF3 and a manifest
     (strain, NCBI accession, assembly name, download date, file sizes, SHA-256). Browsers decompress gzip
     natively; the CLI also accepts `.zst`. Bundles are hosted as static files on the same origin as the app.
     A build script downloads from NCBI, checks the files and writes the bundle. A test checks checksums
     against the manifest. Bundles stay out of git; the script is in git. `UNMEASURED`: gzip size of each
     genome (my estimate for Af293 is about 9 MB, from a typical ratio of about 3.3).
-13. JBrowse integration: no decision yet.
+13. DECIDED (user, 2026-11-11): version 1 draws locus views as self-contained SVG in an HTML page, with a
+    gene-model track (including derived UTRs and introns) and a mutation track colored by effect. It also
+    writes the VCF, BED and GFF so a user can open results in JBrowse 2 or IGV. Embedded JBrowse comes
+    later ("we will try JBrowse later"). `UNVERIFIED`: JBrowse 2 embedding details; not tested.
+14. Test the `rammap` WASM build in a real browser (Chrome and Firefox): memory, speed, Web Worker use.
+15. DECIDED (user, 2026-11-11): version 1 maps each mate of a pair as an independent single-end read, in
+    both the CLI and the browser, so the two builds give the same VCF. Pairing is a later feature, to be
+    justified by the benchmark: compare single-end and paired calls on the simulated truth set and on the
+    EVOL20 data (`UNMEASURED` until run). `rammap` offers a library API that could add pairing later.
+16. DONE (2026-11-11): the `rammap` library API builds and runs for `wasm32-wasip1` with no
+    `wasm-bindgen` entry points of our own, and its output is byte-identical to native. Probe:
+    `spike/rammap/api_probe_main.rs`, runner `spike/rammap/run_wasi.cjs`, expected output
+    `spike/rammap/api_probe_expected.txt`. A synthetic 200 kb reference with injected changes:
+    150 bp read with 1 SNP gives `150M`, NM=1; 2 bp deletion gives `80M2D78M`; 3 bp insertion gives
+    `70M3I80M`; a 3 kb Nanopore-like read with 5 mismatches, 1 D and 1 I gives NM=7 on both strands;
+    a random read is unmapped. Notes: (a) `Aligner::from_seqs` takes in-memory sequences and `map_seq`
+    returns structured `Mapping` values (coordinates, strand, MAPQ, CIGAR ops), so the core need not
+    parse SAM. (b) `M` covers matches and mismatches, so the caller compares read and reference bases
+    (or requests MD). (c) `map_pair` exists in the library. Its doc comments say the paired path loses
+    per-mate detail (no `SA` tag, no `full_cigar`, no supplementary flag). Relevant to a later pairing
+    decision (item 15). (d) Not tested: the `wasm32-unknown-unknown` target with our own `wasm-bindgen`
+    wrapper (the `rammap` crate itself already builds there, see section 4).
+17. Test the multi-threaded WASM build (nightly Rust, `SharedArrayBuffer`). It needs special HTTP
+    headers on the host, so check hosting constraints first.
+18. DECIDED (user, 2026-11-11): derive UTRs from `exon` minus `CDS` when the GFF has no UTR features.
+    The Af293 RefSeq GFF3 has no UTR features (31,739 exon, 30,114 CDS, 10,085 gene, 9,823 mRNA).
+    See section 6 for the label, the measured coverage (59.0% of mRNAs) and the limit.
+19. Measure full-size runs in WASM (all 625k Nanopore reads, all Illumina reads of one run) to replace the
+    extrapolation in section 4.

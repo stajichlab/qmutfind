@@ -1,0 +1,33 @@
+[workspace]
+name = "qmutfind"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64"]
+
+[dependencies]
+# Rust toolchain and the WASM target. The std package version must equal the rust version.
+rust = ">=1.96,<2"
+rust-std-wasm32-unknown-unknown = ">=1.96,<2"
+# `wasm-bindgen` CLI must equal the `wasm-bindgen` library version in Cargo.lock
+# (rammap-core 1.2.0 at the pinned commit locks 0.2.114; checked 2026-11-11).
+wasm-bindgen-cli = "==0.2.114"
+# Runs the WASM modules in tests (same V8 engine as Chrome).
+nodejs = ">=22,<23"
+
+# Benchmark tools (see PLAN.md section 11).
+minimap2 = "*"
+bcftools = "*"
+samtools = "*"
+art = "*"
+badread = "*"
+
+# Helper scripts.
+python = ">=3.11"
+zstd = "*"
+
+[tasks]
+# Run the whole workspace test suite.
+test = "cargo test --workspace"
+# Build the WASM crate. The repository's own `.cargo/config.toml` does not apply to
+# this workspace, so the SIMD128 flag is set here. Cargo reads config from the current
+# directory, not from `--manifest-path`, so never rely on a config file in a dependency.
+build-wasm = { cmd = "cargo build --release --target wasm32-unknown-unknown -p qmutfind-wasm", env = { RUSTFLAGS = "-C target-feature=+simd128" } }

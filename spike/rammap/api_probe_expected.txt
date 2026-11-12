@@ -1,0 +1,7 @@
+sr	snp_fwd	chrA	49950	50100	0	+	150	mapq=60	primary=true	NM=1	AS=290	cigar=150M	md=-
+sr	snp_rev	chrA	49950	50100	0	-	150	mapq=60	primary=true	NM=1	AS=290	cigar=150M	md=-
+sr	del2	chrB	10000	10160	0	+	158	mapq=60	primary=true	NM=2	AS=300	cigar=80M2D78M	md=-
+sr	ins3	chrB	30000	30150	0	+	153	mapq=60	primary=true	NM=3	AS=282	cigar=70M3I80M	md=-
+ont	long_fwd	chrA	70000	73000	0	+	3000	mapq=60	primary=true	NM=7	AS=5956	cigar=1998M1D501M1I500M	md=-
+ont	long_rev	chrA	70000	73000	0	-	3000	mapq=60	primary=true	NM=7	AS=5956	cigar=1998M1D501M1I500M	md=-
+ont	junk	UNMAPPED

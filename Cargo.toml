@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["qmutfind-core", "qmutfind-cli", "qmutfind-wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-only"
+
+[workspace.dependencies]
+# Pinned to the commit tested in the 2026-11-11 spike (see PLAN.md section 4).
+# default-features = false: no rayon, so the core compiles for wasm32.
+rammap-core = { git = "https://github.com/jwanglab/rammap", rev = "3702b34b59b7d447d8dc23d200491d12ab5222fb", default-features = false }
