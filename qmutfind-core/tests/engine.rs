@@ -99,3 +99,22 @@ fn a_truncated_read_file_is_an_error_at_end_file() {
 
     assert!(engine.end_file().is_err());
 }
+
+
+#[test]
+fn set_min_mapq_above_the_largest_mapping_quality_removes_every_alignment() {
+    let refs = reference();
+    let alt = other_base(refs[0].1[50_000]);
+    let data = fastq(&refs, alt, 10, 10, "r");
+
+    let mut open = Engine::new(&fasta(&refs), ReadKind::Short, "s1").unwrap();
+    open.add_reads(&data).unwrap();
+    open.end_file().unwrap();
+    assert_eq!(records(&open.vcf().unwrap()).len(), 1);
+
+    let mut closed = Engine::new(&fasta(&refs), ReadKind::Short, "s1").unwrap();
+    closed.set_min_mapq(61);
+    closed.add_reads(&data).unwrap();
+    closed.end_file().unwrap();
+    assert!(records(&closed.vcf().unwrap()).is_empty());
+}

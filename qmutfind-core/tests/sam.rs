@@ -69,3 +69,42 @@ fn ten_sam_records_that_all_carry_a_snp_give_one_snp_call() {
     assert_eq!((calls[0].pos, calls[0].depth, calls[0].alt_count), (50_001, 10, 10));
     assert_eq!(calls[0].alt, (alt as char).to_string());
 }
+
+
+fn line_with_mapq(mapq: u32, pos1: usize, seq: &str) -> String {
+    format!("r1\t0\tchrA\t{pos1}\t{mapq}\t{}M\t*\t0\t0\t{seq}\t{}", seq.len(), "I".repeat(seq.len()))
+}
+
+#[test]
+fn the_record_keeps_the_mapping_quality() {
+    let rec = parse_sam_line(&line_with_mapq(37, 100, "ACGTAC")).unwrap().unwrap();
+
+    assert_eq!(rec.mapq, 37);
+}
+
+#[test]
+fn the_caller_ignores_sam_records_below_the_minimum_mapping_quality() {
+    let refs = reference();
+    let alt = other_base(refs[0].1[50_000]);
+    let build = |min_mapq: u8| {
+        let mut caller = Caller::new(
+            refs.clone(),
+            CallerConfig { min_depth: 5, min_snp_fraction: 0.5, min_indel_fraction: 0.5, large_indel_min: 50 },
+        );
+        caller.set_min_mapq(min_mapq);
+        // Ten records that all carry the SNP: six with mapping quality 60, four with mapping quality 3.
+        for i in 0..10 {
+            let start = 49_900 + i * 10;
+            let mut seq = refs[0].1[start..start + 150].to_vec();
+            seq[50_000 - start] = alt;
+            let mapq = if i < 6 { 60 } else { 3 };
+            let sam = line_with_mapq(mapq, start + 1, &String::from_utf8(seq).unwrap());
+            caller.add_sam(&parse_sam_line(&sam).unwrap().unwrap());
+        }
+        caller.calls()
+    };
+
+    assert_eq!(build(0)[0].depth, 10);
+    assert_eq!(build(20)[0].depth, 6);
+    assert!(build(61).is_empty());
+}

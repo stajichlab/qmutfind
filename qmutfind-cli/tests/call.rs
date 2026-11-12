@@ -367,3 +367,39 @@ fn a_bad_threshold_value_is_rejected_with_the_flag_name() {
     assert!(!depth.status.success());
     assert!(String::from_utf8_lossy(&depth.stderr).contains("--min-depth must be a whole number"));
 }
+
+
+#[test]
+fn min_mapq_above_the_largest_mapping_quality_removes_every_alignment_and_a_bad_value_is_rejected() {
+    let dir = setup_with_alt_fraction(10);
+
+    assert!(run_with(dir.path(), &[]).status.success());
+    assert_eq!(called_records(dir.path()), 1);
+
+    assert!(run_with(dir.path(), &["--min-mapq", "61"]).status.success());
+    assert_eq!(called_records(dir.path()), 0);
+
+    let bad = run_with(dir.path(), &["--min-mapq", "300"]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("--min-mapq must be a whole number from 0 to 255"));
+}
+
+#[test]
+fn min_mapq_also_filters_the_bwa_mem2_path() {
+    let dir = setup_with_alt_fraction(10);
+
+    assert!(run_with(dir.path(), &["--aligner", "bwa-mem2", "--min-mapq", "61"]).status.success());
+
+    assert_eq!(called_records(dir.path()), 0);
+}
+
+#[test]
+fn min_mapq_is_passed_to_freebayes() {
+    let dir = setup_with_alt_fraction(10);
+
+    assert!(run_with(dir.path(), &["--aligner", "bwa-mem2", "--caller", "freebayes"]).status.success());
+    assert_eq!(called_records(dir.path()), 1);
+
+    assert!(run_with(dir.path(), &["--aligner", "bwa-mem2", "--caller", "freebayes", "--min-mapq", "61"]).status.success());
+    assert_eq!(called_records(dir.path()), 0);
+}

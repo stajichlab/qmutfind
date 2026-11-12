@@ -42,6 +42,11 @@ impl Engine {
         self.caller.set_config(self.config);
     }
 
+    /// Ignore alignments with a mapping quality below `min_mapq`. Call before adding reads.
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.caller.set_min_mapq(min_mapq);
+    }
+
     /// Add a chunk of FASTQ bytes. The chunk can split a record anywhere.
     pub fn add_reads(&mut self, chunk: &[u8]) -> Result<(), String> {
         let records = self.chunker.push(chunk).map_err(|e| format!("reads: {e}"))?;

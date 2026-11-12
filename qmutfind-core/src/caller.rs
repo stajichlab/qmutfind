@@ -45,6 +45,7 @@ pub struct Caller {
     /// length, not by exact sequence, because long reads carry errors inside the inserted bases.
     insertions: HashMap<(usize, usize, usize), InsertionEvidence>,
     config: CallerConfig,
+    min_mapq: u8,
 }
 
 fn base_index(b: u8) -> Option<usize> {
@@ -77,7 +78,12 @@ impl CallerConfig {
 impl Caller {
     pub fn new(reference: Vec<(String, Vec<u8>)>, config: CallerConfig) -> Self {
         let counts = reference.iter().map(|(_, s)| vec![[0u16; 4]; s.len()]).collect();
-        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config }
+        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config, min_mapq: 0 }
+    }
+
+    /// Ignore alignments with a mapping quality below `min_mapq`. The default is 0, which keeps all.
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
     }
 
     /// Replace the thresholds. Call before `calls`.
@@ -87,12 +93,18 @@ impl Caller {
 
     /// Add one alignment. `read` is the sequence that was given to the aligner.
     pub fn add(&mut self, alignment: &Alignment, read: &[u8]) {
+        if alignment.mapq() < self.min_mapq {
+            return;
+        }
         let aligned = alignment.aligned_read(read);
         self.add_parts(&alignment.contig, alignment.ref_start, alignment.cigar_ops(), &aligned);
     }
 
     /// Add one record read from a SAM file.
     pub fn add_sam(&mut self, record: &crate::SamRecord) {
+        if record.mapq < self.min_mapq {
+            return;
+        }
         self.add_parts(&record.contig, record.ref_start, &record.cigar_ops, &record.seq);
     }
 

@@ -84,6 +84,10 @@ fn call(args: &[String]) -> Result<(), String> {
     let reference = read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?;
     let contigs: Vec<(String, usize)> = reference.iter().map(|(n, s)| (n.clone(), s.len())).collect();
 
+    let min_mapq: u8 = match flags.get("min-mapq") {
+        Some(v) => v.parse().map_err(|_| format!("--min-mapq must be a whole number from 0 to 255, not {v}"))?,
+        None => 0,
+    };
     let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {
         min_depth: match flags.get("min-depth") {
@@ -99,6 +103,7 @@ fn call(args: &[String]) -> Result<(), String> {
         read_paths.push(second.clone());
     }
     let mut caller = Caller::new(reference.clone(), config);
+    caller.set_min_mapq(min_mapq);
     let mut freebayes_calls = None;
     let mut engine_vcf: Option<String> = None;
     if aligner_name == "bwa-mem2" {
@@ -117,7 +122,7 @@ fn call(args: &[String]) -> Result<(), String> {
         }
         if caller_name == "freebayes" {
             let bam = external::map_to_sorted_bam(&work, &plain_reference, &reads, sample, threads)?;
-            let vcf = external::run_freebayes(&work, &plain_reference, &bam)?;
+            let vcf = external::run_freebayes(&work, &plain_reference, &bam, min_mapq)?;
             let file = File::open(&vcf).map_err(|e| format!("cannot read {}: {e}", vcf.display()))?;
             let calls = calls_from_freebayes_vcf(BufReader::new(file), &config)
                 .map_err(|e| format!("freebayes output: {e}"))?;
@@ -135,6 +140,7 @@ fn call(args: &[String]) -> Result<(), String> {
             .map_err(|e| format!("{reference_path}: {e}"))?;
         let mut engine = Engine::new(&fasta, kind, sample)?;
         engine.set_thresholds(config.min_depth, config.min_snp_fraction, config.min_indel_fraction);
+        engine.set_min_mapq(min_mapq);
         // Version 1 maps every read, including a second mate file, as an independent single-end read.
         let mut buffer = vec![0u8; 4 << 20];
         for path in &read_paths {

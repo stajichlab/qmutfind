@@ -32,6 +32,11 @@ impl Session {
         self.engine.set_thresholds(min_depth, min_snp_fraction, min_indel_fraction);
     }
 
+    /// Ignore alignments with a mapping quality below `min_mapq`. Call before `add_reads`.
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.engine.set_min_mapq(min_mapq);
+    }
+
     /// Add a chunk of FASTQ bytes. A chunk can split a record anywhere.
     pub fn add_reads(&mut self, chunk: &[u8]) -> Result<(), JsError> {
         self.engine.add_reads(chunk).map_err(|e| JsError::new(&e))

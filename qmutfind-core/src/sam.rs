@@ -11,6 +11,8 @@ pub struct SamRecord {
     pub ref_start: usize,
     pub cigar_ops: Vec<CigarOp>,
     pub seq: Vec<u8>,
+    /// Mapping quality. 255 means not available.
+    pub mapq: u8,
 }
 
 /// Parse one SAM line. Returns `Ok(None)` for header lines and for unmapped (0x4) and
@@ -28,6 +30,7 @@ pub fn parse_sam_line(line: &str) -> Result<Option<SamRecord>, String> {
     if flag & 0x4 != 0 || flag & 0x100 != 0 {
         return Ok(None);
     }
+    let mapq: u8 = f[4].parse::<u32>().map_err(|_| format!("bad SAM mapping quality '{}'", f[4]))?.min(255) as u8;
     let pos1: usize = f[3].parse().map_err(|_| format!("bad SAM position '{}'", f[3]))?;
     if pos1 == 0 {
         return Err(format!("mapped SAM record has position 0: {line}"));
@@ -79,5 +82,5 @@ pub fn parse_sam_line(line: &str) -> Result<Option<SamRecord>, String> {
     if consumed != seq.len() {
         return Err(format!("CIGAR '{}' does not match the sequence length: {line}", f[5]));
     }
-    Ok(Some(SamRecord { contig: f[2].to_string(), ref_start: pos1 - 1, cigar_ops: ops, seq }))
+    Ok(Some(SamRecord { contig: f[2].to_string(), ref_start: pos1 - 1, cigar_ops: ops, seq, mapq }))
 }

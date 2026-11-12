@@ -185,13 +185,21 @@ pub fn map_to_sorted_bam(
 }
 
 /// Run FreeBayes for a haploid sample. Returns the raw VCF.
-pub fn run_freebayes(work: &Workdir, reference: &Path, bam: &Path) -> Result<PathBuf, String> {
+pub fn run_freebayes(work: &Workdir, reference: &Path, bam: &Path, min_mapq: u8) -> Result<PathBuf, String> {
     run_tool(work, "samtools", &["faidx", &reference.to_string_lossy()])?;
     let vcf = work.path().join("freebayes.vcf");
     run_tool_to_file(
         work,
         "freebayes",
-        &["-f", &reference.to_string_lossy(), "--ploidy", "1", &bam.to_string_lossy()],
+        &[
+            "-f",
+            &reference.to_string_lossy(),
+            "--ploidy",
+            "1",
+            "--min-mapping-quality",
+            &min_mapq.max(1).to_string(),
+            &bam.to_string_lossy(),
+        ],
         &vcf,
     )?;
     Ok(vcf)

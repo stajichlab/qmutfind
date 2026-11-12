@@ -50,11 +50,17 @@ pub struct Alignment {
     cigar_ops: Vec<CigarOp>,
     query_start: usize,
     query_end: usize,
+    mapq: u8,
 }
 
 impl Alignment {
     pub fn cigar_string(&self) -> &str {
         &self.cigar
+    }
+
+    /// Mapping quality, 0 to 60 for rammap.
+    pub fn mapq(&self) -> u8 {
+        self.mapq
     }
 
     pub fn cigar_ops(&self) -> &[CigarOp] {
@@ -132,6 +138,7 @@ impl Aligner for RammapAligner {
                     .collect(),
                 query_start: m.query_start,
                 query_end: m.query_end,
+                mapq: m.mapq.clamp(0, 255) as u8,
             })
             .collect()
     }

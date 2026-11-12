@@ -39,10 +39,11 @@ function reads(altCount, total) {
   return fq;
 }
 
-function runWasm(fastq, chunkSize, thresholds) {
+function runWasm(fastq, chunkSize, thresholds, minMapq) {
   const enc = new TextEncoder();
   const session = new wasm.Session(enc.encode(FASTA), 'short', 's1');
   if (thresholds) session.set_thresholds(...thresholds);
+  if (minMapq !== undefined) session.set_min_mapq(minMapq);
   const bytes = enc.encode(fastq);
   for (let i = 0; i < bytes.length; i += chunkSize) session.add_reads(bytes.subarray(i, i + chunkSize));
   session.end_file();
@@ -91,4 +92,10 @@ test('set_thresholds matches the CLI flags', () => {
 
 test('an unknown read kind is an error that names the allowed values', () => {
   assert.throws(() => new wasm.Session(new TextEncoder().encode(FASTA), 'medium', 's1'), /short or long/);
+});
+
+test('set_min_mapq matches the --min-mapq flag', () => {
+  const fastq = reads(10, 10);
+  assert.equal(runWasm(fastq, 4096, undefined, 61), runCli(fastq, ['--min-mapq', '61']));
+  assert.notEqual(runWasm(fastq, 4096, undefined, 61), runWasm(fastq, 4096));
 });
