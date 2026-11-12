@@ -78,8 +78,9 @@ const vcf = session.vcf();
 Node: `node scripts/wasm-run.mjs --reference ref.fa.gz --reads r1.fq.gz --reads r2.fq.gz --sample S --kind short --out S.vcf`
 prints the read count, the times and the memory in use.
 
-Browser: [examples/browser](examples/browser) is a page and a worker. It has been checked only for syntax
-and file references. It has not been run in a real browser.
+Browser: [examples/browser](examples/browser) is a page and a worker. `pixi run test-browser` runs it in
+headless Firefox on a small synthetic data set and compares the VCF, statistics and report with the native CLI.
+Chrome and Safari are not tested. Large real data sets have not been run in a browser.
 
 ## Tests
 
@@ -88,6 +89,7 @@ pixi run test          # Rust: the core and the CLI
 pixi run test-bench    # Python: the benchmark scripts
 pixi run test-wasm     # builds the WASM package, then checks it against the native CLI
 pixi run test-emsdk    # the Emscripten install
+pixi run test-browser  # the example page in headless Firefox (Selenium), compared with the native CLI
 ```
 
 `test-wasm` checks that the WASM output is byte-identical to the native output for `call`, `annotate`,

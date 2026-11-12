@@ -34,8 +34,17 @@ pytest = "*"
 [feature.validate.dependencies]
 snpeff = "*"
 
+# A separate environment for the browser test: Firefox, geckodriver and Selenium only.
+[feature.browser.dependencies]
+python = ">=3.11"
+pytest = "*"
+selenium = "*"
+firefox = "*"
+geckodriver = "*"
+
 [environments]
 validate = { features = ["validate"], no-default-feature = true }
+browser = { features = ["browser"], no-default-feature = true }
 
 [tasks]
 # Run the whole workspace test suite.
@@ -57,3 +66,5 @@ build-wasm-node = "bash scripts/build-wasm-pkg.sh nodejs pkg-node"
 build-wasm-web = "bash scripts/build-wasm-pkg.sh web pkg-web"
 # Check that the WASM build gives the same VCF as the native CLI.
 test-wasm = "bash scripts/test-wasm.sh"
+# Run the example page in headless Firefox and compare it with the native CLI (see tests/browser).
+test-browser = "bash scripts/test-browser.sh"

@@ -21,8 +21,10 @@ CI passed on GitHub on 2026-11-12 for the commit before the effect annotation; l
 - WebAssembly: `Session` (reference bytes, read chunks, VCF out) and the functions `annotate`, `stats` and
   `report`, built with `pixi run build-wasm-node` or `build-wasm-web`; `pixi run test-wasm` checks that the WASM
   output equals the CLI output for all four. Emscripten 3.1.64 is installed by `pixi run setup-emsdk`.
-- `README.md` documents the commands. `examples/browser` is a page and a worker, checked for syntax and file
-  references only; it has never run in a real browser.
+- `README.md` documents the commands. `examples/browser` is a page and a worker. `pixi run test-browser` runs it in headless
+  Firefox (Selenium, SpiderMonkey engine) on a small synthetic data set: the VCF, statistics and report equal the native CLI
+  output byte for byte (plain and gzip input), and a truncated reads file shows an error (3 tests pass; a mutation check that
+  hard-coded the sample name made 2 fail, 2026-11-12). Not measured: Chrome, Safari, large real data in a browser.
 Not built: the statistics that need depth, the reference or per-strand counts (callable-genome rate,
 trinucleotide context, strand bias, expected N:S), the "possible large indel, unresolved" report for short
 reads, base-quality filtering, the genomics-wasm BWA-MEM2 and FreeBayes builds, a real-browser test, a
