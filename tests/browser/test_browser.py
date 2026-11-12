@@ -883,6 +883,22 @@ def test_an_unsafe_or_malformed_address_is_refused_before_any_request(driver, se
     assert fragment in driver.find_element(By.ID, "web-status").text
 
 
+@pytest.mark.parametrize("given,expected", [
+    ("https://www.dropbox.com/scl/fi/abc/r2.fastq.gz?rlkey=K&st=S&dl=0", "https://dl.dropboxusercontent.com/scl/fi/abc/r2.fastq.gz?rlkey=K&st=S"),
+    ("https://dropbox.com/scl/fi/abc/r2.fastq.gz?rlkey=K&dl=1", "https://dl.dropboxusercontent.com/scl/fi/abc/r2.fastq.gz?rlkey=K"),
+    ("https://www.dropbox.com/s/abc/r2.fastq.gz?dl=0", "https://dl.dropboxusercontent.com/s/abc/r2.fastq.gz"),
+    ("https://dl.dropboxusercontent.com/scl/fi/abc/r2.fastq.gz?rlkey=K", "https://dl.dropboxusercontent.com/scl/fi/abc/r2.fastq.gz?rlkey=K"),
+    ("https://ftp.ncbi.nlm.nih.gov/x/y.fna.gz", "https://ftp.ncbi.nlm.nih.gov/x/y.fna.gz"),
+    ("https://www.dropbox.com.example.org/s/abc/r2.fq.gz?dl=0", "https://www.dropbox.com.example.org/s/abc/r2.fq.gz?dl=0"),  # not Dropbox
+    ("https://www.dropbox.com/home/folder", "https://www.dropbox.com/home/folder"),  # not a shared file
+    ("not a url", "not a url"),
+])
+def test_a_dropbox_share_link_is_changed_to_the_direct_address_that_allows_browser_downloads(driver, server, given, expected):
+    driver.get(f"{server}/{SITE}")
+
+    assert driver.execute_script("return window.qmutfindDirectAddress(arguments[0]);", given) == expected
+
+
 def test_a_file_that_unpacks_to_more_than_the_limit_is_refused_instead_of_filling_the_memory(driver, server, inputs):
     big = "".join(f">c{i}\n{'ACGT' * 25_000}\n" for i in range(20))  # about 2 MB of bases
     (inputs / "big.fa").write_text(big)

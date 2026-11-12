@@ -949,3 +949,12 @@ thousands of calls was not tried in the browser; Chrome and Safari were not trie
    `--caller bcftools` as an independent cross-check.
 6. FungiDB files (contig names `Chr1_A_fumigatus_Af293`, with a mitochondrial contig): allowed as an input set. The
    source and release must be written next to every result (FungiDB release 71, fetched 2026-11-12 with `qmutfind fetch`).
+
+### Redirects and Dropbox (2026-11-12)
+A browser applies the CORS check to every hop of a redirect, and a page cannot read or change a redirect response. So
+the page cannot follow a redirect whose first hop has no `access-control-allow-origin` header. A Dropbox share link
+(`www.dropbox.com/s/...` or `/scl/fi/...`) is such a case: its 302 has no header (measured with `curl`). The same path on
+`dl.dropboxusercontent.com` answers 206 with `access-control-allow-origin: *` and a working preflight (Range allowed).
+The page therefore rewrites those links (`directAddress` in `site/app.js`; the `dl` and `raw` options are dropped). Other
+hosts are not rewritten, and there is no general fix without a proxy, which was rejected. Not tested: a real browser
+download of the 596 MB Dropbox file (headers only), and whether the `st=` part of a link expires.

@@ -343,6 +343,23 @@ function checkUrl(text, label) {
   return url;
 }
 
+/**
+ * A Dropbox share link (www.dropbox.com/s/... or /scl/fi/...) answers with a redirect that has no CORS header, so a browser
+ * page cannot follow it. The same path on dl.dropboxusercontent.com has the header (measured 2026-11-12), so the host is
+ * changed and the `dl` and `raw` options are dropped. Any other address is returned as it is.
+ */
+function directAddress(text) {
+  let url;
+  try { url = new URL(text); } catch (error) { return text; }
+  const shared = /^\/(s|scl\/fi)\//.test(url.pathname);
+  if (url.protocol !== 'https:' || !['www.dropbox.com', 'dropbox.com'].includes(url.hostname) || !shared) return text;
+  url.hostname = 'dl.dropboxusercontent.com';
+  url.searchParams.delete('dl');
+  url.searchParams.delete('raw');
+  return url.href;
+}
+window.qmutfindDirectAddress = directAddress;
+
 async function loadExample(manifest, base, chosen) {
   if (loading || busy) return;
   loading = true;
@@ -662,6 +679,10 @@ $('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
     ['reads', 'the reads', $('url-reads').value.split('\n').map((x) => x.trim()).filter(Boolean)],
   ];
   if (wanted.every(([, , list]) => !list.length)) throw new Error('Type at least one https address.');
+  let changed = false;
+  for (const entry of wanted) {
+    entry[2] = entry[2].map((u) => { const d = directAddress(u); changed ||= d !== u; return d; });
+  }
   const urls = wanted.flatMap(([, label, list]) => list.map((u) => [label, checkUrl(u, label)])); // all checked before any download
   const got = { reference: null, gff: null, reads: [] };
   for (const [slot, label, list] of wanted) {
@@ -678,7 +699,8 @@ $('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
   if (got.gff) example.gff = got.gff;
   if (got.reads.length) { example.reads = got.reads; example.expectedReads = null; }
   describeSources();
-  show('web-status', `Loaded: ${wanted.filter(([, , l]) => l.length).map(([, label]) => label).join(', ')}.`);
+  show('web-status', `Loaded: ${wanted.filter(([, , l]) => l.length).map(([, label]) => label).join(', ')}.` +
+    (changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''));
 }));
 
 describeSources();
