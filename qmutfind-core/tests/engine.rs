@@ -134,3 +134,15 @@ fn the_default_minimum_mapping_quality_is_20_for_short_reads_and_0_for_long_read
     short.set_min_mapq(5);
     assert_eq!(short.min_mapq(), 5);
 }
+
+#[test]
+fn the_engine_starts_with_the_default_minimum_alt_reads_for_indels_and_it_can_be_changed() {
+    let refs = reference();
+
+    let mut long = Engine::new(&fasta(&refs), ReadKind::Long, "s1").unwrap();
+    let short = Engine::new(&fasta(&refs), ReadKind::Short, "s1").unwrap();
+
+    assert_eq!((long.min_indel_alt_reads(), short.min_indel_alt_reads()), (6, 0));
+    long.set_min_indel_alt_reads(3);
+    assert_eq!(long.min_indel_alt_reads(), 3);
+}

@@ -39,11 +39,12 @@ function reads(altCount, total) {
   return fq;
 }
 
-function runWasm(fastq, chunkSize, thresholds, minMapq) {
+function runWasm(fastq, chunkSize, thresholds, minMapq, minIndelAltReads) {
   const enc = new TextEncoder();
   const session = new wasm.Session(enc.encode(FASTA), 'short', 's1');
   if (thresholds) session.set_thresholds(...thresholds);
   if (minMapq !== undefined) session.set_min_mapq(minMapq);
+  if (minIndelAltReads !== undefined) session.set_min_indel_alt_reads(minIndelAltReads);
   const bytes = enc.encode(fastq);
   for (let i = 0; i < bytes.length; i += chunkSize) session.add_reads(bytes.subarray(i, i + chunkSize));
   session.end_file();
@@ -98,4 +99,23 @@ test('set_min_mapq matches the --min-mapq flag', () => {
   const fastq = reads(10, 10);
   assert.equal(runWasm(fastq, 4096, undefined, 61), runCli(fastq, ['--min-mapq', '61']));
   assert.notEqual(runWasm(fastq, 4096, undefined, 61), runWasm(fastq, 4096));
+});
+
+function deletionReads(total) {
+  let fq = '';
+  for (let i = 0; i < total; i++) {
+    const start = 49900 + i * 10;
+    const seq = chrA.slice(start, start + 152).split('');
+    const at = 50001 - start;
+    seq.splice(at, 2);
+    fq += `@d${i}\n${seq.join('')}\n+\n${'I'.repeat(150)}\n`;
+  }
+  return fq;
+}
+
+test('set_min_indel_alt_reads matches the --min-indel-alt-reads flag', () => {
+  const fastq = deletionReads(10);
+  assert.equal(runWasm(fastq, 4096, undefined, undefined, 10), runCli(fastq, ['--min-indel-alt-reads', '10']));
+  assert.equal(runWasm(fastq, 4096, undefined, undefined, 11), runCli(fastq, ['--min-indel-alt-reads', '11']));
+  assert.notEqual(runWasm(fastq, 4096, undefined, undefined, 10), runWasm(fastq, 4096, undefined, undefined, 11));
 });

@@ -341,3 +341,36 @@ fn the_defaults_depend_on_the_read_kind_and_are_stricter_for_snps_than_for_indel
     assert_eq!((short.min_depth, short.min_snp_fraction, short.min_indel_fraction, short.large_indel_min), (5, 0.8, 0.5, 50));
     assert_eq!((long.min_depth, long.min_snp_fraction, long.min_indel_fraction, long.large_indel_min), (5, 0.7, 0.5, 50));
 }
+
+#[test]
+fn the_minimum_alt_reads_for_indels_applies_to_indels_but_not_to_snps() {
+    let refs = reference();
+    let ref_base = refs[0].1[50_000];
+    let alt = other_base(ref_base);
+    // 7 of 10 reads carry the SNP and 7 of 10 carry the deletion: seven supporting reads each.
+    let mut snp_reads = reads_with_alt_at_50000(&refs, alt, 7);
+    snp_reads.extend(reads_with_alt_at_50000(&refs, ref_base, 3));
+    let mut del_reads = reads_with_two_bp_deletion(&refs, 7);
+    del_reads.extend(reads_with_alt_at_50000(&refs, ref_base, 3));
+    let run = |reads: &[Vec<u8>], min_alt_reads: u32| {
+        let aligner = RammapAligner::new(refs.clone(), ReadKind::Short);
+        let mut caller = Caller::new(refs.clone(), config_with(0.5, 0.5));
+        caller.set_min_indel_alt_reads(min_alt_reads);
+        for (i, read) in reads.iter().enumerate() {
+            for a in aligner.align(&format!("r{i}"), read) {
+                caller.add(&a, read);
+            }
+        }
+        caller.calls().len()
+    };
+
+    assert_eq!(run(&del_reads, 7), 1); // seven reads is enough
+    assert_eq!(run(&del_reads, 8), 0); // eight is not
+    assert_eq!(run(&snp_reads, 8), 1); // the SNP is not an indel, so the setting does not apply
+}
+
+#[test]
+fn the_default_minimum_alt_reads_for_indels_is_6_for_long_reads_and_0_for_short_reads() {
+    assert_eq!(CallerConfig::default_min_indel_alt_reads(ReadKind::Long), 6);
+    assert_eq!(CallerConfig::default_min_indel_alt_reads(ReadKind::Short), 0);
+}

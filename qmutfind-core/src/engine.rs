@@ -27,6 +27,7 @@ impl Engine {
         let config = CallerConfig::defaults_for(kind);
         let mut caller = Caller::new(reference.clone(), config);
         caller.set_min_mapq(CallerConfig::default_min_mapq(kind));
+        caller.set_min_indel_alt_reads(CallerConfig::default_min_indel_alt_reads(kind));
         Ok(Engine {
             aligner: RammapAligner::new(reference, kind),
             caller,
@@ -52,6 +53,16 @@ impl Engine {
     /// The minimum mapping quality in use.
     pub fn min_mapq(&self) -> u8 {
         self.caller.min_mapq()
+    }
+
+    /// Call an indel only when at least this many reads support it. Call before adding reads.
+    pub fn set_min_indel_alt_reads(&mut self, min_alt_reads: u32) {
+        self.caller.set_min_indel_alt_reads(min_alt_reads);
+    }
+
+    /// The minimum number of reads for an indel in use.
+    pub fn min_indel_alt_reads(&self) -> u32 {
+        self.caller.min_indel_alt_reads()
     }
 
     /// Add a chunk of FASTQ bytes. The chunk can split a record anywhere.

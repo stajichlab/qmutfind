@@ -403,3 +403,56 @@ fn min_mapq_is_passed_to_freebayes() {
     assert!(run_with(dir.path(), &["--aligner", "bwa-mem2", "--caller", "freebayes", "--min-mapq", "61"]).status.success());
     assert_eq!(called_records(dir.path()), 0);
 }
+
+/// Ten reads of 150 bases that all carry a 2 bp deletion at 0-based positions 30_001 and 30_002.
+fn write_deletion_reads(dir: &Path, seq: &[u8]) {
+    let mut fastq = String::new();
+    for i in 0..10 {
+        let start = 29_900 + i * 10;
+        let mut read = seq[start..start + 152].to_vec();
+        let at = 30_001 - start;
+        read.drain(at..at + 2);
+        fastq.push_str(&format!("@d{i}\n{}\n+\n{}\n", String::from_utf8_lossy(&read), "I".repeat(150)));
+    }
+    fs::write(dir.join("reads.fq"), fastq).unwrap();
+}
+
+fn setup_with_deletion_reads() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_deletion_reads(dir.path(), &seq);
+    dir
+}
+
+#[test]
+fn min_indel_alt_reads_removes_an_indel_with_too_few_reads_on_every_backend() {
+    let dir = setup_with_deletion_reads();
+    let backends: [&[&str]; 3] = [
+        &[],
+        &["--aligner", "bwa-mem2"],
+        &["--aligner", "bwa-mem2", "--caller", "freebayes"],
+    ];
+
+    for backend in backends {
+        let mut with_floor_10: Vec<&str> = backend.to_vec();
+        with_floor_10.extend(["--min-indel-alt-reads", "10"]);
+        assert!(run_with(dir.path(), &with_floor_10).status.success(), "{backend:?}");
+        assert_eq!(called_records(dir.path()), 1, "ten reads pass a floor of ten: {backend:?}");
+
+        let mut with_floor_11: Vec<&str> = backend.to_vec();
+        with_floor_11.extend(["--min-indel-alt-reads", "11"]);
+        assert!(run_with(dir.path(), &with_floor_11).status.success(), "{backend:?}");
+        assert_eq!(called_records(dir.path()), 0, "ten reads fail a floor of eleven: {backend:?}");
+    }
+}
+
+#[test]
+fn a_bad_min_indel_alt_reads_value_is_rejected_with_the_flag_name() {
+    let dir = setup_with_deletion_reads();
+
+    let out = run_with(dir.path(), &["--min-indel-alt-reads", "-2"]);
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--min-indel-alt-reads must be a whole number"));
+}

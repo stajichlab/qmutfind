@@ -46,6 +46,7 @@ pub struct Caller {
     insertions: HashMap<(usize, usize, usize), InsertionEvidence>,
     config: CallerConfig,
     min_mapq: u8,
+    min_indel_alt_reads: u32,
 }
 
 fn base_index(b: u8) -> Option<usize> {
@@ -59,6 +60,17 @@ fn base_index(b: u8) -> Option<usize> {
 }
 
 impl CallerConfig {
+    /// Default minimum number of reads for an indel. For Nanopore reads, 1 bp deletions in homopolymers
+    /// pass the fraction threshold at low depth. A floor of 6 reads cut the false small indels from 42 to 16
+    /// (seed 1, 27.7x) and from 234 to 72 (seed 2, 15.8x) and cost 0 and 6 true indels (PLAN.md section 11).
+    /// Short reads stay at 0: a floor of 6 would remove every call at 7x coverage.
+    pub fn default_min_indel_alt_reads(kind: crate::ReadKind) -> u32 {
+        match kind {
+            crate::ReadKind::Short => 0,
+            crate::ReadKind::Long => 6,
+        }
+    }
+
     /// Default minimum mapping quality by read kind. For short reads, 20 cut the EVOL20-only calls from
     /// 61 to 9 and kept both candidate variants, at no cost on the simulated reads (PLAN.md section 11).
     /// Long reads stay at 0 because nothing was measured for them.
@@ -88,7 +100,7 @@ impl CallerConfig {
 impl Caller {
     pub fn new(reference: Vec<(String, Vec<u8>)>, config: CallerConfig) -> Self {
         let counts = reference.iter().map(|(_, s)| vec![[0u16; 4]; s.len()]).collect();
-        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config, min_mapq: 0 }
+        Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config, min_mapq: 0, min_indel_alt_reads: 0 }
     }
 
     /// Ignore alignments with a mapping quality below `min_mapq`. The default is 0, which keeps all.
@@ -99,6 +111,16 @@ impl Caller {
     /// The minimum mapping quality in use.
     pub fn min_mapq(&self) -> u8 {
         self.min_mapq
+    }
+
+    /// Call an indel only when at least this many reads support it. The default is 0, which keeps all.
+    pub fn set_min_indel_alt_reads(&mut self, min_alt_reads: u32) {
+        self.min_indel_alt_reads = min_alt_reads;
+    }
+
+    /// The minimum number of reads for an indel in use.
+    pub fn min_indel_alt_reads(&self) -> u32 {
+        self.min_indel_alt_reads
     }
 
     /// Replace the thresholds. Call before `calls`.
@@ -205,6 +227,7 @@ impl Caller {
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
                 && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
+                && alt_count >= self.min_indel_alt_reads
             {
                 out.push((ci, Call {
                     contig: self.reference[ci].0.clone(),
@@ -231,6 +254,7 @@ impl Caller {
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
             if depth >= self.config.min_depth
                 && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
+                && alt_count >= self.min_indel_alt_reads
             {
                 let mut alt = vec![seq[anchor]];
                 alt.extend(ev.bases.iter().map(|c| {
@@ -257,6 +281,7 @@ impl Caller {
                 let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
                 if depth >= self.config.min_depth
                     && support as f64 / depth as f64 >= self.config.min_indel_fraction
+                    && support >= self.min_indel_alt_reads
                 {
                     out.push((ci, Call {
                         contig: self.reference[ci].0.clone(),

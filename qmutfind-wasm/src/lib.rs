@@ -37,6 +37,11 @@ impl Session {
         self.engine.set_min_mapq(min_mapq);
     }
 
+    /// Call an indel only when at least this many reads support it. Call before `add_reads`.
+    pub fn set_min_indel_alt_reads(&mut self, min_alt_reads: u32) {
+        self.engine.set_min_indel_alt_reads(min_alt_reads);
+    }
+
     /// Add a chunk of FASTQ bytes. A chunk can split a record anywhere.
     pub fn add_reads(&mut self, chunk: &[u8]) -> Result<(), JsError> {
         self.engine.add_reads(chunk).map_err(|e| JsError::new(&e))

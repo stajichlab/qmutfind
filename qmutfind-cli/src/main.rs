@@ -88,6 +88,10 @@ fn call(args: &[String]) -> Result<(), String> {
         Some(v) => v.parse().map_err(|_| format!("--min-mapq must be a whole number from 0 to 255, not {v}"))?,
         None => CallerConfig::default_min_mapq(kind),
     };
+    let min_indel_alt_reads: u32 = match flags.get("min-indel-alt-reads") {
+        Some(v) => v.parse().map_err(|_| format!("--min-indel-alt-reads must be a whole number, not {v}"))?,
+        None => CallerConfig::default_min_indel_alt_reads(kind),
+    };
     let defaults = CallerConfig::defaults_for(kind);
     let config = CallerConfig {
         min_depth: match flags.get("min-depth") {
@@ -104,6 +108,7 @@ fn call(args: &[String]) -> Result<(), String> {
     }
     let mut caller = Caller::new(reference.clone(), config);
     caller.set_min_mapq(min_mapq);
+    caller.set_min_indel_alt_reads(min_indel_alt_reads);
     let mut freebayes_calls = None;
     let mut engine_vcf: Option<String> = None;
     if aligner_name == "bwa-mem2" {
@@ -127,6 +132,10 @@ fn call(args: &[String]) -> Result<(), String> {
             let calls = calls_from_freebayes_vcf(BufReader::new(file), &config)
                 .map_err(|e| format!("freebayes output: {e}"))?;
             // FreeBayes does not always write indels in their leftmost form.
+            let calls: Vec<_> = calls
+                .into_iter()
+                .filter(|c| c.reference.len() == c.alt.len() || c.alt_count >= min_indel_alt_reads)
+                .collect();
             freebayes_calls = Some(left_align_calls(calls, &reference));
         } else {
             let mut child = external::spawn_bwa_mem2(&work, &plain_reference, &reads, sample, threads)?;
@@ -141,6 +150,7 @@ fn call(args: &[String]) -> Result<(), String> {
         let mut engine = Engine::new(&fasta, kind, sample)?;
         engine.set_thresholds(config.min_depth, config.min_snp_fraction, config.min_indel_fraction);
         engine.set_min_mapq(min_mapq);
+        engine.set_min_indel_alt_reads(min_indel_alt_reads);
         // Version 1 maps every read, including a second mate file, as an independent single-end read.
         let mut buffer = vec![0u8; 4 << 20];
         for path in &read_paths {
