@@ -710,7 +710,14 @@ instructions. Verify read counts against ENA. Keep data on `/bigdata`.
    12-type and 6-class counts are always shown. Revisit with the benchmark, for example by subsampling calls.
 7. Merged VCF layout: DECIDED (one record per sample per mutation). Large indels from long reads only: DECIDED.
 8. DECIDED: run PRJNA1094460 against both the CEA10 assembly and A1163. Still open: the A1163 versus CEA10 relationship (sources conflict).
-9. FungiDB: API-key requirement and CORS are still unverified. Test with a key, supplied by the user.
+9. FungiDB (2026-11-12): MEASURED with curl, no real key. The organism list (search `GenomeDataTypes`) is public and
+   gives the FASTA and GFF URLs (Af293: 10,130 genes, release 71). The FASTA download (`/a/service/raw-files/...`) returns
+   401 "Valid API Key required" without a key. The server reads the `Authorization` header; a fake `Auth-Key` header is
+   ignored. The user reports that the key works; which form (`Bearer <key>` or the bare key) is not recorded, so
+   `qmutfind fetch` tries `Bearer` first and the bare key second. `fetch` is tested against a local mock server only.
+   CORS: no `Access-Control-Allow-Origin` header on the organism list, on the raw-files download or on a preflight
+   (OPTIONS answers 401 on raw-files). From this, a browser page on another origin cannot read FungiDB responses, so a
+   key-paste field in the WASM page would not work. NOT run in a real browser. Browser users upload the files instead.
 10. DECIDED (user, 2026-11-11): the Cargo workspace lives at the top level of this directory, with the
     three crates in subfolders. The user ran `git init`. `.gitignore` written. Large data stays on
     `/bigdata`, outside the repository. No remote yet. No commit made yet.
