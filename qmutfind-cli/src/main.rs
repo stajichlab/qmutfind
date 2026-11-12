@@ -4,11 +4,11 @@ mod external;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    calls_from_freebayes_vcf, left_align_calls, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqReader, ReadKind, RammapAligner,
+    calls_from_freebayes_vcf, left_align_calls, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -100,6 +100,7 @@ fn call(args: &[String]) -> Result<(), String> {
     }
     let mut caller = Caller::new(reference.clone(), config);
     let mut freebayes_calls = None;
+    let mut engine_vcf: Option<String> = None;
     if aligner_name == "bwa-mem2" {
         let work = external::Workdir::create(&external::default_tmpdir(flags.get("tmpdir")))?;
         let plain_reference = external::write_plain_copy(&work, "ref.fa", &mut *open_input(reference_path)?)?;
@@ -127,19 +128,33 @@ fn call(args: &[String]) -> Result<(), String> {
             external::for_each_sam_record(&work, &mut child, |record| caller.add_sam(record))?;
         }
     } else {
-        let aligner = RammapAligner::new(reference, kind);
+        // The rammap path runs the same Engine as the browser build, so both give the same VCF.
+        let mut fasta = Vec::new();
+        open_input(reference_path)?
+            .read_to_end(&mut fasta)
+            .map_err(|e| format!("{reference_path}: {e}"))?;
+        let mut engine = Engine::new(&fasta, kind, sample)?;
+        engine.set_thresholds(config.min_depth, config.min_snp_fraction, config.min_indel_fraction);
         // Version 1 maps every read, including a second mate file, as an independent single-end read.
+        let mut buffer = vec![0u8; 4 << 20];
         for path in &read_paths {
-            for record in FastqReader::new(open_input(path)?) {
-                let (name, seq) = record.map_err(|e| format!("{path}: {e}"))?;
-                for alignment in aligner.align(&name, &seq) {
-                    caller.add(&alignment, &seq);
+            let mut reader = open_input(path)?;
+            loop {
+                let n = reader.read(&mut buffer).map_err(|e| format!("{path}: {e}"))?;
+                if n == 0 {
+                    break;
                 }
+                engine.add_reads(&buffer[..n]).map_err(|e| format!("{path}: {e}"))?;
             }
+            engine.end_file().map_err(|e| format!("{path}: {e}"))?;
         }
+        engine_vcf = Some(engine.vcf()?);
     }
 
     let out = File::create(out_path).map_err(|e| format!("cannot create {out_path}: {e}"))?;
+    if let Some(vcf) = engine_vcf {
+        return BufWriter::new(out).write_all(vcf.as_bytes()).map_err(|e| format!("{out_path}: {e}"));
+    }
     let calls = freebayes_calls.unwrap_or_else(|| caller.calls());
     write_vcf(&mut BufWriter::new(out), &contigs, sample, &calls, DEFAULT_LARGE_INDEL_MIN)
         .map_err(|e| format!("{out_path}: {e}"))

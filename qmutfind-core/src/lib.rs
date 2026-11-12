@@ -2,15 +2,17 @@
 //! This crate does no file I/O and starts no threads.
 
 mod caller;
+mod engine;
 mod freebayes;
 mod normalize;
 mod parse;
 mod sam;
 mod vcf;
 pub use caller::{classify, Call, Caller, CallerConfig, VariantClass};
+pub use engine::Engine;
 pub use freebayes::calls_from_freebayes_vcf;
 pub use normalize::left_align_calls;
-pub use parse::{read_fasta, FastqReader};
+pub use parse::{read_fasta, FastqChunker, FastqReader};
 pub use sam::{parse_sam_line, SamRecord};
 pub use vcf::write_vcf;
 

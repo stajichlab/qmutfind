@@ -80,6 +80,11 @@ impl Caller {
         Caller { reference, counts, deletions: HashMap::new(), insertions: HashMap::new(), config }
     }
 
+    /// Replace the thresholds. Call before `calls`.
+    pub fn set_config(&mut self, config: CallerConfig) {
+        self.config = config;
+    }
+
     /// Add one alignment. `read` is the sequence that was given to the aligner.
     pub fn add(&mut self, alignment: &Alignment, read: &[u8]) {
         let aligned = alignment.aligned_read(read);
