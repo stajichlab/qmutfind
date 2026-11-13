@@ -313,3 +313,5 @@ nav.pages a[aria-current="page"] { background: var(--accent); color: var(--accen
 .plot .junction { stroke: #1f6fd0; stroke-width: 2; }
 .plot .variant { fill: #c0262d; }
 .plot .axis { stroke: currentColor; stroke-width: 1; opacity: .6; }
+
+.notes { border: 2px solid var(--line); border-radius: var(--radius); padding: 4px 12px; margin: 8px 0; }

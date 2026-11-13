@@ -128,7 +128,7 @@
     <label for="confirm-kind">Read type</label>
     <select id="confirm-kind">
       <option value="short">Illumina (short reads)</option>
-      <option value="long">Nanopore or PacBio (long reads; not yet checked for this question)</option>
+      <option value="long">Nanopore or PacBio (long reads)</option>
     </select>
     <label for="confirm-reads">Reads files (FASTQ, plain or .gz; choose several for the mates)</label>
     <input id="confirm-reads" type="file" multiple>
@@ -142,8 +142,8 @@
       <input id="confirm-min-reads" type="number" min="1" step="1" value="3">
       <label for="confirm-min-depth">Smallest genome coverage to rely on missing reads (x)</label>
       <input id="confirm-min-depth" type="number" min="0" step="1" value="10">
-      <label for="confirm-tolerance">Bases between a flank and the edge of the target</label>
-      <input id="confirm-tolerance" type="number" min="0" step="5" value="20">
+      <label for="confirm-tolerance">Bases between a flank and the edge of the target (empty: 20 for short reads, 30 for long reads)</label>
+      <input id="confirm-tolerance" type="number" min="0" step="5" value="" placeholder="20 or 30">
     </details>
     <p><button id="confirm-run" type="button" class="primary">Confirm the allele</button>
     <button id="confirm-cancel" type="button" hidden>Cancel</button></p>
@@ -154,6 +154,7 @@
 <section class="panel" id="confirm-result" hidden>
   <h2>Result</h2>
   <div id="confirm-verdict" class="verdict" role="status" data-verdict=""></div>
+  <div id="confirm-notes" class="notes" hidden></div>
   <div id="confirm-warnings" class="warnings" hidden></div>
   <h3 class="sub">Where the cassette joins the genome</h3>
   <div class="table-wrap" id="confirm-sites"></div>
@@ -175,7 +176,8 @@
       the breakpoint is uncertain by that many bases, and the flank shown is the one that is not in doubt.</li>
       <li>Each check says pass, fail, or unclear. Too little coverage gives unclear, never a pass.</li>
       <li>The depth of the cassette is compared with the median depth of the genome: about 1 means one copy per genome (for a haploid); more means extra copies; less means only some nuclei carry it.</li>
-      <li>Short reads show the junctions and the coverage; they cannot show in one piece that the whole insertion is contiguous. Mates are mapped as separate reads and only split reads count.</li>
+      <li>Short reads show the junctions and the coverage; they cannot show in one piece that the whole insertion is contiguous. Long reads can: the check &quot;Whole insertion in one read&quot; counts reads that join the two genome flanks through the cassette and align at least 90% of it. Mates are mapped as separate reads and only split reads count.</li>
+      <li>For long reads the depth is noisy, so a cassette depth between 1.5 and 2 times, or between 0.35 and 0.6 times, the genome depth is called unclear.</li>
       <li>A construct with homology arms contains genome sequence: reads from the arms map to the genome and to the construct equally well. The page warns; give the cassette alone.</li>
       <li>The thresholds were not tuned on real data. The same analysis is in the command line tool: <code>qmutfind confirm</code>.</li>
     </ul>

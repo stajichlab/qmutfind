@@ -114,11 +114,12 @@ impl Confirmation {
             }
             None => None,
         };
-        let defaults = qmutfind_core::ConfirmOptions::default();
-        let options = qmutfind_core::ConfirmOptions {
-            target, min_junction_reads, min_depth, target_tolerance: tolerance.max(0.0) as u64, ..defaults
-        };
-        let inner = qmutfind_core::Confirmer::from_fasta(genome_fasta, construct_fasta, read_kind(kind)?, options).map_err(|e| JsError::new(&e))?;
+        let kind = read_kind(kind)?;
+        // A negative tolerance means the default for the kind of reads.
+        let defaults = qmutfind_core::ConfirmOptions::defaults_for(kind);
+        let target_tolerance = if tolerance >= 0.0 { tolerance as u64 } else { defaults.target_tolerance };
+        let options = qmutfind_core::ConfirmOptions { target, min_junction_reads, min_depth, target_tolerance, ..defaults };
+        let inner = qmutfind_core::Confirmer::from_fasta(genome_fasta, construct_fasta, kind, options).map_err(|e| JsError::new(&e))?;
         Ok(Confirmation { inner })
     }
 

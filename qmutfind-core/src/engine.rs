@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    choose_pair, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqChunker, ReadKind, RammapAligner, DEFAULT_MAX_INSERT,
+    Alignment, choose_pair, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqChunker, ReadKind, RammapAligner, DEFAULT_MAX_INSERT,
 };
 
 type Read = (String, Vec<u8>);
@@ -60,9 +60,9 @@ impl Engine {
     }
 
     /// Record the junctions of split reads (reads with two or more alignments), for `Confirmer`. Call before adding reads.
-    pub(crate) fn track_junctions(&mut self, options: crate::confirm::JunctionOptions) {
+    pub(crate) fn track_junctions(&mut self, options: crate::confirm::JunctionOptions, constructs: Vec<String>) {
         let order = self.contigs.iter().map(|(n, _)| n.clone()).collect();
-        self.junctions = Some(crate::confirm::JunctionCollector::new(order, options));
+        self.junctions = Some(crate::confirm::JunctionCollector::new(order, options, constructs));
     }
 
     /// Replace the calling thresholds. Call before adding reads.
@@ -171,7 +171,62 @@ impl Engine {
 
     fn map_records(&mut self, records: Vec<(String, Vec<u8>)>) {
         for (name, seq) in records {
-            let alignments = self.aligner.align(&name, &seq);
+            let mut alignments = self.aligner.align(&name, &seq);
+            if let Some(options) = self.junctions.as_ref().map(|c| c.options()) {
+                // An alignment with a long insertion (a long read across an inserted cassette, when the insertion is not much longer than the genome that it
+                // replaced) is cut at the insertion: the parts before and after it, and the inserted bases, are each aligned again on their own. The aligner
+                // then clips the bases next to the insertion that only match by chance.
+                let mut cut = Vec::with_capacity(alignments.len());
+                for a in alignments {
+                    let insertions = a.long_insertions(crate::confirm::GAP_REALIGN_MIN);
+                    if insertions.is_empty() {
+                        cut.push(a);
+                        continue;
+                    }
+                    let (start, end) = a.query_range();
+                    let mut segments = Vec::new();
+                    let mut cursor = start;
+                    for (s, e) in insertions {
+                        if s > cursor {
+                            segments.push((cursor, s));
+                        }
+                        segments.push((s, e));
+                        cursor = e;
+                    }
+                    if end > cursor {
+                        segments.push((cursor, end));
+                    }
+                    for (s, e) in segments {
+                        if e - s < options.min_part_len {
+                            continue;
+                        }
+                        for found in self.aligner.align(&name, &seq[s..e]) {
+                            let (fs, fe) = found.query_range();
+                            if fe - fs >= options.min_part_len && found.mapq() >= options.min_part_mapq {
+                                cut.push(found.shifted(s));
+                            }
+                        }
+                    }
+                }
+                alignments = cut;
+                // A read that crosses an insertion can come back with its two genome parts and without the part in between (the two genome parts are
+                // chained across the gap and the middle part overlaps that chain). A large gap on the read is aligned again on its own.
+                let mut parts: Vec<&Alignment> = alignments.iter().collect();
+                parts.sort_by_key(|a| a.query_range().0);
+                let mut extra = Vec::new();
+                for pair in parts.windows(2) {
+                    let (from, to) = (pair[0].query_range().1, pair[1].query_range().0);
+                    if to > from + crate::confirm::GAP_REALIGN_MIN && to - from <= crate::confirm::GAP_REALIGN_MAX {
+                        for found in self.aligner.align(&name, &seq[from..to]) {
+                            let (s, e) = found.query_range();
+                            if e - s >= options.min_part_len && found.mapq() >= options.min_part_mapq {
+                                extra.push(found.shifted(from));
+                            }
+                        }
+                    }
+                }
+                alignments.extend(extra);
+            }
             for alignment in &alignments {
                 self.caller.add(alignment, &seq);
             }

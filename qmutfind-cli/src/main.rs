@@ -44,7 +44,7 @@ fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
     let mut it = args.iter();
     while let Some(key) = it.next() {
         let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
-        if name == "paired" || name == "html" || name == "always-exit-zero" {
+        if name == "paired" || name == "html" || name == "always-exit-zero" || name == "keep-arms" {
             flags.insert(name.to_string(), "true".to_string()); // a switch without a value
             continue;
         }
@@ -483,12 +483,13 @@ fn confirm_command(args: &[String]) -> Result<(), String> {
         }
         (None, None) => None,
     };
-    let defaults = ConfirmOptions::default();
+    let defaults = ConfirmOptions::defaults_for(kind);
     let options = ConfirmOptions {
         target,
         min_junction_reads: number("min-junction-reads", defaults.min_junction_reads as f64)? as u32,
         min_depth: number("min-depth", defaults.min_depth)?,
         target_tolerance: number("tolerance", defaults.target_tolerance as f64)? as u64,
+        strip_arms: !flags.contains_key("keep-arms"),
         ..defaults
     };
     let mut confirmer = Confirmer::from_fasta(&reference_bytes, &construct_bytes, kind, options)?;

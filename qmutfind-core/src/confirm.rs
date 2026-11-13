@@ -93,6 +93,18 @@ pub enum Verdict {
     Inconclusive,
 }
 
+/// Reads that cross the whole insertion in one piece: a part in the genome on one side, the cassette, and a part in the genome on the other side.
+/// A read crosses the whole cassette when it aligns at least this fraction of its bases (long reads lose a few per cent to errors).
+const SPANNING_FRACTION: f64 = 0.9;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Spanning {
+    /// Reads that join the two flanks of the main site through the cassette.
+    pub reads: u32,
+    /// Of those, reads that align at least 90% of the cassette bases.
+    pub full: u32,
+}
+
 /// What the reads say about one construct contig.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CassetteSummary {
@@ -101,6 +113,9 @@ pub struct CassetteSummary {
     pub median_depth: f64,
     /// Median depth of the cassette divided by the median depth of the genome: about the number of copies per genome.
     pub copy_ratio: f64,
+    /// Bases cut off the start and the end of the construct as homology arms (positions on the cassette do not count them).
+    pub trimmed_left: u64,
+    pub trimmed_right: u64,
     /// The read depth at each position of the cassette (the first value is position 1).
     pub depth: Vec<u32>,
     /// Stretches (1-based, inclusive) with too little coverage.
@@ -135,11 +150,25 @@ pub struct ConfirmOptions {
     pub max_site_span: u64,
     /// A cassette base has a gap when its depth is below `max(3, gap_fraction * genome depth)`.
     pub gap_fraction: f64,
+    /// `Confirmer::from_fasta`: cut homology arms (stretches at the ends of a construct that are also in the genome) off the construct, and take the
+    /// target from them when none is given.
+    pub strip_arms: bool,
+}
+
+impl ConfirmOptions {
+    /// The defaults for a kind of reads. Long reads have more errors, so a part of a split read must be longer (100 bases) and junction ends are grouped
+    /// within 12 bases; the tolerance between a flank and the target edge is 30 bases.
+    pub fn defaults_for(kind: ReadKind) -> Self {
+        match kind {
+            ReadKind::Short => ConfirmOptions::default(),
+            ReadKind::Long => ConfirmOptions { min_part_len: 100, slop: 12, target_tolerance: 30, ..ConfirmOptions::default() },
+        }
+    }
 }
 
 impl Default for ConfirmOptions {
     fn default() -> Self {
-        ConfirmOptions { target: None, min_junction_reads: 3, min_part_len: 25, min_part_mapq: 1, slop: 3, target_tolerance: 20, min_depth: 10.0, max_site_span: 200_000, gap_fraction: 0.2 }
+        ConfirmOptions { target: None, min_junction_reads: 3, min_part_len: 25, min_part_mapq: 1, slop: 3, target_tolerance: 20, min_depth: 10.0, max_site_span: 200_000, gap_fraction: 0.2, strip_arms: true }
     }
 }
 
@@ -154,17 +183,36 @@ pub(crate) struct JunctionCollector {
     order: HashMap<String, usize>,
     options: JunctionOptions,
     observed: Vec<(End, End, i32)>,
+    constructs: Vec<String>,
+    spanning: Vec<SpanningRead>,
+}
+
+/// One read that goes from the genome through a construct and back into the genome.
+#[derive(Debug, Clone)]
+struct SpanningRead {
+    contig: String,
+    left: u64,
+    right: u64,
+    construct: String,
+    covered: u64,
 }
 
 /// Two parts are neighbours on the read when they overlap by at most this many bases, or are separated by at most this many.
+/// A gap on a read, between two aligned parts, of more than `GAP_REALIGN_MIN` and at most `GAP_REALIGN_MAX` bases is aligned again on its own (see `Engine::map_records`).
+pub(crate) const GAP_REALIGN_MIN: usize = 200;
+pub(crate) const GAP_REALIGN_MAX: usize = 20_000;
 const MAX_OVERLAP: i64 = 50;
 const MAX_INSERT: i64 = 50;
 /// Two parts on one contig, one strand and this close are a gapped alignment, not a junction.
 const MIN_SPLIT_DISTANCE: u64 = 50;
 
 impl JunctionCollector {
-    pub(crate) fn new(order: Vec<String>, options: JunctionOptions) -> Self {
-        JunctionCollector { order: order.into_iter().enumerate().map(|(i, n)| (n, i)).collect(), options, observed: Vec::new() }
+    pub(crate) fn options(&self) -> JunctionOptions {
+        self.options
+    }
+
+    pub(crate) fn new(order: Vec<String>, options: JunctionOptions, constructs: Vec<String>) -> Self {
+        JunctionCollector { order: order.into_iter().enumerate().map(|(i, n)| (n, i)).collect(), options, observed: Vec::new(), constructs, spanning: Vec::new() }
     }
 
     /// The end of the part where the read leaves it (the later end on the read).
@@ -200,6 +248,7 @@ impl JunctionCollector {
             return;
         }
         parts.sort_by_key(|a| a.query_range().0);
+        self.add_spanning(&parts);
         for pair in parts.windows(2) {
             let (x, y) = (pair[0], pair[1]);
             let overlap = x.query_range().1 as i64 - y.query_range().0 as i64;
@@ -210,12 +259,47 @@ impl JunctionCollector {
                 continue;
             }
             let (mut a, mut b) = (Self::exit_end(x), Self::entry_end(y));
+            // The second part continues the first on the same strand (the read was cut by `Engine::map_records`, or aligned in two pieces): not a junction.
+            if a.contig == b.contig && x.reverse == y.reverse && a.pos.abs_diff(b.pos) <= MIN_SPLIT_DISTANCE {
+                continue;
+            }
             // The same junction from a read of the other strand has its ends in the other order; sort them.
             let key = |e: &End| (self.order.get(&e.contig).copied().unwrap_or(usize::MAX), e.pos, e.keeps);
             if key(&a) > key(&b) {
                 std::mem::swap(&mut a, &mut b);
             }
             self.observed.push((a, b, overlap as i32));
+        }
+    }
+
+    /// Whether two parts that follow each other on the read are neighbours: they overlap by at most `MAX_OVERLAP` bases or are separated by at most `MAX_INSERT`.
+    fn neighbours(x: &Alignment, y: &Alignment) -> bool {
+        let overlap = x.query_range().1 as i64 - y.query_range().0 as i64;
+        overlap <= MAX_OVERLAP && -overlap <= MAX_INSERT
+    }
+
+    /// A read with a genome part, then one or more parts of one construct, then a genome part of the same contig, all neighbours on the read.
+    fn add_spanning(&mut self, parts: &[&Alignment]) {
+        if parts.len() < 3 {
+            return;
+        }
+        let is_construct = |a: &Alignment| self.constructs.iter().any(|c| *c == a.contig);
+        for i in 0..parts.len() {
+            if is_construct(parts[i]) {
+                continue;
+            }
+            let mut j = i + 1;
+            while j < parts.len() && is_construct(parts[j]) && parts[j].contig == parts[i + 1].contig && Self::neighbours(parts[j - 1], parts[j]) {
+                j += 1;
+            }
+            if j > i + 1 && j < parts.len() && !is_construct(parts[j]) && parts[j].contig == parts[i].contig && Self::neighbours(parts[j - 1], parts[j]) {
+                let (a, b) = (Self::exit_end(parts[i]), Self::entry_end(parts[j]));
+                let middle = &parts[i + 1..j];
+                // The cassette bases that the read really aligns to: a stretch that the read skips (a deletion) does not count.
+                let covered: u64 = middle.iter().map(|m| m.aligned_ref_bases()).sum();
+                self.spanning.push(SpanningRead { contig: a.contig.clone(), left: a.pos.min(b.pos), right: a.pos.max(b.pos), construct: parts[i + 1].contig.clone(), covered });
+                return;
+            }
         }
     }
 
@@ -228,13 +312,38 @@ impl JunctionCollector {
         let mut out = Vec::new();
         for (_, mut members) in groups {
             members.sort_by_key(|o| (o.0.pos, o.1.pos));
-            let mut clusters: Vec<Vec<&(End, End, i32)>> = Vec::new();
-            for o in members {
-                match clusters.iter_mut().find(|c| c[0].0.pos.abs_diff(o.0.pos) <= slop && c[0].1.pos.abs_diff(o.1.pos) <= slop) {
-                    Some(c) => c.push(o),
-                    None => clusters.push(vec![o]),
+            // Single linkage: an observation joins the cluster of any earlier one whose two ends are both within `slop` (long reads move a breakpoint by several bases).
+            let n = members.len();
+            let mut parent: Vec<usize> = (0..n).collect();
+            fn find(parent: &mut Vec<usize>, mut i: usize) -> usize {
+                while parent[i] != i {
+                    parent[i] = parent[parent[i]];
+                    i = parent[i];
+                }
+                i
+            }
+            for i in 0..n {
+                let mut j = i;
+                while j > 0 {
+                    j -= 1;
+                    if members[i].0.pos.abs_diff(members[j].0.pos) > slop {
+                        break;
+                    }
+                    if members[i].1.pos.abs_diff(members[j].1.pos) <= slop {
+                        let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                        if ri != rj {
+                            parent[ri] = rj;
+                        }
+                    }
                 }
             }
+            let mut by_root: HashMap<usize, Vec<&(End, End, i32)>> = HashMap::new();
+            for i in 0..n {
+                let root = find(&mut parent, i);
+                by_root.entry(root).or_default().push(members[i]);
+            }
+            let mut clusters: Vec<Vec<&(End, End, i32)>> = by_root.into_values().collect();
+            clusters.sort_by_key(|c| (c[0].0.pos, c[0].1.pos));
             for c in clusters {
                 if (c.len() as u32) < min_reads {
                     continue;
@@ -262,21 +371,37 @@ impl JunctionCollector {
 
 /// Length of the words used to find construct sequence that is also in the genome.
 const SHARED_WORD: usize = 24;
+/// A shared stretch at the end of a construct is a homology arm when it starts or ends within this many bases of the construct end and is at least `MIN_ARM` long.
+const ARM_END_SLACK: usize = 30;
+const MIN_ARM: usize = 50;
 
-/// A warning for each construct that shares sequence with the genome (24-base words found in both, on either strand): the usual cause is homology arms
-/// in the construct. Reads from such a stretch map to the genome and to the construct equally well, so coverage, junctions and copy number of the
-/// cassette cannot be trusted; the construct should hold the cassette only.
-fn shared_with_genome(reference_fasta: &[u8], constructs: &[&str]) -> Result<Vec<String>, String> {
-    use std::collections::HashSet;
-    let contigs = crate::read_fasta(reference_fasta).map_err(|e| format!("reference FASTA: {e}"))?;
+/// A stretch of a construct (0-based start, end exclusive) that also occurs in the genome, and where: the genome contig and the 1-based interval, and whether
+/// the construct runs against the genome strand. `unique` is false when the stretch has several places in the genome.
+#[derive(Debug, Clone)]
+struct Stretch {
+    start: usize,
+    end: usize,
+    genome: Option<(String, u64, u64, bool)>,
+    unique: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ConstructShare {
+    name: String,
+    length: usize,
+    stretches: Vec<Stretch>,
+}
+
+/// For each construct contig: the stretches that are also in the genome (24-base words found in both, either strand), merged, with their genome place.
+fn analyze_shared(contigs: &[(String, Vec<u8>)], constructs: &[&str]) -> Vec<ConstructShare> {
     let code = |b: u8| match b.to_ascii_uppercase() { b'A' => Some(0u64), b'C' => Some(1), b'G' => Some(2), b'T' => Some(3), _ => None };
     let mask = (1u64 << (2 * SHARED_WORD)) - 1;
-    // Every word of the constructs, forward and reverse complement, with the construct and position of the forward word.
-    let mut words: std::collections::HashMap<u64, Vec<(usize, usize)>> = std::collections::HashMap::new();
-    let mut construct_index: Vec<(&str, usize)> = Vec::new();
+    // Every word of the constructs, forward and reverse complement: word -> (construct index, start, the word is the reverse complement).
+    let mut words: HashMap<u64, Vec<(usize, usize, bool)>> = HashMap::new();
+    let mut shares: Vec<(usize, ConstructShare)> = Vec::new();
     for (ci, (name, seq)) in contigs.iter().enumerate() {
         if !constructs.contains(&name.as_str()) { continue }
-        construct_index.push((name.as_str(), ci));
+        shares.push((ci, ConstructShare { name: name.clone(), length: seq.len(), stretches: Vec::new() }));
         let (mut fwd, mut rev, mut valid) = (0u64, 0u64, 0usize);
         for (i, &b) in seq.iter().enumerate() {
             match code(b) {
@@ -289,50 +414,84 @@ fn shared_with_genome(reference_fasta: &[u8], constructs: &[&str]) -> Result<Vec
             }
             if valid >= SHARED_WORD {
                 let start = i + 1 - SHARED_WORD;
-                words.entry(fwd).or_default().push((ci, start));
-                words.entry(rev).or_default().push((ci, start));
+                words.entry(fwd).or_default().push((ci, start, false));
+                words.entry(rev).or_default().push((ci, start, true));
             }
         }
     }
-    let mut shared: HashSet<(usize, usize)> = HashSet::new(); // (construct, word start) found in the genome
-    let own: HashSet<&str> = constructs.iter().copied().collect();
-    for (name, seq) in &contigs {
-        if own.contains(name.as_str()) { continue }
+    // The genome places of each construct word: (genome contig, 1-based start of the word, the construct word is reversed).
+    let mut places: HashMap<(usize, usize), Vec<(usize, u64, bool)>> = HashMap::new();
+    let own: Vec<&str> = constructs.to_vec();
+    for (gi, (name, seq)) in contigs.iter().enumerate() {
+        if own.contains(&name.as_str()) { continue }
         let (mut fwd, mut valid) = (0u64, 0usize);
-        for &b in seq {
+        for (i, &b) in seq.iter().enumerate() {
             match code(b) {
                 Some(c) => { fwd = ((fwd << 2) | c) & mask; valid += 1 }
                 None => valid = 0,
             }
             if valid >= SHARED_WORD {
                 if let Some(hits) = words.get(&fwd) {
-                    shared.extend(hits.iter().copied());
+                    for &(ci, start, rev) in hits {
+                        let list = places.entry((ci, start)).or_default();
+                        if list.len() < 4 { list.push((gi, (i + 2 - SHARED_WORD) as u64, rev)) }
+                    }
                 }
             }
         }
     }
-    let mut warnings = Vec::new();
-    for (name, ci) in construct_index {
-        let mut starts: Vec<usize> = shared.iter().filter(|(c, _)| *c == ci).map(|&(_, s)| s).collect();
+    let mut out = Vec::new();
+    for (ci, mut share) in shares {
+        let mut starts: Vec<usize> = places.keys().filter(|(c, _)| *c == ci).map(|&(_, s)| s).collect();
         starts.sort_unstable();
-        // Merge the words into stretches of construct positions (1-based, inclusive).
-        let mut stretches: Vec<(usize, usize)> = Vec::new();
+        let mut groups: Vec<(usize, usize, Vec<usize>)> = Vec::new(); // (start, end, word starts)
         for s in starts {
-            match stretches.last_mut() {
-                Some(last) if s <= last.1 => last.1 = s + SHARED_WORD,
-                _ => stretches.push((s + 1, s + SHARED_WORD)),
+            match groups.last_mut() {
+                Some(last) if s <= last.1 => { last.1 = s + SHARED_WORD; last.2.push(s) }
+                _ => groups.push((s, s + SHARED_WORD, vec![s])),
             }
         }
-        let total: usize = stretches.iter().map(|(a, b)| b - a + 1).sum();
+        for (start, end, member_starts) in groups {
+            // The genome place: the diagonal (genome position minus construct position for the same strand, their sum for the opposite strand) with most words.
+            let mut tally: HashMap<(usize, bool, i64), Vec<u64>> = HashMap::new();
+            let mut multi = false;
+            for s in &member_starts {
+                let list = &places[&(ci, *s)];
+                if list.len() > 1 { multi = true }
+                for &(gi, g, rev) in list {
+                    let diag = if rev { g as i64 + *s as i64 } else { g as i64 - *s as i64 };
+                    tally.entry((gi, rev, diag)).or_default().push(g);
+                }
+            }
+            let best = tally.iter().max_by_key(|(k, v)| (v.len(), std::cmp::Reverse(**k))).map(|((gi, rev, _), v)| (*gi, *rev, v.clone()));
+            let genome = best.map(|(gi, rev, positions)| {
+                let lo = *positions.iter().min().unwrap_or(&0);
+                let hi = positions.iter().max().copied().unwrap_or(0) + SHARED_WORD as u64 - 1;
+                (contigs[gi].0.clone(), lo, hi, rev)
+            });
+            share.stretches.push(Stretch { start, end, genome, unique: !multi && tally.len() == 1 });
+        }
+        out.push(share);
+    }
+    out
+}
+
+/// The warnings for constructs that share sequence with the genome: reads from such a stretch map to the genome and to the construct equally well, so the
+/// coverage, junctions and copy number of the cassette cannot be trusted. (A construct that was cut by `from_fasta` is analyzed again afterwards, so what
+/// is left of such a stretch is still reported.)
+fn share_warnings(shares: &[ConstructShare]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for share in shares {
+        let total: usize = share.stretches.iter().map(|s| s.end - s.start).sum();
         if total >= 50 {
-            let list: Vec<String> = stretches.iter().filter(|(a, b)| b - a + 1 >= 30).take(6).map(|(a, b)| format!("{a}-{b}")).collect();
+            let list: Vec<String> = share.stretches.iter().filter(|s| s.end - s.start >= 30).take(6).map(|s| format!("{}-{}", s.start + 1, s.end)).collect();
             warnings.push(format!(
-                "{total} bases of the construct {name} also occur in the genome (positions {}). If these are homology arms, reads from them map to the genome and to the construct equally well, so the coverage, junctions and copy number of the cassette cannot be trusted. Give the cassette sequence without the arms.",
-                list.join(", ")
+                "{total} bases of the construct {} also occur in the genome (positions {}). If these are homology arms, reads from them map to the genome and to the construct equally well, so the coverage, junctions and copy number of the cassette cannot be trusted. Give the cassette sequence without the arms.",
+                share.name, list.join(", ")
             ));
         }
     }
-    Ok(warnings)
+    warnings
 }
 
 /// The region of a gene in a GFF3 file, found by its `ID` (with or without the `gene-` of NCBI files), `Name`, `gene` or `locus_tag` (or `old_locus_tag`).
@@ -365,19 +524,94 @@ pub struct Confirmer {
     constructs: Vec<String>,
     options: ConfirmOptions,
     warnings: Vec<String>,
+    /// What was done to the construct (arms cut off, target inferred), and a target that came from the arms.
+    notes: Vec<String>,
+    trimmed: HashMap<String, (u64, u64)>,
+    target_inferred: bool,
+    kind: ReadKind,
 }
 
 impl Confirmer {
-    /// From a genome FASTA and a construct FASTA (plain bytes). The construct contigs must not have the name of a genome contig.
-    pub fn from_fasta(genome_fasta: &[u8], construct_fasta: &[u8], kind: ReadKind, options: ConfirmOptions) -> Result<Confirmer, String> {
+    /// From a genome FASTA and a construct FASTA (plain bytes). The construct contigs must not have the name of a genome contig. With `options.strip_arms`,
+    /// a stretch of at least 50 bases at the start or the end of a construct that is also in the genome (a homology arm) is cut off; when both ends are
+    /// arms, they lie in the same genome contig in the same direction and no target was given, the region between them is the target.
+    pub fn from_fasta(genome_fasta: &[u8], construct_fasta: &[u8], kind: ReadKind, mut options: ConfirmOptions) -> Result<Confirmer, String> {
         let mut genome = crate::read_fasta(genome_fasta).map_err(|e| format!("reference FASTA: {e}"))?;
-        let construct = crate::read_fasta(construct_fasta).map_err(|e| format!("construct FASTA: {e}"))?;
+        let mut construct = crate::read_fasta(construct_fasta).map_err(|e| format!("construct FASTA: {e}"))?;
         if construct.is_empty() {
             return Err("the construct FASTA has no sequence: give the sequence you introduced (for example the hph cassette)".to_string());
         }
         for (name, _) in &construct {
             if genome.iter().any(|(g, _)| g == name) {
                 return Err(format!("the construct contig {name} has the same name as a contig of the reference; rename it in the construct file"));
+            }
+        }
+        let mut notes = Vec::new();
+        let mut trimmed: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut inferred = false;
+        let mut conflict: Option<String> = None;
+        if options.strip_arms {
+            let names: Vec<String> = construct.iter().map(|(n, _)| n.clone()).collect();
+            let mut with_construct = genome.clone();
+            with_construct.extend(construct.iter().cloned());
+            let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let shares = analyze_shared(&with_construct, &name_refs);
+            drop(with_construct);
+            let mut arm_target: Option<Target> = None;
+            for share in &shares {
+                let left = share.stretches.iter().find(|s| s.start <= ARM_END_SLACK && s.end - s.start >= MIN_ARM);
+                let right = share.stretches.iter().rev().find(|s| s.end + ARM_END_SLACK >= share.length && s.end - s.start >= MIN_ARM && left.map_or(true, |l| l.start != s.start));
+                let (l, r) = (left.map(|s| s.end).unwrap_or(0), right.map(|s| s.start).unwrap_or(share.length));
+                if l >= r {
+                    continue; // the whole construct is genome sequence: nothing is cut, and the warning says so
+                }
+                if left.is_none() && right.is_none() {
+                    continue;
+                }
+                let seq = &mut construct.iter_mut().find(|(n, _)| *n == share.name).expect("the construct is there").1;
+                *seq = seq[l..r].to_vec();
+                trimmed.insert(share.name.clone(), (l as u64, (share.length - r) as u64));
+                let side = |x: Option<&Stretch>| x.map(|s| format!("{} bases", s.end - s.start));
+                notes.push(match (side(left), side(right)) {
+                    (Some(a), Some(b)) => format!("homology arms were cut off the construct {}: {a} at the start (positions 1-{l}) and {b} at the end (positions {}-{}); positions below are on the cassette without them", share.name, r + 1, share.length),
+                    (Some(a), None) => format!("one arm was cut off the construct {}: {a} at the start (positions 1-{l}); no arm was found at the end, so the target is not inferred; positions below are on the cassette without it", share.name),
+                    (None, Some(b)) => format!("one arm was cut off the construct {}: {b} at the end (positions {}-{}); no arm was found at the start, so the target is not inferred; positions below are on the cassette without it", share.name, r + 1, share.length),
+                    (None, None) => String::new(),
+                });
+                // The region between the two arms in the genome.
+                if let (Some(a), Some(b)) = (left, right) {
+                    if let (Some((ca, a1, a2, ra)), Some((cb, b1, b2, rb)), true, true) = (&a.genome, &b.genome, a.unique, b.unique) {
+                        if ca == cb && ra == rb {
+                            let ((_, first_end), (second_start, _)) = if a1 <= b1 { ((a1, *a2), (*b1, b2)) } else { ((b1, *b2), (*a1, a2)) };
+                            if first_end < second_start && second_start - first_end - 1 <= options.max_site_span {
+                                arm_target = Some(Target { contig: ca.clone(), start: first_end + 1, end: second_start - 1 });
+                            } else if first_end < second_start || (first_end >= second_start && second_start + 1 >= first_end) {
+                                notes.push("the two arms are next to each other in the genome: the construct is an insertion, with no region replaced".to_string());
+                            }
+                        } else {
+                            notes.push("the two arms lie in different places or in different directions in the genome, so the target is not inferred".to_string());
+                        }
+                    } else {
+                        notes.push("the arms do not have one clear place in the genome (repeats?), so the target is not inferred".to_string());
+                    }
+                }
+            }
+            match (&options.target, arm_target) {
+                (None, Some(t)) => {
+                    notes.push(format!("the target {}:{}-{} was inferred from the homology arms: it is the genome between them", t.contig, t.start, t.end));
+                    options.target = Some(t);
+                    inferred = true;
+                }
+                (Some(given), Some(t)) => {
+                    let near = |a: u64, b: u64| a.abs_diff(b) <= options.target_tolerance;
+                    if !(given.contig == t.contig && near(given.start, t.start) && near(given.end, t.end)) {
+                        conflict = Some(format!(
+                            "the homology arms of the construct point to {}:{}-{}, but the target you gave is {}:{}-{}",
+                            t.contig, t.start, t.end, given.contig, given.start, given.end
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
         let names: Vec<String> = construct.iter().map(|(n, _)| n.clone()).collect();
@@ -390,7 +624,14 @@ impl Confirmer {
         }
         drop(genome);
         let constructs: Vec<&str> = names.iter().map(String::as_str).collect();
-        Confirmer::new(&fasta, &constructs, kind, options)
+        let mut confirmer = Confirmer::new(&fasta, &constructs, kind, options)?;
+        confirmer.notes = notes.into_iter().filter(|n| !n.is_empty()).collect();
+        confirmer.trimmed = trimmed;
+        confirmer.target_inferred = inferred;
+        if let Some(c) = conflict {
+            confirmer.warnings.insert(0, format!("{c}. The check \"at_target\" uses the target you gave."));
+        }
+        Ok(confirmer)
     }
 
     /// `reference_fasta` holds the genome and the construct contigs (one FASTA); `constructs` names the construct contigs.
@@ -409,9 +650,10 @@ impl Confirmer {
                 return Err(format!("the target contig {} is not a genome contig of the reference", t.contig));
             }
         }
-        engine.track_junctions(JunctionOptions { min_part_len: options.min_part_len, min_part_mapq: options.min_part_mapq });
-        let warnings = shared_with_genome(reference_fasta, constructs)?;
-        Ok(Confirmer { engine, constructs: constructs.iter().map(|s| s.to_string()).collect(), options, warnings })
+        engine.track_junctions(JunctionOptions { min_part_len: options.min_part_len, min_part_mapq: options.min_part_mapq }, constructs.iter().map(|s| s.to_string()).collect());
+        let contigs = crate::read_fasta(reference_fasta).map_err(|e| format!("reference FASTA: {e}"))?;
+        let warnings = share_warnings(&analyze_shared(&contigs, constructs));
+        Ok(Confirmer { engine, constructs: constructs.iter().map(|s| s.to_string()).collect(), options, warnings, notes: Vec::new(), trimmed: HashMap::new(), target_inferred: false, kind })
     }
 
     /// Add a chunk of FASTQ bytes (see `Engine::add_reads`).
@@ -445,6 +687,12 @@ pub struct Report {
     pub cassettes: Vec<CassetteSummary>,
     pub checks: Vec<Check>,
     pub target: Option<Target>,
+    /// Reads that cross the whole insertion (long reads).
+    pub spanning: Spanning,
+    /// True when the target was not given but taken from the homology arms of the construct.
+    pub target_inferred: bool,
+    /// What was done to the construct: arms cut off, target inferred.
+    pub notes: Vec<String>,
     /// Things that make the result less reliable (for example a construct that shares sequence with the genome).
     pub warnings: Vec<String>,
     /// The mean depth inside the target (without its edges), divided by the genome depth.
@@ -527,6 +775,28 @@ fn build_report(c: &Confirmer) -> Report {
             });
         }
     }
+    // A one-sided site next to a two-sided one on the same side is the same junction seen with a different breakpoint (long reads): its reads are added to the site.
+    let merge = (o.slop * 4).max(40);
+    let mut absorbed = vec![false; sites.len()];
+    for i in 0..sites.len() {
+        if sites[i].left.is_some() && sites[i].right.is_some() {
+            continue;
+        }
+        for k in 0..sites.len() {
+            if i == k || absorbed[k] || sites[k].left.is_none() || sites[k].right.is_none() || sites[k].contig != sites[i].contig || sites[k].construct != sites[i].construct {
+                continue;
+            }
+            let near_left = matches!((sites[i].left, sites[k].left), (Some(a), Some(b)) if a.abs_diff(b) <= merge);
+            let near_right = matches!((sites[i].right, sites[k].right), (Some(a), Some(b)) if a.abs_diff(b) <= merge);
+            if near_left || near_right {
+                if near_left { sites[k].reads_left += sites[i].reads_left } else { sites[k].reads_right += sites[i].reads_right }
+                absorbed[i] = true;
+                break;
+            }
+        }
+    }
+    let mut keep = absorbed.into_iter().map(|a| !a);
+    sites.retain(|_| keep.next().unwrap_or(true));
     let target = o.target.clone();
     let at_target = |s: &Site| match (&target, s.left, s.right) {
         (Some(t), Some(l), Some(r)) => s.contig == t.contig && l.abs_diff(t.start.saturating_sub(1)) <= o.target_tolerance && r.abs_diff(t.end + 1) <= o.target_tolerance,
@@ -564,7 +834,8 @@ fn build_report(c: &Confirmer) -> Report {
             gaps.push((start, depth.len() as u64 - trim as u64));
         }
         let variants: Vec<Call> = calls.iter().filter(|v| &v.contig == name).cloned().collect();
-        cassettes.push(CassetteSummary { name: name.clone(), length, median_depth: median, copy_ratio: if genome_depth > 0.0 { median / genome_depth } else { 0.0 }, depth, gaps, variants });
+        let (trimmed_left, trimmed_right) = c.trimmed.get(name).copied().unwrap_or((0, 0));
+        cassettes.push(CassetteSummary { name: name.clone(), length, median_depth: median, copy_ratio: if genome_depth > 0.0 { median / genome_depth } else { 0.0 }, trimmed_left, trimmed_right, depth, gaps, variants });
     }
     let any_cassette_reads = cassettes.iter().any(|k| k.median_depth >= gap_depth);
 
@@ -619,7 +890,7 @@ fn build_report(c: &Confirmer) -> Report {
             match target_depth_ratio {
                 None => add("target_replaced", CheckStatus::Inconclusive, "the depth of the target could not be read".into()),
                 Some(_) if !enough => add("target_replaced", CheckStatus::Inconclusive, low.clone()),
-                Some(r) if r <= 0.1 => add("target_replaced", CheckStatus::Pass, format!("the inside of the target has {:.0}% of the genome coverage (no wild-type copy)", r * 100.0)),
+                Some(r) if r <= if c.kind == ReadKind::Long { 0.25 } else { 0.1 } => add("target_replaced", CheckStatus::Pass, format!("the inside of the target has {:.0}% of the genome coverage (no wild-type copy)", r * 100.0)),
                 Some(r) => add("target_replaced", CheckStatus::Fail, format!("the inside of the target still has {:.0}% of the genome coverage: wild-type sequence is present (a mixed population, an extra copy of the gene, or no replacement)", r * 100.0)),
             }
         }
@@ -654,15 +925,57 @@ fn build_report(c: &Confirmer) -> Report {
             add("cassette_structure", CheckStatus::Fail, format!("reads join parts of the cassette to each other (a deletion, a duplication or a concatemer): {}", internal.iter().map(|j| format!("{}:{} to {}:{} ({} reads)", j.a.contig, j.a.pos, j.b.contig, j.b.pos, j.reads)).collect::<Vec<_>>().join("; ")));
         }
         let ratio = cassettes.first().map(|k| k.copy_ratio).unwrap_or(0.0);
+        // Above 1.5 the call depends on the depth noise: short reads at 30x vary by about 20% from place to place, long reads at 15x by more. A second copy
+        // measures about 2.0, so a ratio from 1.5 to the failing limit is unclear, never a pass.
+        let fail_above = if c.kind == ReadKind::Long { 2.0 } else { 1.75 };
         if (0.6..=1.5).contains(&ratio) {
             add("copy_number", CheckStatus::Pass, format!("cassette depth is {ratio:.2} times the genome depth: one copy per genome"));
-        } else if ratio > 1.5 {
+        } else if ratio >= fail_above {
             add("copy_number", CheckStatus::Fail, format!("cassette depth is {ratio:.2} times the genome depth: about {:.0} copies per genome", ratio.round().max(2.0)));
+        } else if ratio > 1.5 {
+            add("copy_number", CheckStatus::Inconclusive, format!("cassette depth is {ratio:.2} times the genome depth: between one and two copies; the depth is too variable at this coverage to tell (a second copy would give about 2)"));
+        } else if c.kind == ReadKind::Long && ratio >= 0.35 {
+            add("copy_number", CheckStatus::Inconclusive, format!("cassette depth is {ratio:.2} times the genome depth: lower than one copy, but the depth of long reads is too variable at this coverage to tell a mixed population from noise (a half-and-half mixture gives about 0.5)"));
         } else {
             add("copy_number", CheckStatus::Fail, format!("cassette depth is only {ratio:.2} times the genome depth: the cassette is in a part of the population only"));
         }
     }
-    Report { reads: c.engine.read_count(), genome_depth, junctions, sites, cassettes, checks, target, warnings: c.warnings.clone(), target_depth_ratio }
+    // Reads that cross the whole insertion (only long reads can).
+    let site_tolerance = o.target_tolerance.max(30);
+    let spanning = match sites.first() {
+        Some(site) if site.left.is_some() && site.right.is_some() => {
+            let (l, r) = (site.left.unwrap_or(0), site.right.unwrap_or(0));
+            let cassette_len = cassettes.iter().find(|k| k.name == site.construct).map(|k| k.length).unwrap_or(0);
+            let mut sp = Spanning::default();
+            for read in &collector.spanning {
+                if read.contig == site.contig && read.construct == site.construct && read.left.abs_diff(l) <= site_tolerance && read.right.abs_diff(r) <= site_tolerance {
+                    sp.reads += 1;
+                    if read.covered as f64 >= SPANNING_FRACTION * cassette_len as f64 {
+                        sp.full += 1;
+                    }
+                }
+            }
+            sp
+        }
+        _ => Spanning::default(),
+    };
+    let two_sided_main = sites.first().map_or(false, |s| s.left.is_some() && s.right.is_some());
+    if c.kind == ReadKind::Short {
+        add("whole_insertion_in_one_read", CheckStatus::NotApplicable, "short reads (about 150 bases) cannot cross a whole insertion; long reads can show in one piece that the cassette lies between the two flanks".into());
+    } else if !two_sided_main {
+        add("whole_insertion_in_one_read", CheckStatus::NotApplicable, "there is no site with a junction on both sides".into());
+    } else if !enough {
+        add("whole_insertion_in_one_read", CheckStatus::Inconclusive, low.clone());
+    } else if spanning.full >= 2 {
+        add("whole_insertion_in_one_read", CheckStatus::Pass, format!("{} read(s) cross the whole insertion in one piece and align at least 90% of the cassette bases ({} read(s) join the two flanks through it)", spanning.full, spanning.reads));
+    } else if spanning.reads >= 1 && spanning.full == 0 {
+        add("whole_insertion_in_one_read", CheckStatus::Fail, format!("{} read(s) join the two flanks through the cassette, but none aligns 90% of its bases: part of the cassette is missing", spanning.reads));
+    } else if spanning.reads == 0 {
+        add("whole_insertion_in_one_read", CheckStatus::Inconclusive, "no read joins the two flanks through the cassette; the reads are probably too short (they must be longer than the cassette plus a part of each flank)".into());
+    } else {
+        add("whole_insertion_in_one_read", CheckStatus::Inconclusive, format!("only {} read(s) cross the whole insertion; at least 2 are needed", spanning.full));
+    }
+    Report { reads: c.engine.read_count(), spanning, genome_depth, junctions, sites, cassettes, checks, target, target_inferred: c.target_inferred, notes: c.notes.clone(), warnings: c.warnings.clone(), target_depth_ratio }
 }
 
 impl Report {
@@ -689,7 +1002,10 @@ impl Report {
         };
         let mut out = format!("Allele confirmation: {verdict}\nreads {}, genome median depth {:.1}x\n", self.reads, self.genome_depth);
         if let Some(t) = &self.target {
-            out.push_str(&format!("target {}:{}-{}\n", t.contig, t.start, t.end));
+            out.push_str(&format!("target {}:{}-{}{}\n", t.contig, t.start, t.end, if self.target_inferred { " (inferred from the homology arms of the construct)" } else { "" }));
+        }
+        for n in &self.notes {
+            out.push_str(&format!("Note: {n}\n"));
         }
         for w in &self.warnings {
             out.push_str(&format!("Warning: {w}\n"));
@@ -712,6 +1028,9 @@ impl Report {
         out.push_str("\nCassette:\n");
         for k in &self.cassettes {
             out.push_str(&format!("  {} ({} bases): median depth {:.1}, {:.2} times the genome depth, {} coverage gap(s), {} difference(s) from the given sequence\n", k.name, k.length, k.median_depth, k.copy_ratio, k.gaps.len(), k.variants.len()));
+        }
+        if self.checks.iter().any(|c| c.name == "whole_insertion_in_one_read" && c.status != CheckStatus::NotApplicable) {
+            out.push_str(&format!("\nReads across the whole insertion: {} join the two flanks through the cassette, {} of them align at least 90% of its bases\n", self.spanning.reads, self.spanning.full));
         }
         out.push_str("\nChecks:\n");
         for c in &self.checks {
@@ -789,16 +1108,17 @@ impl Report {
         let cassettes: Vec<String> = self.cassettes.iter().map(|k| {
             let gaps: Vec<String> = k.gaps.iter().map(|(a, b)| format!("[{a},{b}]")).collect();
             let variants: Vec<String> = k.variants.iter().map(|v| format!("{{\"pos\":{},\"ref\":\"{}\",\"alt\":\"{}\",\"alt_count\":{},\"depth\":{}}}", v.pos, esc(&v.reference), esc(&v.alt), v.alt_count, v.depth)).collect();
-            format!("{{\"name\":\"{}\",\"length\":{},\"median_depth\":{:.2},\"copy_ratio\":{:.3},\"gaps\":[{}],\"variants\":[{}]}}", esc(&k.name), k.length, k.median_depth, k.copy_ratio, gaps.join(","), variants.join(","))
+            format!("{{\"name\":\"{}\",\"length\":{},\"median_depth\":{:.2},\"copy_ratio\":{:.3},\"trimmed_left\":{},\"trimmed_right\":{},\"gaps\":[{}],\"variants\":[{}]}}", esc(&k.name), k.length, k.median_depth, k.copy_ratio, k.trimmed_left, k.trimmed_right, gaps.join(","), variants.join(","))
         }).collect();
         let target = match &self.target {
             Some(t) => format!("{{\"contig\":\"{}\",\"start\":{},\"end\":{}}}", esc(&t.contig), t.start, t.end),
             None => "null".to_string(),
         };
+        let notes: Vec<String> = self.notes.iter().map(|w| format!("\"{}\"", esc(w))).collect();
         let ratio = self.target_depth_ratio.map(|r| format!("{r:.3}")).unwrap_or_else(|| "null".into());
         format!(
-            "{{\"verdict\":\"{verdict}\",\"reads\":{},\"genome_depth\":{:.2},\"target\":{target},\"target_depth_ratio\":{ratio},\"warnings\":[{}],\"sites\":[{}],\"cassettes\":[{}],\"checks\":[{}]}}",
-            self.reads, self.genome_depth, warnings.join(","), sites.join(","), cassettes.join(","), checks.join(",")
+            "{{\"verdict\":\"{verdict}\",\"reads\":{},\"genome_depth\":{:.2},\"target\":{target},\"spanning\":{{\"reads\":{},\"full\":{}}},\"target_inferred\":{},\"target_depth_ratio\":{ratio},\"notes\":[{}],\"warnings\":[{}],\"sites\":[{}],\"cassettes\":[{}],\"checks\":[{}]}}",
+            self.reads, self.genome_depth, self.spanning.reads, self.spanning.full, self.target_inferred, notes.join(","), warnings.join(","), sites.join(","), cassettes.join(","), checks.join(",")
         )
     }
 }

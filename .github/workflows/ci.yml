@@ -20,6 +20,8 @@ jobs:
           cache: true
       - run: pixi run test
       - run: pixi run test-bench
+      # The long-read tests and the sweeps of the allele confirmation, in a release build.
+      - run: pixi run test-confirm
 
   wasm:
     name: WebAssembly toolchain and build

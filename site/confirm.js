@@ -219,7 +219,7 @@ $('confirm-run').addEventListener('click', async () => {
     const m = await callWorker({
       step: 'confirm', reference, construct: new TextEncoder().encode(construct), reads, kind: $('confirm-kind').value, gff,
       ...wanted, maxReads,
-      options: { minReads: Math.max(1, Math.round(number('confirm-min-reads', 3))), minDepth: number('confirm-min-depth', 10), tolerance: Math.round(number('confirm-tolerance', 20)) },
+      options: { minReads: Math.max(1, Math.round(number('confirm-min-reads', 3))), minDepth: number('confirm-min-depth', 10), tolerance: $('confirm-tolerance').value === '' ? -1 : Math.round(number('confirm-tolerance', 20)) },
     }, (p) => show('confirm-status', `Mapping: ${p.reads.toLocaleString()} reads`));
     render(m);
     show('confirm-status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s.`);
@@ -250,6 +250,7 @@ const CHECK_LABELS = {
   cassette_sequence: 'Cassette sequence',
   cassette_structure: 'Cassette structure',
   copy_number: 'Copy number',
+  whole_insertion_in_one_read: 'Whole insertion in one read',
 };
 const CHIPS = { pass: ['✓ Pass', 'pass'], fail: ['✗ Fail', 'fail'], inconclusive: ['? Unclear', 'unclear'], not_applicable: ['– n/a', 'na'] };
 
@@ -350,7 +351,10 @@ function render(m) {
   const warnings = $('confirm-warnings');
   warnings.replaceChildren(...data.warnings.map((w) => el('p', `Warning: ${w}`)));
   warnings.hidden = !data.warnings.length;
-  const target = data.target ? `The target is ${data.target.contig}:${data.target.start}-${data.target.end}. ` : 'No target was given. ';
+  const notes = $('confirm-notes');
+  notes.replaceChildren(...data.notes.map((n) => el('p', `Note: ${n}`)));
+  notes.hidden = !data.notes.length;
+  const target = data.target ? `The target is ${data.target.contig}:${data.target.start}-${data.target.end}${data.target_inferred ? ' (inferred from the homology arms of the construct)' : ''}. ` : 'No target was given. ';
   $('confirm-sites').replaceChildren(el('p', `${target}${m.reads.toLocaleString()} reads; genome median depth ${data.genome_depth}x.`, 'hint'), siteTable(data));
   const plot = depthPlot(data, m.depth);
   $('confirm-plot').replaceChildren(...(plot ? [plot] : [el('p', 'No depth to show.', 'hint')]));

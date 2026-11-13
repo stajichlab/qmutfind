@@ -142,3 +142,45 @@ fn confirm_refuses_bad_input_with_a_reason() {
     let (ok, err) = run(&[&base[..], &["--construct", "hph.fa", "--target", "nope:1-100"]].concat());
     assert!(!ok && err.contains("nope"), "{err}");
 }
+
+/// A donor: 300 bases of the genome on each side of the cassette.
+fn write_donor(dir: &Path) {
+    let genome = fs::read_to_string(dir.join("ref.fa")).unwrap().lines().nth(1).unwrap().to_string();
+    let cassette = fs::read_to_string(dir.join("hph.fa")).unwrap().lines().nth(1).unwrap().to_string();
+    fs::write(dir.join("donor.fa"), format!(">donor\n{}{}{}\n", &genome[49_700..50_000], cassette, &genome[51_500..51_800])).unwrap();
+}
+
+#[test]
+fn confirm_cuts_homology_arms_and_takes_the_target_from_them() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), false);
+    write_donor(dir.path());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["confirm", "--reference", "ref.fa", "--construct", "donor.fa", "--reads", "reads.fq", "--preset", "short", "--out-prefix", "d"])
+        .current_dir(dir.path()).output().unwrap();
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = fs::read_to_string(dir.path().join("d.confirm.txt")).unwrap();
+    assert!(text.contains("CONFIRMED") && text.contains("inferred from the homology arms") && text.contains("arms were cut off"), "{text}");
+    // This test genome shares 4 bases by chance between the start of the cassette and the genome after the arm, so the arm edge, the target start
+    // and the left flank are each uncertain by up to 4 bases (see the sweep in qmutfind-core/tests/confirm.rs).
+    let line = text.lines().find(|l| l.starts_with("  chr donor")).unwrap_or_else(|| panic!("{text}"));
+    assert!((50_000..=50_004).any(|p| line.contains(&format!("left flank {p} "))) && line.contains("right flank 51501"), "{text}");
+    assert!((50_001..=50_005).any(|p| text.contains(&format!("target chr:{p}-51500"))), "{text}");
+}
+
+#[test]
+fn confirm_keep_arms_keeps_them_and_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), false);
+    write_donor(dir.path());
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["confirm", "--reference", "ref.fa", "--construct", "donor.fa", "--reads", "reads.fq", "--preset", "short", "--out-prefix", "d", "--keep-arms", "--always-exit-zero"])
+        .current_dir(dir.path()).output().unwrap();
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = fs::read_to_string(dir.path().join("d.confirm.txt")).unwrap();
+    assert!(text.contains("Warning:") && text.contains("homology arms") && !text.contains("arms were cut off"), "{text}");
+}

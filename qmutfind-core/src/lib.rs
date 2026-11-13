@@ -19,7 +19,7 @@ mod sam;
 mod stats;
 mod vcf;
 pub use combine::{combine, Cell, Combined, CombineInput, CombineOptions, Row, Status, StrainSummary};
-pub use confirm::{find_gene, CassetteSummary, Check, CheckStatus, ConfirmOptions, Confirmer, End, Junction, Orientation, Report, Side, Site, Target, Verdict};
+pub use confirm::{find_gene, CassetteSummary, Check, CheckStatus, ConfirmOptions, Confirmer, End, Junction, Orientation, Report, Side, Site, Spanning, Target, Verdict};
 pub use context::{context_text, sequence_context, SequenceContext};
 pub use caller::{classify, Call, Caller, CallerConfig, DepthWindow, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
@@ -117,6 +117,41 @@ impl Alignment {
     /// The part of the read that this alignment covers: 0-based start and end (exclusive) on the read as it was given to the aligner.
     pub fn query_range(&self) -> (usize, usize) {
         (self.query_start, self.query_end)
+    }
+
+    /// The parts of the read that this alignment passes with an insertion of at least `min_len` bases, as query ranges (start, end exclusive), in order. A long
+    /// read that crosses an inserted cassette can come back as one alignment with such an insertion.
+    pub(crate) fn long_insertions(&self, min_len: usize) -> Vec<(usize, usize)> {
+        let mut consumed = 0usize;
+        let mut out = Vec::new();
+        for op in &self.cigar_ops {
+            match *op {
+                CigarOp::Match(n) => consumed += n as usize,
+                CigarOp::Insertion(n) => {
+                    let n = n as usize;
+                    if n >= min_len {
+                        // The operations run along the reference; on the reverse strand that is from the end of the read towards its start.
+                        out.push(if self.reverse { (self.query_end - consumed - n, self.query_end - consumed) } else { (self.query_start + consumed, self.query_start + consumed + n) });
+                    }
+                    consumed += n;
+                }
+                CigarOp::Deletion(_) => {}
+            }
+        }
+        out.sort_unstable();
+        out
+    }
+
+    /// The reference bases that the read aligns to (matches and mismatches), without the bases that the alignment skips with a deletion.
+    pub(crate) fn aligned_ref_bases(&self) -> u64 {
+        self.cigar_ops.iter().map(|op| if let CigarOp::Match(n) = *op { n as u64 } else { 0 }).sum()
+    }
+
+    /// This alignment of a part of a read, with its query range moved by `by` bases: the part started `by` bases into the whole read.
+    pub(crate) fn shifted(mut self, by: usize) -> Alignment {
+        self.query_start += by;
+        self.query_end += by;
+        self
     }
 
     /// The 0-based end on the contig (exclusive): the start plus the reference bases of the CIGAR.

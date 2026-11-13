@@ -3103,6 +3103,34 @@ def confirm_inputs(inputs):
     return inputs
 
 
+def _sim_long_reads(seq, depth, seed):
+    """Nanopore-like reads: 3 to 9 kb, about 8% errors (substitutions, insertions, deletions), both strands."""
+    import random
+    r = random.Random(seed)
+    out, total, i = [], 0, 0
+    while total < len(seq) * depth:
+        n = r.randrange(3000, 9000)
+        start = r.randrange(0, len(seq) - n)
+        read = []
+        for b in seq[start:start + n]:
+            x = r.random()
+            if x < 0.03:
+                read.append("ACGT"[("ACGT".index(b) + 1) % 4])
+            elif x < 0.055:
+                read.append(b + r.choice("ACGT"))
+            elif x < 0.08:
+                pass
+            else:
+                read.append(b)
+        read = "".join(read)
+        if r.random() < 0.5:
+            read = _revcomp(read)
+        out.append(f"@l{i}\n{read}\n+\n{'5' * len(read)}\n")
+        total += n
+        i += 1
+    return "".join(out)
+
+
 def open_confirm(driver, server, theme=None):
     driver.get(f"{server}/{CONFIRM}" + (f"?theme={theme}" if theme else ""))
     WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "confirm-run").is_displayed())
@@ -3167,6 +3195,7 @@ def test_a_replacement_is_confirmed_in_the_page_and_the_downloaded_report_equals
     kind, text = verdict_of(driver)
     assert kind == "confirmed" and text.lower().startswith("confirmed"), (kind, text)
     statuses = check_statuses(driver)
+    assert statuses.pop("whole_insertion_in_one_read") == "not_applicable", "short reads cannot cross the insertion"
     assert statuses and set(statuses.values()) == {"pass"}, statuses
     assert set(statuses) >= {"integration_found", "at_target", "target_replaced", "cassette_coverage", "copy_number"}
     sites = driver.find_element(By.ID, "confirm-sites").text
@@ -3209,15 +3238,34 @@ def test_too_little_coverage_is_inconclusive_and_says_why(driver, server, confir
     assert "coverage" in driver.find_element(By.ID, "confirm-checks").text.lower()
 
 
-def test_a_construct_with_homology_arms_shows_a_warning(driver, server, confirm_inputs):
+def test_a_donor_with_homology_arms_is_cut_the_target_is_inferred_and_a_note_says_so(driver, server, confirm_inputs):
     donor = CHR_A[49_700:50_000] + _cassette() + CHR_A[51_500:51_800]
     open_confirm(driver, server)
-    confirm_fill(driver, confirm_inputs, construct=f">donor\n{donor}\n")
+    confirm_fill(driver, confirm_inputs, construct=f">donor\n{donor}\n", target="none")
+
+    confirm_run(driver)
+
+    assert verdict_of(driver)[0] == "confirmed"
+    notes = driver.find_element(By.ID, "confirm-notes")
+    assert notes.is_displayed() and "arms" in notes.text.lower() and "inferred" in notes.text.lower(), notes.text
+    # The test cassette shares 2 bases by chance with the genome after the arm, so the inferred start can be 50001 to 50003.
+    import re
+    assert re.search(r"chrA:5000[1-3]-51500", driver.find_element(By.ID, "confirm-result").text), driver.find_element(By.ID, "confirm-result").text
+    assert not driver.find_element(By.ID, "confirm-warnings").is_displayed()
+
+
+def test_genome_sequence_inside_the_construct_shows_a_warning(driver, server, confirm_inputs):
+    cassette = _cassette()
+    inner = cassette[:1000] + CHR_A[10_000:10_400] + cassette[1000:]
+    modified = CHR_A[:50_000] + inner + CHR_A[51_500:]
+    (confirm_inputs / "inner.fq").write_text(_sim_reads(modified, 30, 5))
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, construct=f">inner\n{inner}\n", reads="inner.fq")
 
     confirm_run(driver)
 
     warnings = driver.find_element(By.ID, "confirm-warnings")
-    assert warnings.is_displayed() and "arm" in warnings.text.lower(), warnings.text
+    assert warnings.is_displayed() and "also occur in the genome" in warnings.text, warnings.text
 
 
 def test_missing_or_wrong_inputs_give_a_reason_before_or_after_the_run(driver, server, confirm_inputs):
@@ -3302,3 +3350,20 @@ def test_the_confirmation_page_has_no_sideways_scroll_on_a_phone(driver, server,
         driver.set_window_size(1300, 1000)
 
     assert widths[2] == "phone" and widths[0] <= widths[1] + 1, widths
+
+
+def test_long_reads_confirm_the_allele_and_the_whole_insertion_check_passes(driver, server, confirm_inputs):
+    cassette = _cassette()
+    modified = CHR_A[:50_000] + cassette + CHR_A[51_500:]
+    (confirm_inputs / "long.fq").write_text(_sim_long_reads(modified, 15, 6))
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="long.fq")
+    driver.find_element(By.CSS_SELECTOR, "#confirm-kind option[value='long']").click()
+
+    status = confirm_run(driver, wait=400)
+
+    assert status.startswith("Done"), status
+    kind, text = verdict_of(driver)
+    assert kind == "confirmed", (kind, text, check_statuses(driver))
+    assert check_statuses(driver)["whole_insertion_in_one_read"] == "pass"
+    assert "reads across the whole insertion" in driver.find_element(By.ID, "confirm-checks").text.lower() or "cross the whole insertion" in driver.find_element(By.ID, "confirm-checks").text.lower()
