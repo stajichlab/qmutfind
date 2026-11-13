@@ -57,7 +57,7 @@
   <div id="example-status" role="status" class="readout"></div>
 </section>
 
-<section class="panel" id="reference-section">
+<section class="panel step" id="reference-section">
   <h2><span class="num">1</span> Reference genome</h2>
   <div class="form">
     <label for="reference-source">Where is your reference genome? Choose one.</label>
@@ -100,7 +100,7 @@
   <div class="source" id="source-gff" role="status"></div>
 </section>
 
-<section class="panel" id="sample-section">
+<section class="panel step" id="sample-section">
   <h2><span class="num">2</span> Sample set</h2>
   <p class="hint">A sample is a name and one or more reads files. Use <b>+</b> to add a sample and <b>&minus;</b> to remove one. Each sample takes its
   reads from one source: an SRA run accession, https addresses (one per line), or files from your computer (select several if
@@ -114,7 +114,7 @@
     <select id="kind"><option value="short">Short reads (Illumina)</option><option value="long">Long reads (Nanopore)</option></select>
   </div>
   <div class="table-wrap"><table id="strain-table" class="grid">
-    <thead><tr><th>Sample name</th><th>Source</th><th>Reads</th><th>State</th><th>Reads used</th><th>Calls</th><th>Seconds</th><th>Note</th><th></th></tr></thead>
+    <thead><tr><th>Sample (&minus; removes it)</th><th>Source</th><th>Reads</th><th>State</th><th>Reads used</th><th>Calls</th><th>Seconds</th><th>Note</th></tr></thead>
     <tbody></tbody>
   </table></div>
   <p><button id="strain-add" type="button" aria-label="Add a sample">+ Add a sample</button>

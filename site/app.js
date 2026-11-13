@@ -825,7 +825,8 @@ function sampleRow(s) {
   row.dataset.id = String(s.id);
   const imported = s.state.startsWith('imported');
   const locked = imported || s.state === 'running' || s.state === 'done' || s.state.startsWith('done');
-  const td = (cls) => { const c = document.createElement('td'); if (cls) c.className = cls; row.appendChild(c); return c; };
+  const labels = ['Sample name', 'Source', 'Reads', 'State', 'Reads used', 'Calls', 'Seconds', 'Note'];
+  const td = (cls) => { const c = document.createElement('td'); if (cls) c.className = cls; c.dataset.label = labels[row.children.length]; row.appendChild(c); return c; };
   const edited = () => { // changing a failed or cancelled sample makes it ready to run again
     if (s.state.startsWith('failed') || s.state === 'cancelled') { s.state = 'waiting'; row.querySelector('.strain-state').textContent = 'waiting'; }
     lastCombined = null;
@@ -836,7 +837,9 @@ function sampleRow(s) {
   name.setAttribute('aria-label', 'Sample name');
   name.addEventListener('input', () => { s.name = name.value.trim(); row.dataset.name = s.name; edited(); });
   name.addEventListener('change', () => refreshChoices());
-  nameCell.appendChild(name);
+  const nameLine = Object.assign(document.createElement('div'), { className: 'name-line' });
+  nameCell.appendChild(nameLine);
+  nameLine.appendChild(name);
 
   const sourceCell = td();
   if (imported) {
@@ -846,7 +849,7 @@ function sampleRow(s) {
     source.className = 'sample-source';
     source.setAttribute('aria-label', 'Where the reads come from');
     source.disabled = locked;
-    for (const [value, label] of [['sra', 'SRA run'], ['url', 'Web addresses'], ['local', 'Files from this computer']]) source.appendChild(new Option(label, value));
+    for (const [value, label] of [['sra', 'SRA run'], ['url', 'Web addresses'], ['local', 'Local files']]) source.appendChild(new Option(label, value));
     source.value = s.source;
     sourceCell.appendChild(source);
     source.addEventListener('change', () => { s.source = source.value; edited(); showGroup(); });
@@ -910,14 +913,13 @@ function sampleRow(s) {
   note.addEventListener('input', () => { s.note = note.value.trim(); });
   noteCell.appendChild(note);
 
-  const last = td();
   const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'strain-remove', textContent: '−', disabled: s.state === 'running' });
   remove.setAttribute('aria-label', 'Remove this sample');
   remove.addEventListener('click', () => {
     const at = samples.indexOf(s);
     if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); lastCombined = null; renderSamples(); }
   });
-  last.appendChild(remove);
+  nameLine.prepend(remove); // the minus button sits in front of the name
   return row;
 }
 

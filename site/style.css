@@ -225,8 +225,26 @@ table.grid td.new { font-weight: 700; }
 
 .mode { margin: 8px 0; }
 #strain-table input[type=text], #strain-table select, #strain-table textarea { font: inherit; font-size: .85rem; width: 100%; box-sizing: border-box; }
-#strain-table td.sample-reads { min-width: 17rem; }
+#strain-table td.sample-reads { min-width: 12rem; }
 #strain-table .sample-info { white-space: pre-line; margin: 4px 0 0; }
 #strain-table button.sample-check { margin-left: 6px; font: inherit; font-size: .85rem; padding: 1px 8px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
 #read-limit-echo { margin: 2px 0 8px; }
 [hidden] { display: none !important; }
+
+#source-reference::before { content: "Reference genome: "; font-weight: 600; }
+#source-gff::before { content: "Genes: "; font-weight: 600; }
+#strain-table td:nth-child(1) { min-width: 8.5rem; }
+#strain-table td:nth-child(2) { min-width: 6.5rem; }
+#strain-table th, #strain-table td { padding-left: 5px; padding-right: 5px; }
+.name-line { display: flex; gap: 4px; align-items: center; }
+.name-line input { min-width: 0; flex: 1; }
+#strain-table td:nth-child(8) { min-width: 5.5rem; }
+@media (max-width: 720px) {
+  .table-wrap:has(#strain-table) { max-height: none; border: 0; }
+  #strain-table, #strain-table tbody, #strain-table tr, #strain-table td { display: block; width: 100%; box-sizing: border-box; }
+  #strain-table thead { display: none; }
+  #strain-table tr { border: 1px solid var(--line); border-radius: var(--radius); margin: 10px 0; padding: 6px 8px; }
+  #strain-table td { border: 0; padding: 3px 0; min-width: 0 !important; }
+  #strain-table td::before { content: attr(data-label); display: block; font-size: .78rem; font-weight: 600; opacity: .85; }
+  #strain-table td.strain-reads:empty, #strain-table td.strain-calls:empty, #strain-table td.strain-seconds:empty { display: none; }
+}
