@@ -1196,3 +1196,282 @@ def test_effect_names_in_a_vcf_are_shown_as_text_not_as_html(driver, server, inp
     assert hostile in table.text
     assert len(table.find_elements(By.CSS_SELECTOR, "img")) == 0
     assert driver.execute_script("return window.__pwned === undefined;")
+
+
+# Several strains: a list of strains, run one at a time, a catalog table, a combined table, an export and an import
+
+def plain_reads(count=10):
+    """Reads from the reference with no change: a strain without the SNP of `snp_reads`."""
+    fastq = ""
+    for i in range(count):
+        start = 49_900 + i * 10
+        fastq += f"@p{i}\n{CHR_A[start : start + 150]}\n+\n{'I' * 150}\n"
+    return fastq
+
+
+def add_strain(driver, name, r1, r2=None, note=""):
+    box = driver.find_element(By.ID, "strain-name")
+    box.clear()
+    box.send_keys(name)
+    choose(driver, "strain-r1", r1)
+    if r2:
+        choose(driver, "strain-r2", r2)
+    driver.find_element(By.ID, "strain-note").clear()
+    if note:
+        driver.find_element(By.ID, "strain-note").send_keys(note)
+    driver.find_element(By.ID, "strain-add").click()
+
+
+def strain_rows(driver):
+    return {r.get_attribute("data-name"): r for r in driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr")}
+
+
+def strain_states(driver):
+    """{name: state text}, read in one script call (the page rebuilds the table rows, so held elements go stale)."""
+    return dict(driver.execute_script(
+        "return Array.from(document.querySelectorAll('#strain-table tbody tr')).map(r => [r.dataset.name, r.querySelector('.strain-state').textContent]);"))
+
+
+def strain_state(driver, name):
+    return strain_states(driver)[name]
+
+
+def wait_all_settled(driver, wait=180):
+    WebDriverWait(driver, wait).until(lambda d: all(
+        state.split(":")[0] in ("done", "failed", "cancelled", "imported") for state in strain_states(d).values())
+        and d.find_element(By.ID, "strain-run").is_enabled())
+
+
+@pytest.fixture
+def strain_files(inputs):
+    (inputs / "parent.fq").write_text(plain_reads())
+    (inputs / "garbage.fq").write_text("this is not a fastq file\n")
+    return inputs
+
+
+def open_strains(driver, server, inputs):
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    WebDriverWait(driver, 10).until(lambda d: d.find_element(By.ID, "strain-section").is_displayed())
+
+
+def test_a_strain_is_added_with_a_name_and_reads_and_listed_as_waiting(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+
+    add_strain(driver, "parent", strain_files / "parent.fq", note="the ancestor")
+
+    assert list(strain_rows(driver)) == ["parent"]
+    row = strain_rows(driver)["parent"]
+    assert "parent.fq" in row.text and "the ancestor" in row.text
+    assert strain_state(driver, "parent") == "waiting"
+    assert driver.find_element(By.ID, "strain-name").get_attribute("value") == ""  # ready for the next strain
+
+
+def test_a_strain_needs_a_name_reads_and_a_name_that_is_not_used_yet(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+
+    driver.find_element(By.ID, "strain-name").send_keys("noreads")  # no reads file chosen yet
+    driver.find_element(By.ID, "strain-add").click()
+    assert "reads" in driver.find_element(By.ID, "strain-status").text.lower()
+    add_strain(driver, "", strain_files / "reads.fq")  # a reads file but no name
+    assert "name" in driver.find_element(By.ID, "strain-status").text.lower()
+    add_strain(driver, "one", strain_files / "reads.fq")
+    add_strain(driver, "one", strain_files / "reads.fq")
+    assert "already" in driver.find_element(By.ID, "strain-status").text.lower()
+    assert list(strain_rows(driver)) == ["one"]
+
+
+def test_a_strain_name_is_shown_as_text_and_never_as_html(driver, server, strain_files):
+    hostile = "<img src=x onerror=window.__pwned=1>"
+    open_strains(driver, server, strain_files)
+
+    add_strain(driver, hostile, strain_files / "reads.fq", note="<b>bold</b>")
+
+    assert hostile in driver.find_element(By.ID, "strain-table").text
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#strain-table img, #strain-table b")) == 0
+    assert driver.execute_script("return window.__pwned === undefined;")
+
+
+def test_run_all_maps_each_strain_in_turn_and_a_failed_strain_does_not_stop_the_others(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    add_strain(driver, "bad", strain_files / "garbage.fq")
+    add_strain(driver, "child", strain_files / "reads.fq")
+    add_strain(driver, "parent", strain_files / "parent.fq")
+
+    driver.find_element(By.ID, "strain-run").click()
+    wait_all_settled(driver)
+
+    assert strain_state(driver, "bad").startswith("failed")
+    assert strain_state(driver, "child") == "done"
+    assert strain_state(driver, "parent") == "done"
+    assert strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, ".strain-calls").text == "1"
+    assert strain_rows(driver)["parent"].find_element(By.CSS_SELECTOR, ".strain-calls").text == "0"
+    assert strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, ".strain-reads").text == "10"
+
+
+def test_run_all_without_a_reference_says_so(driver, server, strain_files):
+    open_site(driver, server)
+    driver.execute_script("document.getElementById('strain-section').hidden = false;")
+    add_strain(driver, "x", strain_files / "reads.fq")
+
+    driver.find_element(By.ID, "strain-run").click()
+
+    assert "reference" in driver.find_element(By.ID, "strain-status").text.lower()
+    assert strain_state(driver, "x") == "waiting"
+
+
+def test_cancel_stops_the_queue_and_leaves_no_strain_running(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    for name in ("a", "b", "c", "d"):
+        add_strain(driver, name, strain_files / "reads.fq")
+
+    driver.find_element(By.ID, "strain-run").click()
+    driver.find_element(By.ID, "strain-cancel").click()
+    wait_all_settled(driver)
+
+    states = {n: strain_state(driver, n).split(":")[0] for n in strain_rows(driver)}
+    assert set(states.values()) <= {"done", "cancelled"}, states
+    assert "cancelled" in states.values(), states
+
+
+def run_pair(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    add_strain(driver, "parent", strain_files / "parent.fq")
+    add_strain(driver, "child", strain_files / "reads.fq")
+    driver.find_element(By.ID, "strain-run").click()
+    wait_all_settled(driver)
+
+
+def combine(driver, parent="parent", min_depth="0"):  # the test reads are few, so a window mean is below 1
+    driver.find_element(By.CSS_SELECTOR, f"#strain-parent option[value='{parent}']").click()
+    box = driver.find_element(By.ID, "combine-min-depth")
+    box.clear()
+    box.send_keys(min_depth)
+    driver.find_element(By.ID, "strain-combine").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "combine-status").text.startswith(("Done", "Error")))
+    return driver.find_element(By.ID, "combine-status").text
+
+
+def test_combine_shows_the_new_variant_of_the_child_against_the_parent(driver, server, strain_files):
+    run_pair(driver, server, strain_files)
+
+    status = combine(driver, "parent")
+
+    assert status.startswith("Done"), status
+    rows = driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")
+    assert len(rows) == 1
+    text = rows[0].text
+    assert "50001" in text and "new" in text, text
+    tsv = download_text(driver, "download-combined")
+    assert tsv.splitlines()[0].startswith("CHROM\tPOS\tREF\tALT\tCLASS\tstrains\tparent\tchild\tparent.status\tchild.status")
+    assert tsv.splitlines()[1].endswith("\tparent\tnew")
+
+
+def test_combine_without_a_parent_gives_a_plain_table_and_the_filter_narrows_it(driver, server, strain_files):
+    run_pair(driver, server, strain_files)
+
+    assert combine(driver, "").startswith("Done")
+
+    assert "status" not in download_text(driver, "download-combined").splitlines()[0]
+    driver.find_element(By.CSS_SELECTOR, "#combined-filter option[value='shared']").click()
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")) == 0  # the SNP is in one strain only
+    driver.find_element(By.CSS_SELECTOR, "#combined-filter option[value='one']").click()
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")) == 1
+
+
+def test_combine_with_fewer_than_two_done_strains_says_so(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    add_strain(driver, "only", strain_files / "reads.fq")
+
+    driver.find_element(By.ID, "strain-combine").click()
+
+    assert "two" in driver.find_element(By.ID, "combine-status").text.lower()
+
+
+def fetch_bytes(driver, link_id):
+    href = driver.find_element(By.ID, link_id).get_attribute("href")
+    return bytes(driver.execute_async_script(
+        "const cb = arguments[arguments.length - 1]; fetch(arguments[0]).then(r => r.arrayBuffer()).then(b => cb(Array.from(new Uint8Array(b))));", href))
+
+
+def test_the_catalog_export_is_a_zip_with_the_catalog_the_files_and_the_combined_table(driver, server, strain_files):
+    import io
+    import zipfile
+
+    run_pair(driver, server, strain_files)
+    combine(driver, "parent")
+    driver.find_element(By.ID, "strain-export").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "download-catalog").get_attribute("href"))
+
+    archive = zipfile.ZipFile(io.BytesIO(fetch_bytes(driver, "download-catalog")))
+
+    names = archive.namelist()
+    assert "catalog.json" in names and "combined.tsv" in names and "summary.tsv" in names
+    catalog = json.loads(archive.read("catalog.json"))
+    assert catalog["format"] == "qmutfind-catalog" and catalog["version"] == 1
+    assert catalog["parent"] == "parent" and [s["name"] for s in catalog["strains"]] == ["parent", "child"]
+    child = catalog["strains"][1]
+    assert child["status"] == "done" and child["calls"] == 1 and child["reads"] == 10 and child["files"] == ["reads.fq"]
+    assert archive.read(child["vcf"]).decode().count("\n") > 5
+    assert archive.read(child["bed"]) and archive.read(child["evidence"])
+    assert catalog["settings"]["kind"] == "short" and catalog["settings"]["min_depth"] == 0
+    assert catalog["reference"]["name"] == "ref.fa" and catalog["qmutfind_version"]
+    assert archive.read("combined.tsv").decode() == download_text(driver, "download-combined")
+
+
+def test_an_exported_catalog_can_be_imported_again_and_combined_to_the_same_table(driver, server, strain_files, tmp_path):
+    run_pair(driver, server, strain_files)
+    first = combine(driver, "parent")
+    expected = download_text(driver, "download-combined")
+    driver.find_element(By.ID, "strain-export").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "download-catalog").get_attribute("href"))
+    (tmp_path / "catalog.zip").write_bytes(fetch_bytes(driver, "download-catalog"))
+
+    open_site(driver, server)
+    choose(driver, "catalog-file", tmp_path / "catalog.zip")
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "catalog-status").text.startswith(("Loaded", "Error")))
+
+    assert driver.find_element(By.ID, "catalog-status").text.startswith("Loaded"), driver.find_element(By.ID, "catalog-status").text
+    assert set(strain_rows(driver)) == {"parent", "child"}
+    assert strain_state(driver, "child") == "imported: done"
+    assert driver.find_element(By.ID, "strain-parent").get_attribute("value") == "parent"
+    assert combine(driver, "parent").startswith("Done") and first.startswith("Done")
+    assert download_text(driver, "download-combined") == expected
+
+
+@pytest.mark.parametrize("make,fragment", [
+    (lambda z: None, "zip"),  # not a zip at all (the file is written as text below)
+    (lambda z: z.writestr("readme.txt", "nothing"), "catalog.json"),
+    (lambda z: z.writestr("catalog.json", "{not json"), "catalog"),
+    (lambda z: z.writestr("catalog.json", json.dumps({"format": "other", "version": 1, "strains": []})), "format"),
+    (lambda z: z.writestr("catalog.json", json.dumps({"format": "qmutfind-catalog", "version": 99, "strains": []})), "version"),
+    (lambda z: z.writestr("catalog.json", json.dumps({"format": "qmutfind-catalog", "version": 1, "strains": [
+        {"name": "x", "status": "done", "vcf": "../../etc/passwd"}]})), "file"),
+])
+def test_a_bad_catalog_file_is_refused_with_a_reason_and_changes_nothing(driver, server, strain_files, tmp_path, make, fragment):
+    import zipfile
+
+    path = tmp_path / "bad.zip"
+    if fragment == "zip":
+        path.write_text("this is not a zip file")
+    else:
+        with zipfile.ZipFile(path, "w") as z:
+            make(z)
+    open_site(driver, server)
+
+    choose(driver, "catalog-file", path)
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "catalog-status").text.startswith(("Loaded", "Error")))
+
+    status = driver.find_element(By.ID, "catalog-status").text
+    assert status.startswith("Error") and fragment in status, status
+    assert strain_rows(driver) == {}
+
+
+def test_a_strain_can_be_removed_and_a_removed_strain_is_not_combined(driver, server, strain_files):
+    run_pair(driver, server, strain_files)
+
+    strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+
+    assert list(strain_rows(driver)) == ["parent"]
+    driver.find_element(By.ID, "strain-combine").click()
+    assert "two" in driver.find_element(By.ID, "combine-status").text.lower()

@@ -189,6 +189,69 @@
   <iframe id="report" title="Gene and mutation picture"></iframe>
 </section>
 
+<section class="panel" id="strain-section">
+  <h2>Several strains: run, catalog and combine</h2>
+  <p class="hint">Add one strain at a time: a name and a reads file (R2 is optional). All strains use the reference genome and the read
+  type chosen above, and each runs in its own worker, one after the other. A finished strain keeps its VCF, coverage and
+  evidence; you can combine the finished strains into one table, with an optional parent, and export the catalog as a zip.
+  Reads from your computer are read from disk; the page does not send them anywhere.</p>
+  <div class="form">
+    <label for="strain-name">Strain name</label>
+    <input id="strain-name" type="text" autocomplete="off">
+    <label for="strain-r1">Reads R1 (FASTQ, <code>.gz</code> allowed)</label>
+    <input id="strain-r1" type="file">
+    <label for="strain-r2">Reads R2 (optional)</label>
+    <input id="strain-r2" type="file">
+    <label for="strain-note">Note (optional)</label>
+    <input id="strain-note" type="text" autocomplete="off">
+    <p><button id="strain-add" type="button">Add to the list</button></p>
+  </div>
+  <div id="strain-status" class="readout" role="status"></div>
+  <div class="table-wrap"><table id="strain-table" class="grid">
+    <thead><tr><th>Strain</th><th>Reads files</th><th>State</th><th>Reads</th><th>Calls</th><th>Seconds</th><th>Note</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p><button id="strain-run" type="button" class="primary">Run the waiting strains</button> <button id="strain-cancel" type="button" hidden>Cancel</button></p>
+  <div class="form">
+    <label for="strain-parent">Parent strain (optional). The table then shows what is new in each strain.</label>
+    <select id="strain-parent"><option value="">No parent</option></select>
+    <label for="combine-min-depth">Minimum depth to call a site covered (the mean of its coverage window)</label>
+    <input id="combine-min-depth" type="number" min="0" step="1" value="5">
+    <p><button id="strain-combine" type="button">Combine the finished strains</button>
+    <button id="strain-export" type="button">Export the catalog</button>
+    <a id="download-combined" hidden>Download the table (TSV)</a>
+    <a id="download-catalog" hidden>Download the catalog (zip)</a></p>
+    <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the list.</label>
+    <input id="catalog-file" type="file" accept=".zip,application/zip">
+  </div>
+  <div id="catalog-status" class="readout" role="status"></div>
+  <div id="combine-status" class="readout" role="status"></div>
+  <div class="form">
+    <label for="combined-filter">Show in the combined table</label>
+    <select id="combined-filter">
+      <option value="all">All variants</option>
+      <option value="new">New in some strain (needs a parent)</option>
+      <option value="shared">Called in every finished strain</option>
+      <option value="one">Called in one strain only</option>
+    </select>
+  </div>
+  <div class="table-wrap"><table id="combined-table" class="grid"><thead></thead><tbody></tbody></table></div>
+  <details>
+    <summary>How the combined table is made, and its limits</summary>
+    <ul>
+      <li>One row per variant (same contig, position, REF and ALT). Each strain gets a cell: <code>AF:depth</code> for a call,
+      <code>weak</code> (some reads, below the calling thresholds), <code>ref</code> (covered, no such reads), <code>low</code>
+      (too little coverage), <code>unknown</code> (no coverage data) or <code>other</code> (a different ALT at that position).</li>
+      <li>With a parent, each other strain gets a status: <code>new</code>, <code>inherited</code>, <code>lost</code> or
+      <code>unknown</code>. A variant is never <code>new</code> when the parent has some reads for it, and never <code>lost</code>
+      when the strain has some. <code>lost</code> is a lead, not proof: it rests on a 1 kb window mean, not on the depth at the site.</li>
+      <li>All strains must use the same settings. The window size is 1 kb. The thresholds for "covered" and "weak" were not tuned.</li>
+      <li>Strains from files are read from disk when they run. An imported strain has no reads files, so it cannot run again.</li>
+      <li>The catalog is a record of this page's results. It is not saved in the browser; export it to keep it.</li>
+    </ul>
+  </details>
+</section>
+
 <section class="panel">
   <h2>How it works</h2>
   <ul>

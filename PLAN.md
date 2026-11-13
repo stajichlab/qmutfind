@@ -972,7 +972,7 @@ per file). The source line says "(first N reads of each file)".
   8.1 MB (about 160 MB expected at the default 2 M reads, extrapolated, not measured). Mapping a large kept set in the
   browser, and a limit applied to files chosen from disk, were not tested or built.
 
-## 12f. Several strains: queue, catalog, combine and parent (2026-11-12, design; core and CLI built, page not built)
+## 12f. Several strains: queue, catalog, combine and parent (2026-11-12; core, CLI, WebAssembly and page built)
 Goal: process many strains (each a reads file R1 with an optional R2) one at a time in the page, name each strain,
 keep a catalog, and combine the results, with an optional parent strain.
 
@@ -1033,3 +1033,29 @@ SRR6277228 (parent) and SRR6277229 (EVOL20_3), Af293, `rammap` + built-in, 1 kb 
 - The evidence files are large: 4.7 MB (0.32 MB gzip) for the parent and 16.7 MB (1.05 MB gzip, 180,449 records) for EVOL20.
   The low-coverage sample has more noise records at depth 2 and fraction 0.1. A floor of two alternate reads for SNP evidence
   may cut this; not tried.
+
+### The strain section of the page (2026-11-12)
+Built in `site/` (`index.html` section `#strain-section`, `app.js` "Several strains", `worker.js` `combine` step):
+- Add a strain: name (required, unique, no control characters), reads R1 (required), R2 (optional), note. Names and notes are
+  shown as text only (browser test with HTML in the name).
+- "Run the waiting strains": one strain at a time, each in a NEW worker that is stopped when the strain ends (memory goes back
+  to the browser; this also gives Cancel). A failed strain (bad reads) does not stop the queue. Cancel stops the running worker
+  and marks the rest `cancelled`; they can run again. The 3-step buttons are disabled while the queue runs.
+- Per strain the worker returns the VCF, a coverage BED with 1 kb windows, the evidence VCF, the qmutfind version, the read
+  count and the time. Settings are shared: the reference and the read type of the page.
+- Combine (needs two finished strains): parent select, minimum depth box (default 5), table with a filter (all, new in some strain,
+  called in every strain, called in one strain), TSV download. Warnings go to the status line.
+- Export: one zip with `catalog.json` (format `qmutfind-catalog`, version 1, reference name and size, settings, parent, one entry
+  per strain with files, reads, calls, seconds, version), the strain files and, after a combine, `combined.tsv` and
+  `summary.tsv`. Import reads such a zip back (size limit 500 MB for the zip and for the total unpacked size; at most 1000
+  strains; every file named in the catalog must be in the zip; bad input changes nothing). Imported strains cannot run again.
+- Not built: saving the catalog in the browser (IndexedDB). The evidence VCFs are large (see above); a quota and a gzip format
+  would have to be measured first. Export is the record. Web sources (SRA, https) for strain reads are not wired to the list.
+
+- LIVE CHECK of the strain queue on the real pair (2026-11-12, headless Firefox on the cluster, Af293 gzip reference, each
+  strain with R1 and R2 as two reads files, parent first): the queue took 200.7 s in all (parent 6,074,768 reads, 61 calls,
+  135.6 s; EVOL20 2,854,974 reads, 31 calls, 62.9 s; native runs of the same data took 90.3 s and 42.2 s). The combined table
+  with the parent (70 variants) is byte-identical to `qmutfind combine` on the CLI VCF, BED and evidence files of the same
+  data. Browser memory during the queue was not measured. Chrome and Safari were not tested.
+- Test note: the browser tests read the state of the table in one script call, because the page rebuilds the rows and a held
+  element goes stale (this made two tests flaky before the fix; three full runs passed after it).

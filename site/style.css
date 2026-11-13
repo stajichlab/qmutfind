@@ -162,13 +162,13 @@ html[data-theme="quest"] { --plot-snp: #0000AA; --plot-indel: #6B3F00; --plot-la
 .source.from-web::before { content: "\2197  "; }
 textarea { font: inherit; background: var(--field-bg); color: var(--panel-fg); border: 1px solid var(--field-line); border-radius: var(--radius); padding: 5px 8px; width: 100%; }
 details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
-#web-section button:not(.primary), #genome-section button:not(.primary) { font: inherit; padding: 3px 12px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
+#web-section button:not(.primary), #genome-section button:not(.primary), #strain-section button:not(.primary) { font: inherit; padding: 3px 12px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
 
 /* Steps, tables and the variant list (all themes) */
 .step h2 .num { display: inline-block; min-width: 1.6em; text-align: center; margin-right: 6px; padding: 0 4px; background: var(--accent); color: var(--accent-fg); border-radius: var(--radius); }
 .hint { color: var(--muted); margin-top: 0; }
-table.stats, #variant-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: .92rem; }
-table.stats th, table.stats td, #variant-table th, #variant-table td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; vertical-align: top; }
+table.stats, #variant-table, table.grid { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: .92rem; }
+table.stats th, table.stats td, #variant-table th, #variant-table td, table.grid th, table.grid td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: left; vertical-align: top; }
 table.stats th { width: 42%; font-weight: 600; }
 #variant-table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); margin: 8px 0; }
 #variant-table th { position: sticky; top: 0; background: var(--panel); }
@@ -214,3 +214,11 @@ button.primary:disabled { opacity: .55; cursor: wait; }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #e8a400; outline-offset: 2px; }
 @media (max-width: 560px) { .frame { padding: 12px; } h1 { font-size: 1.4rem; } }
 @media (prefers-reduced-motion: reduce) { html[data-theme="lab"] .mark, html[data-theme="lab"] #status::after { animation: none; } }
+
+table.grid { font-size: .88rem; }
+table.grid td.new { font-weight: 700; }
+#download-combined, #download-catalog { margin-left: 8px; }
+#strain-table button.strain-remove { font: inherit; font-size: .85rem; padding: 1px 8px; border: 1px solid var(--field-line); background: var(--field-bg); color: var(--panel-fg); border-radius: var(--radius); cursor: pointer; }
+.table-wrap { overflow: auto; max-height: 420px; border: 1px solid var(--line); margin: 8px 0; }
+.table-wrap table.grid { margin: 0; }
+.table-wrap th { position: sticky; top: 0; background: var(--panel); }

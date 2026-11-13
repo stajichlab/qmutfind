@@ -1,5 +1,5 @@
 // The page: three steps (call, summarize, draw). The result of each step is kept here and the next step uses it.
-import { Gunzip, Gzip } from './vendor/fflate.js';
+import { Gunzip, Gzip, zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js';
 
 const $ = (id) => document.getElementById(id);
 const worker = new Worker('worker.js', { type: 'module' });
@@ -805,5 +805,308 @@ $('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
   show('web-status', `Loaded: ${wanted.filter(([, , l]) => l.length).map(([, label]) => label).join(', ')}.` +
     (changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''));
 }));
+
+// ---- Several strains ------------------------------------------------------------------------------------------
+// A list of strains (a name and a reads file, R2 optional). The queue maps one strain at a time, each in its own worker, which
+// is stopped afterwards, so the memory of one strain is given back before the next starts. A finished strain keeps its VCF,
+// coverage BED and evidence VCF (text). `combine_tables` (WebAssembly) joins the finished strains. The catalog (settings and
+// files) is exported as a zip and can be imported again. Strains from an import have no reads files and cannot run again.
+const DEPTH_WINDOW = 1000; // bases per coverage window for strains (steps 1 to 3 keep 10 kb)
+const CATALOG_FORMAT = 'qmutfind-catalog';
+const CATALOG_VERSION = 1;
+const MAX_CATALOG_BYTES = 500e6; // the zip and the total of its files
+const strains = []; // { name, note, r1, r2, files, state, reads, calls, seconds, vcf, bed, evidence, version }
+let strainRunning = false;
+let strainCancelled = false;
+let activeStrainWorker = null;
+let lastCombined = null; // { table, summary, parent, minDepth }
+
+const strainByName = (name) => strains.find((s) => s.name === name);
+const isFinished = (s) => Boolean(s.vcf);
+
+/** Run one message in a worker of its own. The worker is stopped when the answer comes, or when the queue is cancelled. */
+function callWorker(message, onProgress) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker('worker.js', { type: 'module' });
+    activeStrainWorker = { w, reject };
+    const finish = () => { w.terminate(); if (activeStrainWorker && activeStrainWorker.w === w) activeStrainWorker = null; };
+    w.onmessage = (event) => {
+      const m = event.data;
+      if (m.type === 'progress' && onProgress) onProgress(m);
+      if (m.type === 'error') { finish(); reject(new Error(m.message)); }
+      if (m.type === 'done') { finish(); resolve(m); }
+    };
+    w.onerror = (event) => { finish(); reject(new Error(event.message || 'the worker stopped')); };
+    w.postMessage({ limit: LIMIT_BYTES, ...message });
+  });
+}
+
+function renderStrains() {
+  const body = $('strain-table').querySelector('tbody');
+  body.replaceChildren();
+  for (const s of strains) {
+    const row = document.createElement('tr');
+    row.dataset.name = s.name;
+    const cell = (text, cls) => { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; row.appendChild(td); return td; };
+    cell(s.name, 'strain-name-cell');
+    cell(s.files.join(', '));
+    cell(s.state, 'strain-state');
+    cell(s.reads === undefined ? '' : String(s.reads), 'strain-reads');
+    cell(s.calls === undefined ? '' : String(s.calls), 'strain-calls');
+    cell(s.seconds === undefined ? '' : s.seconds.toFixed(1), 'strain-seconds');
+    cell(s.note || '', 'strain-note-cell');
+    const last = document.createElement('td');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'strain-remove';
+    remove.textContent = 'Remove';
+    remove.disabled = s.state === 'running';
+    remove.addEventListener('click', () => {
+      const at = strains.indexOf(s);
+      if (at >= 0 && s.state !== 'running') { strains.splice(at, 1); lastCombined = null; renderStrains(); }
+    });
+    last.appendChild(remove);
+    row.appendChild(last);
+    body.appendChild(row);
+  }
+  const select = $('strain-parent');
+  const keep = select.value;
+  select.replaceChildren(new Option('No parent', ''));
+  for (const s of strains) select.appendChild(new Option(s.name, s.name));
+  select.value = strains.some((s) => s.name === keep) ? keep : '';
+}
+
+const strainStatus = (text) => show('strain-status', text);
+
+$('strain-add').addEventListener('click', () => {
+  const name = $('strain-name').value.trim();
+  const r1 = $('strain-r1').files[0];
+  const r2 = $('strain-r2').files[0] || null;
+  if (!name) { strainStatus('Give the strain a name.'); return; }
+  if (/[\u0000-\u001f]/.test(name)) { strainStatus('The strain name must not hold a tab or a line break.'); return; }
+  if (!r1) { strainStatus('Choose a reads file (R1) for the strain.'); return; }
+  if (strainByName(name)) { strainStatus(`A strain named "${name}" is already in the list.`); return; }
+  strains.push({ name, note: $('strain-note').value.trim(), r1, r2, files: [r1.name, ...(r2 ? [r2.name] : [])], state: 'waiting' });
+  lastCombined = null;
+  $('strain-name').value = '';
+  $('strain-note').value = '';
+  $('strain-r1').value = '';
+  $('strain-r2').value = '';
+  strainStatus(`Added ${name}. ${strains.length} strain(s) in the list.`);
+  renderStrains();
+});
+
+$('strain-cancel').addEventListener('click', () => {
+  strainCancelled = true;
+  if (activeStrainWorker) { activeStrainWorker.w.terminate(); activeStrainWorker.reject(new DOMException('cancelled', 'AbortError')); activeStrainWorker = null; }
+});
+
+$('strain-run').addEventListener('click', async () => {
+  if (strainRunning || busy || loading) { strainStatus('Something else is running. Wait until it has finished.'); return; }
+  const reference = refFile();
+  if (!reference) { strainStatus('Choose the reference genome in "Your files" first.'); return; }
+  if (!strains.some((s) => s.state === 'waiting' || s.state === 'cancelled')) { strainStatus('No strain is waiting.'); return; }
+  strainRunning = true;
+  strainCancelled = false;
+  setBusy(true);
+  $('strain-run').disabled = true;
+  $('strain-cancel').hidden = false;
+  try {
+    for (;;) {
+      const next = strains.find((s) => s.state === 'waiting' || s.state === 'cancelled');
+      if (!next || strainCancelled) break;
+      next.state = 'running';
+      renderStrains();
+      strainStatus(`Running ${next.name}`);
+      try {
+        const m = await callWorker({
+          step: 'run', reference, reads: [next.r1, ...(next.r2 ? [next.r2] : [])], sample: next.name, kind: $('kind').value,
+          depthWindow: DEPTH_WINDOW, evidence: true,
+        }, (p) => strainStatus(`Running ${next.name}: ${p.reads.toLocaleString()} reads mapped`));
+        Object.assign(next, {
+          state: 'done', reads: m.reads, seconds: m.seconds, vcf: m.vcf, bed: m.depth, evidence: m.evidence, version: m.version,
+          calls: m.vcf.split('\n').filter((l) => l && l[0] !== '#').length,
+        });
+      } catch (error) {
+        next.state = error.name === 'AbortError' ? 'cancelled' : `failed: ${error.message}`;
+      }
+      lastCombined = null;
+      renderStrains();
+    }
+    if (strainCancelled) for (const s of strains) if (s.state === 'waiting') s.state = 'cancelled';
+    strainStatus(strainCancelled ? 'Cancelled. Strains that were not finished can run again.' : 'Done. Combine the finished strains, or export the catalog.');
+  } finally {
+    strainRunning = false;
+    setBusy(false);
+    $('strain-run').disabled = false;
+    $('strain-cancel').hidden = true;
+    renderStrains();
+  }
+});
+
+// The combined table
+function renderCombined() {
+  const head = $('combined-table').querySelector('thead');
+  const body = $('combined-table').querySelector('tbody');
+  head.replaceChildren();
+  body.replaceChildren();
+  if (!lastCombined) return;
+  const lines = lastCombined.table.split('\n').filter(Boolean).map((l) => l.split('\t'));
+  const header = lines[0];
+  const names = lastCombined.names;
+  const nStrains = names.length;
+  const firstCell = 6;
+  const hasStatus = header.length > firstCell + nStrains;
+  const filter = $('combined-filter').value;
+  const keep = (f) => {
+    const cells = f.slice(firstCell, firstCell + nStrains);
+    const called = cells.filter((c) => /^[0-9.]+:\d+$/.test(c)).length;
+    if (filter === 'shared') return called === nStrains;
+    if (filter === 'one') return called === 1;
+    if (filter === 'new') return hasStatus && f.slice(firstCell + nStrains).includes('new');
+    return true;
+  };
+  const tr = document.createElement('tr');
+  for (const h of header) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
+  head.appendChild(tr);
+  const rows = lines.slice(1).filter(keep);
+  for (const f of rows.slice(0, MAX_ROWS)) {
+    const row = document.createElement('tr');
+    for (const text of f) { const td = document.createElement('td'); td.textContent = text; if (text === 'new') td.className = 'new'; row.appendChild(td); }
+    body.appendChild(row);
+  }
+  if (rows.length > MAX_ROWS) {
+    const row = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = header.length;
+    td.textContent = `Showing the first ${MAX_ROWS} of ${rows.length.toLocaleString()} rows. The download has all of them.`;
+    row.appendChild(td);
+    body.appendChild(row);
+  }
+}
+$('combined-filter').addEventListener('change', renderCombined);
+
+$('strain-combine').addEventListener('click', async () => {
+  const done = strains.filter(isFinished);
+  if (done.length < 2) { show('combine-status', 'Combine needs at least two finished strains.'); return; }
+  const minDepth = Number($('combine-min-depth').value);
+  if (!Number.isFinite(minDepth) || minDepth < 0) { show('combine-status', 'The minimum depth must be a number, 0 or more.'); return; }
+  const parent = $('strain-parent').value;
+  if (parent && !done.some((s) => s.name === parent)) { show('combine-status', `The parent ${parent} has no finished result.`); return; }
+  show('combine-status', 'Combining');
+  try {
+    const m = await callWorker({
+      step: 'combine', names: done.map((s) => s.name), vcfs: done.map((s) => s.vcf), beds: done.map((s) => s.bed || ''),
+      evidence: done.map((s) => s.evidence || ''), parent: parent || undefined, minDepth,
+    });
+    lastCombined = { table: m.table, summary: m.summary, parent, minDepth, names: done.map((s) => s.name) };
+    offer('download-combined', 'combined.tsv', m.table, 'text/tab-separated-values');
+    renderCombined();
+    const n = m.table.split('\n').filter(Boolean).length - 1;
+    show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} strains.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
+  } catch (error) {
+    show('combine-status', `Error: ${error.message}`);
+  }
+});
+
+// Export and import
+function catalogFileName(index, name, extension) {
+  const safe = name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60) || 'strain';
+  return `strains/${String(index + 1).padStart(2, '0')}_${safe}.${extension}`;
+}
+
+$('strain-export').addEventListener('click', () => {
+  if (!strains.length) { show('catalog-status', 'The list is empty. Add strains first.'); return; }
+  const files = {};
+  const entries = strains.map((s, i) => {
+    const entry = { name: s.name, note: s.note || '', files: s.files, status: s.state.split(':')[0] === 'imported' ? s.state.slice('imported: '.length) : s.state.split(':')[0] };
+    if (s.state.startsWith('failed')) entry.error = s.state.slice('failed: '.length);
+    if (isFinished(s)) {
+      Object.assign(entry, { reads: s.reads, calls: s.calls, seconds: s.seconds, qmutfind_version: s.version || '' });
+      entry.vcf = catalogFileName(i, s.name, 'vcf');
+      files[entry.vcf] = strToU8(s.vcf);
+      if (s.bed) { entry.bed = catalogFileName(i, s.name, 'depth.bed'); files[entry.bed] = strToU8(s.bed); }
+      if (s.evidence) { entry.evidence = catalogFileName(i, s.name, 'evidence.vcf'); files[entry.evidence] = strToU8(s.evidence); }
+    }
+    return entry;
+  });
+  const reference = refFile();
+  const catalog = {
+    format: CATALOG_FORMAT, version: CATALOG_VERSION, created: new Date().toISOString(),
+    qmutfind_version: (strains.find((s) => s.version) || {}).version || '',
+    reference: reference ? { name: reference.name, size: reference.size } : null,
+    settings: { kind: $('kind').value, depth_window: DEPTH_WINDOW, min_depth: lastCombined ? lastCombined.minDepth : Number($('combine-min-depth').value) },
+    parent: $('strain-parent').value || '',
+    strains: entries,
+  };
+  files['catalog.json'] = strToU8(JSON.stringify(catalog, null, 1));
+  if (lastCombined) { files['combined.tsv'] = strToU8(lastCombined.table); files['summary.tsv'] = strToU8(lastCombined.summary); }
+  offer('download-catalog', 'qmutfind-catalog.zip', zipSync(files), 'application/zip');
+  show('catalog-status', `Exported ${strains.length} strain(s). Use the download link.`);
+});
+
+/** Check an imported catalog and return the strains to load. Throws an Error with a reason. */
+function readCatalog(archive) {
+  const raw = archive['catalog.json'];
+  if (!raw) throw new Error('the zip has no catalog.json, so it is not a qmutfind catalog.');
+  let catalog;
+  try { catalog = JSON.parse(strFromU8(raw)); } catch (error) { throw new Error('catalog.json is not valid JSON (catalog unreadable).'); }
+  if (!catalog || catalog.format !== CATALOG_FORMAT) throw new Error(`catalog.json has the format "${catalog && catalog.format}", not ${CATALOG_FORMAT}.`);
+  if (catalog.version !== CATALOG_VERSION) throw new Error(`catalog.json has version ${catalog.version}; this page reads version ${CATALOG_VERSION}.`);
+  if (!Array.isArray(catalog.strains) || catalog.strains.length > 1000) throw new Error('catalog.json lists no strains, or too many (limit 1000).');
+  const text = (path) => {
+    if (typeof path !== 'string' || !Object.prototype.hasOwnProperty.call(archive, path)) throw new Error(`catalog.json refers to the file "${path}", which is not in the zip.`);
+    return strFromU8(archive[path]);
+  };
+  const names = new Set();
+  const loaded = catalog.strains.map((e) => {
+    if (!e || typeof e.name !== 'string' || !e.name.trim() || /[\u0000-\u001f]/.test(e.name)) throw new Error('catalog.json has a strain without a valid name.');
+    if (names.has(e.name)) throw new Error(`catalog.json lists the strain name "${e.name}" more than once.`);
+    names.add(e.name);
+    const s = { name: e.name, note: typeof e.note === 'string' ? e.note : '', files: Array.isArray(e.files) ? e.files.map(String) : [], state: `imported: ${String(e.status || 'unknown')}` };
+    if (e.vcf !== undefined) {
+      s.vcf = text(e.vcf);
+      if (e.bed !== undefined) s.bed = text(e.bed);
+      if (e.evidence !== undefined) s.evidence = text(e.evidence);
+      for (const k of ['reads', 'calls', 'seconds']) if (typeof e[k] === 'number') s[k] = e[k];
+      s.version = typeof e.qmutfind_version === 'string' ? e.qmutfind_version : '';
+    }
+    return s;
+  });
+  return { catalog, loaded };
+}
+
+$('catalog-file').addEventListener('change', async () => {
+  const file = $('catalog-file').files[0];
+  if (!file) return;
+  try {
+    if (file.size > MAX_CATALOG_BYTES) throw new Error(`the file is too large (${mb(file.size)}; the limit is ${mb(MAX_CATALOG_BYTES)}).`);
+    let total = 0;
+    let archive;
+    try {
+      archive = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+        filter: (f) => { total += f.originalSize; if (total > MAX_CATALOG_BYTES) throw new Error('too large'); return true; },
+      });
+    } catch (error) {
+      throw new Error(error.message === 'too large' ? `the zip unpacks to more than ${mb(MAX_CATALOG_BYTES)}.` : 'the file is not a zip file that this page can read.');
+    }
+    const { catalog, loaded } = readCatalog(archive);
+    strains.splice(0, strains.length, ...loaded);
+    lastCombined = null;
+    renderStrains();
+    renderCombined();
+    const settings = catalog.settings || {};
+    if (['short', 'long'].includes(settings.kind)) $('kind').value = settings.kind;
+    if (Number.isFinite(settings.min_depth)) $('combine-min-depth').value = String(settings.min_depth);
+    if (typeof catalog.parent === 'string' && strainByName(catalog.parent)) $('strain-parent').value = catalog.parent;
+    show('catalog-status', `Loaded ${loaded.length} strain(s) from ${file.name}${catalog.reference ? ` (made with the reference ${catalog.reference.name})` : ''}. Imported strains cannot run again.`);
+  } catch (error) {
+    show('catalog-status', `Error: ${error.message}`);
+  } finally {
+    $('catalog-file').value = '';
+  }
+});
+
+renderStrains();
 
 describeSources();

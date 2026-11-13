@@ -89,3 +89,12 @@ test('the session evidence VCF equals the CLI --evidence-out file', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('combine_tables returns the warnings as a third text, and version() gives the package version', () => {
+  const bad = '##fileformat=VCFv4.2\n##contig=<ID=chrA,length=3000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n';
+  const [, , warnings] = wasm.combine_tables(['a'], [bad], ['chrZ\t0\t1000\t30\n'], [''], undefined, 5);
+  assert.match(warnings, /chrZ/);
+  const [, , none] = wasm.combine_tables(['a'], [bad], [''], [''], undefined, 5);
+  assert.equal(none, '');
+  assert.match(wasm.version(), /^\d+\.\d+\.\d+/);
+});

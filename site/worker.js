@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, annotate, stats, report, genome_plot, depth_plot } from './pkg-web/qmutfind_wasm.js';
+import init, { Session, annotate, stats, report, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -64,12 +64,12 @@ async function vcfText(source) {
   return typeof source === 'string' ? source : new TextDecoder().decode(await readAll(source));
 }
 
-async function run({ reference, reads, sample, kind }) {
+async function run({ reference, reads, sample, kind, depthWindow, evidence }) {
   const started = performance.now();
   postMessage({ step: 'run', type: 'status', text: 'Reading the reference and building the index' });
   const fasta = await bytesOf('reference', reference);
   const session = new Session(fasta, kind, sample);
-  let reads_mapped, vcf, depth;
+  let reads_mapped, vcf, depth, evidenceVcf;
   try {
     let lastReport = 0;
     for (const file of reads) {
@@ -85,11 +85,12 @@ async function run({ reference, reads, sample, kind }) {
     }
     reads_mapped = session.read_count();
     vcf = session.vcf();
-    depth = session.depth_bed(10000);
+    depth = session.depth_bed(depthWindow || 10000);
+    if (evidence) evidenceVcf = session.evidence_vcf();
   } finally {
     session.free(); // also after an error: a failed run must not keep its index and counts (about 460 MB for Af293)
   }
-  postMessage({ step: 'run', type: 'done', vcf, depth, reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
+  postMessage({ step: 'run', type: 'done', vcf, depth, evidence: evidenceVcf, version: version(), reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
 }
 
 async function summarize({ vcf, bed, reference, order }) {
@@ -128,7 +129,13 @@ async function memory() {
   postMessage({ step: 'memory', type: 'done', bytes: exports.memory.buffer.byteLength });
 }
 
-const handlers = { run, summarize, annotate: annotateStep, report: reportStep, memory };
+// The combined table of several strains (see `combine_tables`).
+async function combineStep({ names, vcfs, beds, evidence, parent, minDepth }) {
+  const [table, summary, warnings] = combine_tables(names, vcfs, beds, evidence, parent, minDepth);
+  postMessage({ step: 'combine', type: 'done', table, summary, warnings });
+}
+
+const handlers = { run, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
 
 self.onmessage = async (event) => {
   const { step } = event.data;
