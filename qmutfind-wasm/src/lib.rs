@@ -90,6 +90,16 @@ pub fn annotate(vcf: &str, reference_fasta: &[u8], gff: Option<Vec<u8>>) -> Resu
     qmutfind_core::annotate_text(vcf, reference_fasta, gff.as_deref()).map_err(|e| JsError::new(&e))
 }
 
+/// The sequence around one variant as aligned text rows (or as HTML with the changed columns in spans). `reference_fasta` and `gff` are plain
+/// bytes; `reference` and `alt` are in VCF form. Same text as `qmutfind context`.
+#[wasm_bindgen]
+pub fn context(reference_fasta: &[u8], gff: Option<Vec<u8>>, contig: &str, pos: f64, reference: &str, alt: &str, flank: u32, html: bool) -> Result<String, JsError> {
+    if !(pos >= 1.0 && pos.fract() == 0.0 && pos < 4.0e9) {
+        return Err(JsError::new("the position must be a whole number of 1 or more"));
+    }
+    qmutfind_core::context_text(reference_fasta, gff.as_deref(), contig, pos as u64, reference, alt, flank as u64, html).map_err(|e| JsError::new(&e))
+}
+
 /// Summary statistics of VCF text as JSON. `window` is the distance in bases for the clustering count.
 #[wasm_bindgen]
 pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {

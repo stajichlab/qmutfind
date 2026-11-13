@@ -278,3 +278,9 @@ html[data-layout="phone"] .form select, html[data-layout="phone"] .form input, h
 html[data-layout="phone"] select#genome-menu { width: 100%; max-width: 100%; box-sizing: border-box; }
 html[data-layout="phone"] label { display: block; overflow-wrap: anywhere; }
 html[data-layout="phone"] select { text-overflow: ellipsis; }
+
+/* The sequence around a variant: a monospace block that scrolls sideways; the rows must line up, so nothing wraps. */
+pre.context { font-family: var(--mono); font-size: .9rem; line-height: 1.35; white-space: pre; overflow-x: auto; margin: 8px 0; padding: 8px 10px; }
+pre.context .ctx-var { background: var(--accent); color: var(--accent-fg); font-weight: 700; }
+pre.context .ctx-aa { font-weight: 700; text-decoration: underline; }
+h3.sub { margin: 14px 0 4px; font-size: 1.05rem; }

@@ -1,0 +1,77 @@
+variants compared: 1,498,945   (SNV 1,491,951, indel 6,994)
+
+== effect class (AGREE = snpEff gives a term that means the qmutfind label; CONVENTION = known difference of definition; DIFFER = other)
+  SNV: agree 1,485,576 (99.573%), convention 6,315 (0.423%), differ 60 (0.004%) of 1,491,951
+  indel: agree 6,771 (96.812%), convention 52 (0.743%), differ 171 (2.445%) of 6,994
+
+  by qmutfind label: total, agree, convention, differ
+    SNV   missense               587,950   587,950       0      0
+    SNV   intergenic             244,713   244,713       0      0
+    SNV   synonymous             192,958   192,958       0      0
+    SNV   intron_derived         154,749   154,713       0     36
+    SNV   5UTR_derived           143,124   141,591   1,533      0
+    SNV   3UTR_derived           106,917   103,704   3,213      0
+    SNV   nonsense                31,211    31,211       0      0
+    SNV   splice_site             20,710    20,686       0     24
+    SNV   stop_lost                4,540     4,540       0      0
+    SNV   start_lost               4,512     3,510   1,002      0
+    SNV   non_coding                 567         0     567      0
+    indel frameshift               2,208     2,198       0     10
+    indel intergenic               1,195     1,195       0      0
+    indel intron_derived           1,045     1,045       0      0
+    indel 5UTR_derived               570       554      13      3
+    indel inframe_deletion           502       500       0      2
+    indel inframe_insertion          491       489       0      2
+    indel splice_site                409       338       0     71
+    indel 3UTR_derived               373       353      20      0
+    indel complex                     98         0      19     79
+    indel nonsense                    77        76       0      1
+    indel stop_lost                   16        13       0      3
+    indel start_lost                  10        10       0      0
+
+== conventions seen
+      4,798  snpEff gives only splice_region_variant (its convention near an exon edge); qmutfind labels the position by the exons
+      1,002  qmutfind start_lost / snpEff initiator_codon_variant (a change to another start codon of the table, e.g. ATG to CTG)
+        567  qmutfind non_coding / snpEff intragenic_variant (a feature that is not a protein-coding transcript)
+
+== DIFFER: qmutfind label -> snpEff term (the 25 most common)
+         36  qmutfind splice_site          snpEff splice_region_variant&intron_variant
+         36  qmutfind intron_derived       snpEff intragenic_variant
+         26  qmutfind splice_site          snpEff frameshift_variant&splice_region_variant
+         17  qmutfind complex              snpEff frameshift_variant&start_lost
+         17  qmutfind complex              snpEff 5_prime_UTR_variant
+         15  qmutfind complex              snpEff frameshift_variant&stop_lost&splice_region_variant
+         12  qmutfind splice_site          snpEff intragenic_variant
+         11  qmutfind splice_site          snpEff 5_prime_UTR_variant
+         10  qmutfind complex              snpEff stop_lost&conservative_inframe_deletion&splice_region_variant
+          8  qmutfind frameshift           snpEff splice_donor_variant&intron_variant
+          6  qmutfind complex              snpEff intergenic_region
+          6  qmutfind complex              snpEff start_lost&conservative_inframe_deletion
+          4  qmutfind splice_site          snpEff disruptive_inframe_insertion&splice_region_variant
+          4  qmutfind complex              snpEff frameshift_variant&splice_region_variant
+          3  qmutfind stop_lost            snpEff disruptive_inframe_deletion
+          2  qmutfind splice_site          snpEff disruptive_inframe_deletion&splice_region_variant
+          2  qmutfind inframe_insertion    snpEff splice_donor_variant&intron_variant
+          2  qmutfind inframe_deletion     snpEff frameshift_variant&splice_donor_variant&splice_region_variant&intron_variant
+          1  qmutfind complex              snpEff frameshift_variant
+          1  qmutfind frameshift           snpEff splice_donor_variant&conservative_inframe_deletion&splice_region_variant&intron_variant
+          1  qmutfind 5UTR_derived         snpEff start_lost&conservative_inframe_deletion
+          1  qmutfind complex              snpEff exon_loss_variant&splice_region_variant
+          1  qmutfind nonsense             snpEff disruptive_inframe_insertion&splice_region_variant
+          1  qmutfind 5UTR_derived         snpEff frameshift_variant&start_lost
+          1  qmutfind splice_site          snpEff conservative_inframe_deletion&splice_region_variant
+
+== protein change (variants that agree on class and where both give a change; HGVS.p turned into one-letter form)
+   exact comparison for missense, nonsense and in-frame changes; for start_lost, stop_lost and frameshift the residue and position only
+  SNV: 820,169 of 820,169 equal = 100.0000%
+  indel: 2,188 of 2,198 equal = 99.5450%
+    SNV   missense               587,950 /   587,950
+    SNV   nonsense                31,211 /    31,211
+    SNV   start_lost               3,510 /     3,510
+    SNV   stop_lost                4,540 /     4,540
+    SNV   synonymous             192,958 /   192,958
+    indel frameshift               2,188 /     2,198
+
+== gene and transcript (variants that qmutfind puts in a gene)
+  SNV: same transcript 1,246,611 of 1,247,238 (99.9497%); snpEff names the same gene but another transcript or lists it later 627; other 0
+  indel: same transcript 5,793 of 5,799 (99.8965%); snpEff names the same gene but another transcript or lists it later 0; other 6

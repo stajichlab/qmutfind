@@ -53,6 +53,30 @@ large_indel_in_cds, intergenic, unannotated), `GENE`, `TRANSCRIPT`, `AA` (for ex
 UTRs and introns are derived from the exons and the CDS. Without `--gff` every record is `unannotated`.
 `NUCCORE` is the NCBI nucleotide accession of the transcript, when the mRNA line of the GFF3 gives one (a `GenBank:` entry in `Dbxref`, as RefSeq files do, or a `transcript_id` that is an accession); a GFF3 without either has no `NUCCORE` tag. In the web page, "Link the Gene column to" makes the gene a link to FungiDB (`https://fungidb.org/gene/GENE`) or to `https://www.ncbi.nlm.nih.gov/nuccore/ACCESSION`; a gene without an accession is not linked in the NCBI mode.
 
+`qmutfind context` shows the sequence around one variant as aligned text rows (it is the text under the locus drawing in the web page):
+
+```bash
+qmutfind context --reference ref.fa.gz --gff genes.gff3.gz --variant NC_007194.1:300:G:A [--flank 40] [--html] [--out FILE]
+```
+
+```
+NC_007194.1:300 G>A  gene AFUA_1G00100 (rna-XM_001481640.2, plus strand)  effect missense V29I
+position    260       270       280       290       300       310       320       330
+marker                                              ^
+reference   GTTTTCAGCGTTCAAGGAGGTCCCGTGTATGCTGTTCTGCGTAGCGATGTTCTTTGGTTATATTGGATTCTTCAACCCCAT
+ref protein   F  S  A  F  K  E  V  P  C  M  L  F  C  V  A  M  F  F  G  Y  I  G  F  F  N  P  I
+variant     GTTTTCAGCGTTCAAGGAGGTCCCGTGTATGCTGTTCTGCATAGCGATGTTCTTTGGTTATATTGGATTCTTCAACCCCAT
+var protein   F  S  A  F  K  E  V  P  C  M  L  F  C  I  A  M  F  F  G  Y  I  G  F  F  N  P  I
+```
+
+Exon bases are capitals and all other bases are small letters. `^` marks the changed column. The protein letter sits under the middle
+base of its codon (a codon that an intron splits is translated across the junction). An insertion adds a column with `-` in the reference
+row, and a deletion puts `-` in the variant row. After a frameshift the variant protein reads on in the new frame, into the 3' UTR if needed.
+A gene on the minus strand is shown as it reads (the reverse complement of the reference). Outside genes the rows show the forward strand and
+no protein. `--flank` is the number of bases on each side (default 40, at least 1). `--variant` is `CONTIG:POS:REF:ALT` in VCF form (an indel has
+one anchor base). The command stops with a reason when the contig is missing or when REF does not match the reference. `--html` writes the same
+text with the changed columns in `<span>` tags. The WASM function `context` gives the same text.
+
 `qmutfind stats --vcf FILE --out-prefix P` writes `P.stats.json` and `P.stats.tsv`: counts by class and effect,
 Ts/Tv, the substitution spectrum, indel lengths, density per contig, an allele-fraction histogram, the share
 of calls with a fraction from 0.2 to 0.8, and clustering.
@@ -150,6 +174,76 @@ writes the evidence VCF).
 downloads 137 MB from ENA (ENA allows this too). The page checks each download's size and the read count. See
 `site/example/README.txt` for the sources. `?example=PATH` uses another manifest, but only a path on the site.
 
+## Validation of the annotation
+
+The annotation (effect class, protein change, gene and transcript) was compared with snpEff on a large, exhaustive set of variants. This shows
+where the two programs agree and where they define a class differently. It is not a test against a truth set: both programs read the same GFF3,
+and either one can be wrong.
+
+**How it was done** (`bench/snpeff_validation/`; `run_validation.sh` has every command):
+
+1. **Reference and genes.** *A. fumigatus* Af293, RefSeq `GCF_000002655.1` (FASTA and GFF3), the same files that the genome menu and `qmutfind fetch` use.
+2. **snpEff database.** snpEff 5.1, built from the same FASTA and GFF3 (`build -gff3 -noCheckCds -noCheckProtein`; the CDS and protein check files do
+   not exist for a GFF3-only build). snpEff 5.1 takes the transcript id of an NCBI mRNA line from `Name` (`XM_...`), but the exons name their
+   parent `rna-XM_...`, so no exon finds its transcript. For snpEff only, the `rna-` and `gene-` prefixes were removed from the `Parent`
+   attributes. qmutfind read the original GFF3.
+3. **Variants** (`make_variants.py`, seed 17): every possible SNV at every position of 150 random protein-coding genes and 300 bp on each
+   side; every possible SNV within 12 bp of each side of every exon boundary of 600 other genes (splice sites, UTR and intron edges); 4,000 random
+   insertions and deletions of 1 to 9 bp in genes, and 3,000 near exon boundaries. All on the eight nuclear chromosomes. The VCF was left-aligned with
+   `bcftools norm`, as the callers write indels. It has 1,498,949 records and 1,498,945 distinct variants (4 records are duplicates after normalization).
+4. **Annotation.** `qmutfind annotate` (14.5 s) and `snpEff ann -canon -ud 0` (33.5 s). `-canon` makes snpEff report the canonical transcript, which
+   is the longest CDS, as in qmutfind. `-ud 0` switches off the upstream and downstream labels, so a site outside genes is `intergenic_region`.
+5. **Comparison** (`compare_snpeff.py`). For each variant the snpEff entry of the same transcript is used (else its first entry). Each qmutfind label has a
+   list of snpEff Sequence Ontology terms that mean the same (`ACCEPT` in the script; `missense` is `missense_variant`, `nonsense` is `stop_gained`,
+   `5UTR_derived` is `5_prime_UTR_variant`, and so on). A variant ends in one of three outcomes: **agree** (snpEff gives an accepted term),
+   **convention** (they differ in a known definition, see below), or **differ**. The protein change is compared for variants that agree on the class: snpEff
+   `p.Val29Ile` is written as `V29I`; for start-lost, stop-lost and frameshift only the reference residue and its position are compared, because the two
+   programs write the rest differently. The gene and transcript are compared by name.
+
+**Result** (the full report is `bench/snpeff_validation/results/af293_snpeff5.1.report.txt`):
+
+| | SNVs | indels |
+|---|---|---|
+| variants | 1,491,951 | 6,994 |
+| agree | 1,485,576 (99.573%) | 6,771 (96.812%) |
+| differ by a known convention | 6,315 (0.423%) | 52 (0.743%) |
+| differ, other | 60 (0.004%) | 171 (2.445%) |
+| protein change equal (where both give one, and the class agrees) | 820,169 of 820,169 | 2,188 of 2,198 |
+| same transcript | 1,246,611 of 1,247,238 (99.950%) | 5,793 of 5,799 (99.897%) |
+
+Missense (587,950), synonymous (192,958), nonsense (31,211), stop-lost (4,540) and intergenic (244,713) SNVs agree in every case. The known conventions are:
+
+- **Start codon.** qmutfind says `start_lost` for every change of the start codon. snpEff says `initiator_codon_variant` when the new codon is also a
+  start codon of the table. All 1,002 cases are ATG to CTG or TTG (`M1L`). In the other 3,510 start-lost SNVs both say `start_lost`.
+- **Splice region.** Near an exon edge snpEff gives only `splice_region_variant` for a position that qmutfind labels by the exons (4,798 variants: 1,533 SNVs as
+  `5UTR_derived`, 3,213 SNVs as `3UTR_derived`, and 52 indels: 13, 20 and 19 `complex`). This is a different convention, not a different position.
+- **Non-coding.** qmutfind says `non_coding` for features that are not protein-coding transcripts; snpEff says `intragenic_variant` or a non-coding term (567 SNVs, all in tRNA genes; the snpEff build warns "Exon's parent ... is a Gene instead of a transcript" for them).
+
+What still differs, and why (checked against the lists of differences):
+
+- **SNVs (60 variants): all in tRNA genes that have an intron.** snpEff gives `intragenic_variant` (48) or a UTR term (12, all in the gene `Afu5tC(GCA)3`) where qmutfind labels the
+  intron (36) or the splice site (24). The snpEff build gave warnings for the tRNA genes (see above); qmutfind derives their introns from the exons.
+- **Indels at exon edges (171 variants).** 71 are `splice_site` in qmutfind: snpEff gives `splice_region_variant&intron_variant` (36) or a frameshift or in-frame term together with
+  `splice_region_variant` (35). 10 are `frameshift` (8) or in-frame (2) in qmutfind where snpEff puts `splice_donor_variant` first. A few others are stop-lost against an in-frame deletion (3)
+  and similar. These are priority differences: both programs see the same event and rank its effects differently. 79 are `complex`, qmutfind's label for a variant that spans an exon boundary;
+  snpEff gives a combination of terms, so the two cannot be compared.
+- **Overlapping genes and ties (627 SNVs).** snpEff reports the same gene but another transcript, or lists it later. This happens where two genes overlap or two transcripts have the same CDS length.
+  An insertion after the last base of a gene is in the gene for qmutfind and intergenic for snpEff (6 indels, all `complex` in qmutfind).
+- **Protein notation.** After a frameshift snpEff 5.1 writes only the first affected residue (`p.Ala3fs`); qmutfind also gives the new residue and the stop (`A3Kfs*59`). In 10 of 2,198 frameshifts the residue or its
+  position differs (by 1 to 9 residues). All 10 are near the end of the gene, and in all 10 qmutfind finds no new stop codon (`fs*?`). In 6 of them qmutfind writes `?` where the reference
+  residue would be (`?471Afs*?`), which is a display defect. The cause of the different position was not examined.
+
+**Earlier and smaller checks** (details in [PLAN.md](PLAN.md)): the effect labels were also compared with `bcftools csq` 1.25 and with snpEff 5.4c on 3,700
+simulated truth variants, which found and fixed four classifier flaws (for example, the weaker label for a variant in the UTR of one gene and the CDS of another); on
+real EVOL20 calls no variant disagreed. `bcftools stats` gave the same SNP, indel and Ts/Tv counts as the statistics of `qmutfind stats`.
+
+**Limits.** One genome (Af293, standard genetic code, no mitochondrion), one snpEff version for the large run (5.1), and both programs read the same GFF3.
+The GFF3 has no partial CDS with a phase other than 0, so qmutfind (which ignores the GFF phase column) was not tested on one. The variants are not real calls: they cover
+every position evenly, so the percentages describe the annotation, not the calling.
+
+**To repeat it:** `REPO=... WORK=... FASTA_GZ=... GFF_GZ=... bash bench/snpeff_validation/run_validation.sh` (needs snpEff, Java, bcftools, samtools and Python 3.12). The helper
+functions of the comparison have tests in `bench/tests/test_compare_snpeff.py` (`pixi run test-bench`).
+
 ## Tests
 
 ```bash
@@ -183,4 +277,5 @@ the real EVOL20 evolution experiment (PRJNA417720). See [PLAN.md](PLAN.md) secti
 - Mapping quality is filtered at 20 for short reads. That value comes from real short-read data only. Nothing was measured for long reads, so their default is 0. Base quality is not used.
 - Statistics that need the read depth, the reference sequence or per-strand counts are not built.
 - The `annotate` tags use plain words (`missense`), not Sequence Ontology names (`missense_variant`), and a gene is judged on its longest-CDS transcript only. Tools that expect Sequence Ontology terms or the `ANN` field will need a translation.
+- `start_lost` is every change of the start codon, also to another start codon of the table (ATG to CTG or TTG); snpEff calls those `initiator_codon_variant`. For a frameshift at the stop codon the protein change shows `?` for the reference residue.
 - Licence: GPL-3.0 (see [LICENSE](LICENSE)).

@@ -46,7 +46,7 @@ impl Transcript {
     }
 
     /// Index of `pos` along the coding sequence (0-based, in transcript direction), if it is in the CDS.
-    fn coding_index(&self, pos: u64) -> Option<u64> {
+    pub(crate) fn coding_index(&self, pos: u64) -> Option<u64> {
         let mut before = 0;
         match self.strand {
             Strand::Plus => {
@@ -70,7 +70,7 @@ impl Transcript {
     }
 
     /// The coding sequence in transcript direction (reverse complemented on the minus strand).
-    fn coding_sequence(&self, genome: &Genome) -> Option<Vec<u8>> {
+    pub(crate) fn coding_sequence(&self, genome: &Genome) -> Option<Vec<u8>> {
         let mut out = Vec::with_capacity(self.cds_len() as usize);
         for idx in 0..self.cds_len() {
             let base = genome.base(&self.contig, self.position_of(idx)?)?.to_ascii_uppercase();
@@ -321,8 +321,13 @@ impl Genome {
         Genome(contigs.into_iter().collect())
     }
 
-    fn base(&self, contig: &str, pos: u64) -> Option<u8> {
+    pub(crate) fn base(&self, contig: &str, pos: u64) -> Option<u8> {
         self.0.get(contig)?.get((pos as usize).checked_sub(1)?).copied()
+    }
+
+    /// The length of a contig, or None when the reference has no such contig.
+    pub(crate) fn len(&self, contig: &str) -> Option<u64> {
+        self.0.get(contig).map(|s| s.len() as u64)
     }
 }
 
@@ -341,7 +346,7 @@ pub struct Effect {
     pub accession: Option<String>,
 }
 
-fn complement(b: u8) -> u8 {
+pub(crate) fn complement(b: u8) -> u8 {
     match b {
         b'A' => b'T',
         b'C' => b'G',
@@ -674,7 +679,7 @@ fn reverse_complement(seq: &[u8]) -> Vec<u8> {
     seq.iter().rev().map(|&b| complement(b)).collect()
 }
 
-fn protein(codons: &[u8], table: u8) -> Vec<u8> {
+pub(crate) fn protein(codons: &[u8], table: u8) -> Vec<u8> {
     codons.chunks_exact(3).map(|c| translate([c[0], c[1], c[2]], table)).collect()
 }
 
@@ -696,7 +701,7 @@ fn inframe_protein_effect(genome: &Genome, tx: &Transcript, pos: u64, reference:
 }
 
 /// The coding sequence with the indel applied. `reference` and `alt` are in VCF form (one anchor base).
-fn altered_cds(tx: &Transcript, cds: &[u8], pos: u64, reference: &str, alt: &str) -> Option<Vec<u8>> {
+pub(crate) fn altered_cds(tx: &Transcript, cds: &[u8], pos: u64, reference: &str, alt: &str) -> Option<Vec<u8>> {
     Some(if reference.len() > alt.len() {
         // The deleted bases follow the anchor. Their coding indices are contiguous.
         let deleted = (reference.len() - alt.len()) as u64;
@@ -715,7 +720,7 @@ fn altered_cds(tx: &Transcript, cds: &[u8], pos: u64, reference: &str, alt: &str
 }
 
 /// The exon bases after the CDS, in transcript order (the 3' UTR, spliced). A frameshift near the end of the CDS can read into it.
-fn three_prime_bases(genome: &Genome, tx: &Transcript) -> Vec<u8> {
+pub(crate) fn three_prime_bases(genome: &Genome, tx: &Transcript) -> Vec<u8> {
     let (Some(first), Some(last)) = (tx.cds.first(), tx.cds.last()) else { return Vec::new() };
     let mut out = Vec::new();
     match tx.strand {

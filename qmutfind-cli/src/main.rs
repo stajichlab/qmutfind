@@ -44,7 +44,7 @@ fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
     let mut it = args.iter();
     while let Some(key) = it.next() {
         let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
-        if name == "paired" {
+        if name == "paired" || name == "html" {
             flags.insert(name.to_string(), "true".to_string()); // a switch without a value
             continue;
         }
@@ -407,11 +407,46 @@ fn annotate(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{vcf_path}: {e}"))
 }
 
+/// `qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank N] [--html] [--out FILE]`: the sequence around a variant.
+fn context(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let reference_path = required(&flags, "reference")?;
+    let variant = required(&flags, "variant")?;
+    let parts: Vec<&str> = variant.split(':').collect();
+    let [contig, pos, reference, alt] = parts[..] else {
+        return Err(format!("--variant must be CONTIG:POS:REF:ALT (for example chr1:50:A:G), not {variant}"));
+    };
+    let pos: u64 = pos.parse().map_err(|_| format!("the position in --variant must be a whole number, not {pos}"))?;
+    let flank: u64 = match flags.get("flank") {
+        Some(v) => v.parse().map_err(|_| format!("--flank must be a whole number of bases, not {v}"))?,
+        None => 40,
+    };
+    let mut fasta = Vec::new();
+    open_input(reference_path)?.read_to_end(&mut fasta).map_err(|e| format!("{reference_path}: {e}"))?;
+    let gff = match flags.get("gff") {
+        Some(path) => {
+            let mut bytes = Vec::new();
+            open_input(path)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+            Some(bytes)
+        }
+        None => None,
+    };
+    let text = qmutfind_core::context_text(&fasta, gff.as_deref(), contig, pos, reference, alt, flank, flags.contains_key("html"))?;
+    match flags.get("out") {
+        Some(path) => std::fs::write(path, text).map_err(|e| format!("{path}: {e}")),
+        None => {
+            print!("{text}");
+            Ok(())
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("call") => call(&args[1..]),
         Some("annotate") => annotate(&args[1..]),
+        Some("context") => context(&args[1..]),
         Some("stats") => stats(&args[1..]),
         Some("combine") => combine_command(&args[1..]),
         Some("report") => report(&args[1..]),
@@ -419,7 +454,7 @@ fn main() -> ExitCode {
         Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank BASES] [--html] [--out FILE]\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

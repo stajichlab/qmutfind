@@ -2975,3 +2975,85 @@ def test_the_gene_name_in_a_link_is_encoded_and_never_read_as_html(driver, serve
 
     assert gene_cells(driver) == [[hostile, "https://fungidb.org/gene/" + quote(hostile, safe=""), "_blank", "noopener noreferrer"]]
     assert driver.execute_script("return document.querySelectorAll('#variant-table b').length;") == 0
+
+
+# The sequence around the variant, under the locus drawing
+
+def draw_variant(driver, row=0):
+    driver.find_elements(By.CSS_SELECTOR, "#variant-table button.draw-row")[row].click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "report-status").text.startswith(("Drawn", "Error")))
+
+
+def context_text_of(driver):
+    return driver.execute_script("return document.getElementById('context-view').innerText;")
+
+
+def test_drawing_a_variant_shows_the_sequence_around_it_and_it_equals_the_cli_text(driver, server, inputs):
+    annotate_after_step_1(driver, server, inputs)
+    r = CHR_A[VARIANT_POS - 1]
+    alt = "T" if r == "G" else "G"
+    expected = run_cli("context", "--reference", "ref.fa", "--gff", "genes.gff3", "--variant", f"chrA:{VARIANT_POS}:{r}:{alt}", cwd=inputs).stdout
+
+    draw_variant(driver)
+
+    assert driver.find_element(By.ID, "context-wrap").is_displayed()
+    assert context_text_of(driver).rstrip() == expected.rstrip()
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#context-view .ctx-var")) >= 1
+
+
+def test_the_sequence_view_rows_line_up_in_a_monospace_block(driver, server, inputs):
+    annotate_after_step_1(driver, server, inputs)
+    draw_variant(driver)
+
+    widths = driver.execute_script("""
+      const pre = document.getElementById('context-view');
+      const lines = pre.innerText.split('\\n').filter((l) => /^(position|marker|reference|ref protein|variant|var protein)/.test(l));
+      return { lines: lines.map((l) => l.length), font: getComputedStyle(pre).fontFamily, white: getComputedStyle(pre).whiteSpace };""")
+
+    assert len(widths["lines"]) >= 4 and max(widths["lines"]) - min(widths["lines"]) <= 40, widths  # the position row can be shorter: trailing spaces
+    assert "mono" in widths["font"].lower() or "courier" in widths["font"].lower() or "menlo" in widths["font"].lower(), widths
+    assert widths["white"].startswith("pre"), widths
+
+
+def test_the_number_of_bases_on_each_side_can_be_changed(driver, server, inputs):
+    annotate_after_step_1(driver, server, inputs)
+    draw_variant(driver)
+    default_len = len(next(l for l in context_text_of(driver).splitlines() if l.startswith("reference"))) - 12
+
+    box = driver.find_element(By.ID, "context-flank")
+    box.clear()
+    box.send_keys("10")
+    driver.find_element(By.ID, "context-redraw").click()
+    WebDriverWait(driver, 30).until(lambda d: len(next(l for l in context_text_of(d).splitlines() if l.startswith("reference"))) - 12 == 21)
+
+    assert default_len == 81  # 40 bases on each side and the variant
+    assert driver.find_element(By.ID, "context-flank").get_attribute("value") == "10"
+
+
+def test_a_typed_region_has_no_variant_so_the_sequence_view_is_hidden(driver, server, inputs):
+    annotate_after_step_1(driver, server, inputs)
+    draw_variant(driver)
+    assert driver.find_element(By.ID, "context-wrap").is_displayed()
+
+    box = driver.find_element(By.ID, "region")
+    box.clear()
+    box.send_keys("chrA:49,000-51,000")
+    driver.find_element(By.ID, "draw").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "report-status").text.startswith("Drawn"))
+
+    assert not driver.find_element(By.ID, "context-wrap").is_displayed()
+
+
+def test_a_gene_name_with_html_characters_is_shown_as_text_in_the_sequence_view(driver, server, inputs):
+    (inputs / "odd.gff3").write_text(GFF.replace("locus_tag=G1", 'locus_tag=G<b>1"x'))
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    choose(driver, "gff", inputs / "odd.gff3")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    assert run_samples(driver)["s1"].startswith("Done")
+    assert "variants" in press(driver, "annotate", "annotate-status")
+
+    draw_variant(driver)
+
+    assert 'G<b>1"x' in context_text_of(driver)
+    assert driver.execute_script("return document.querySelectorAll('#context-view b').length;") == 0

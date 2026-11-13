@@ -281,6 +281,19 @@
   <div id="report-status" role="status" class="readout"></div>
   <p class="downloads"><a id="download-annotated" hidden>Download the annotated VCF</a></p>
   <iframe id="report" title="Gene and mutation picture"></iframe>
+  <div id="context-wrap" hidden>
+    <h3 class="sub">Sequence around the variant</h3>
+    <p class="hint">Exon bases are capitals, other bases small letters. The protein letter sits under the middle base of its codon. A <b>^</b> marks the
+    changed column; <b>-</b> is a gap (an insertion adds a column, a deletion leaves a gap in the variant row). A gene on the minus strand is shown as it reads
+    (the reverse complement). It appears when you press Draw on a variant in the table.</p>
+    <div class="form">
+      <label for="context-flank">Bases to show on each side</label>
+      <input id="context-flank" type="number" min="5" max="200" step="5" value="40">
+      <button id="context-redraw" type="button">Show again</button>
+    </div>
+    <p class="hint" id="context-status" role="status"></p>
+    <pre id="context-view" class="context" tabindex="0" aria-label="Sequence around the variant"></pre>
+  </div>
 </section>
 
 </div>

@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, annotate, stats, report, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
+import init, { Session, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -156,10 +156,21 @@ async function annotateStep({ vcf, reference, gff }) {
   postMessage({ step: 'annotate', type: 'done', vcf: annotate(text, fasta, gffBytes) });
 }
 
-async function reportStep({ vcf, gff, region, title }) {
+async function reportStep({ vcf, gff, region, title, reference, variant }) {
   const text = await vcfText(vcf);
   const gffBytes = gff ? await bytesOf('gff', gff) : undefined;
-  postMessage({ step: 'report', type: 'done', page: report(text, gffBytes, region, title || `Mutations in ${region}`), region });
+  const answer = { step: 'report', type: 'done', page: report(text, gffBytes, region, title || `Mutations in ${region}`), region };
+  // The sequence around the variant that was drawn (HTML with the changed columns in spans). A failure here is reported, and the picture still comes.
+  if (variant) {
+    try {
+      if (!reference) throw new Error('the reference genome is needed for the sequence view');
+      const fasta = await bytesOf('reference', reference);
+      answer.context = sequenceContext(fasta, gffBytes, variant.contig, variant.pos, variant.ref, variant.alt, variant.flank, true);
+    } catch (error) {
+      answer.contextError = String((error && error.message) || error);
+    }
+  }
+  postMessage(answer);
 }
 
 // The size of the WebAssembly memory, for the tests (it can grow but never shrinks).

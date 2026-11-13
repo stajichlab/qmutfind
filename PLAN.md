@@ -1317,3 +1317,16 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   with it the NCBI choice links nothing, and the page says so. FungiDB links use the gene (locus tag) as it is; a gene that FungiDB does not hold gives its not-found page.
 - Tests: 7 in `qmutfind-core/tests/gene_names.rs` (two had passed without testing anything because their accessions were too short; fixed), 6 browser tests;
   mutation check: without the accession guard the "no accession" test fails. Tests now: 283 Rust, 56 Node, 196 browser.
+
+## 12u. Sequence around the variant, comparison with snpEff, changelog (2026-11-13)
+- `qmutfind-core/src/context.rs` (`sequence_context`, `context_text`; `SequenceContext` with `to_text` and `to_html`), CLI `context`, WASM `context`, and the page: Draw on a variant fills a monospace block under the locus
+  drawing (setting: bases on each side, default 40). Rows: position, marker, reference, ref protein, variant, var protein. Exon bases are capitals; a minus-strand gene is reverse-complemented; an insertion adds a gap column; a
+  deletion leaves gaps in the variant row; protein letters sit under the middle base of the codon; a frameshift reads into the 3' UTR; a variant that reaches the edge of the CDS shows a note instead of a protein. Tests: 11 core,
+  4 CLI, 6 WASM-against-CLI (text and HTML), 5 browser (the page text equals the CLI text; alignment in a monospace block; flank setting; typed region hides the view; a gene named `G<b>1"x` is text). Seen on real Af293 data:
+  a missense SNV (V29I), a 3 bp deletion, a 2 bp insertion with frameshift (A3Kfs*59) and a minus-strand missense (K164E) all read correctly.
+- Comparison with snpEff 5.1 on 1,498,945 distinct variants (`bench/snpeff_validation/`, README "Validation of the annotation", report in `results/`): SNV agree 99.573%, convention 0.423%, differ 0.004% (60, all in tRNA genes);
+  indel agree 96.812%, convention 0.743%, differ 2.445% (171, at exon edges and `complex`); protein change equal in 820,169 of 820,169 SNVs and 2,188 of 2,198 frameshifts; same transcript 99.950% (SNV). snpEff needed the
+  `rna-`/`gene-` prefixes removed from `Parent` to link NCBI exons to transcripts (documented). qmutfind 14.5 s, snpEff 33.5 s for the set. Findings: `start_lost` is stricter than snpEff's (all 1,002 `M1L` are
+  `initiator_codon_variant` in snpEff); 10 frameshifts near the gene end show a different residue and `?` for the reference residue (qmutfind display defect, not fixed).
+- Earlier (2026-11-12) comparisons with `bcftools csq` 1.25 and snpEff 5.4c on 3,700 simulated truth variants were smaller; this run adds scale (all SNVs of 750 genes), protein-change checks and the gene/transcript check.
+- `CHANGELOG.md` lists all features added so far. Tests now: 298 Rust, 62 Node, 201 browser, 74 bench.

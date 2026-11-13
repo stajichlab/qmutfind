@@ -408,6 +408,8 @@ function renderTable() {
     button.className = 'draw-row';
     button.dataset.contig = v.contig;
     button.dataset.pos = String(v.pos);
+    button.dataset.ref = v.ref;
+    button.dataset.alt = v.alt;
     last.appendChild(button);
   }
   table.hidden = false;
@@ -451,10 +453,20 @@ function loadVariants(vcfText) {
   }
 }
 
-function draw(region) {
+// The variant whose Draw button was pressed last: the sequence view follows it. A typed region has no variant.
+let drawnVariant = null;
+const contextFlank = () => Math.min(200, Math.max(5, Math.round(Number($('context-flank').value) || 40)));
+
+function draw(region, variant = null) {
   const vcf = state.annotated || currentVcf();
   if (!vcf) { show('report-status', 'There is no VCF yet.'); return; }
-  send('report', { vcf, gff: gffFile() || null, region, title: `${viewLabel()}: mutations in ${region}` }, 'report-status');
+  drawnVariant = variant;
+  if (!variant) $('context-wrap').hidden = true;
+  const sent = send('report', {
+    vcf, gff: gffFile() || null, region, title: `${viewLabel()}: mutations in ${region}`,
+    reference: variant ? refFile() || null : null, variant: variant ? { ...variant, flank: contextFlank() } : null,
+  }, 'report-status');
+  if (sent && variant) show('context-status', 'Reading the sequence');
 }
 
 $('variant-table').addEventListener('click', (event) => {
@@ -464,7 +476,10 @@ $('variant-table').addEventListener('click', (event) => {
   const half = Math.max(50, Math.round((Number($('window-kb').value) || 2.5) * 1000));
   const region = `${button.dataset.contig}:${Math.max(1, pos - half)}-${pos + half}`;
   $('region').value = region;
-  draw(region);
+  draw(region, { contig: button.dataset.contig, pos, ref: button.dataset.ref, alt: button.dataset.alt });
+});
+$('context-redraw').addEventListener('click', () => {
+  if (drawnVariant) draw($('region').value.trim() || `${drawnVariant.contig}:${drawnVariant.pos}`, drawnVariant);
 });
 $('draw').addEventListener('click', () => {
   const region = $('region').value.trim();
@@ -509,6 +524,16 @@ worker.onmessage = (event) => {
   if (m.step === 'report') {
     $('report').srcdoc = m.page;
     show('report-status', `Drawn: ${m.region}`);
+    if (m.context !== undefined) {
+      // The text from the core is escaped there; only its own <span> tags are markup.
+      $('context-view').innerHTML = m.context;
+      show('context-status', '');
+      $('context-wrap').hidden = false;
+    } else if (m.contextError) {
+      $('context-view').textContent = '';
+      show('context-status', `The sequence view is not available: ${m.contextError}`);
+      $('context-wrap').hidden = false;
+    }
   }
 };
 
