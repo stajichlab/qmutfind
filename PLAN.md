@@ -1289,3 +1289,14 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   score with the best unpaired score, as bwa does); CLI details of `--paired` (a value after it, `--max-insert` without it, memory when one file ends
   early). Not checked by the reviewer or by me: real browser chunk sizes, real quota pressure, Chrome and Safari.
 - Tests now: 276 Rust, 56 Node, 190 browser (Firefox only).
+
+## 12s. Checks before wider use (2026-11-13)
+- Real gzip files through `site/gz.js` in Node (WT30 file `SRR28508724_1`, first 2 M lines, 207,545,380 bytes unpacked): plain gzip (1 member), bgzip (3,185
+  members), two files concatenated (2 members) all unpack to the same bytes as `zcat` (md5 equal for the first two; the concatenated file has twice the bytes)
+  and pass the CRC and length checks for chunk sizes of 16 KiB, 64 KiB, 1 MiB and 4 MiB; about 2 s per 200 MB. A file with 8 zero bytes after the last member is refused
+  by fflate itself ("invalid gzip data"), as before gz.js existed; `gzip -t` accepts such a file with a warning.
+- A real sample in headless Firefox, no read limit (SRR28508724, two files of 2,000,000 reads, about 360 MB gzip, reference A1163 plain 29.6 MB):
+  4,000,000 reads mapped in 150.5 s and 152.5 s (two runs); peak resident memory of all Firefox processes 2.48 GB (sampled every 3 s, so a short peak can be missed).
+  The result was saved 1.7 s after the run ("Storage used by this site: 15.9 MB"; the browser compresses it), the page offered it after a reload, and Restore took 0.6 s and
+  gave the same VCF (469 lines). One sample per session only: memory across several samples was not measured.
+- Not done: Chrome and Safari (no Chrome is installed here; a download of Chrome for Testing was not allowed in this session), a real phone, a real slow network.
