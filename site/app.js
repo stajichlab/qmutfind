@@ -117,7 +117,11 @@ function showingText() {
     return `Showing all ${lastCombined.names.length} samples together${without}: ${countRecords(state.vcf).toLocaleString()} distinct variants. AF is the mean over the samples that call each variant.`;
   }
   const s = selectedSample();
-  if (s) return `Showing the sample ${s.name}${without}: ${countRecords(state.vcf).toLocaleString()} variants. AF is the allele fraction of this sample.`;
+  if (s) {
+    const c = sharingCounts(state.vcf);
+    const shared = c ? `, ${c.one.toLocaleString()} only in this sample and ${c.shared.toLocaleString()} shared with other samples` : '';
+    return `Showing the sample ${s.name}${without}: ${countRecords(state.vcf).toLocaleString()} variants${shared}. AF is the allele fraction of this sample.`;
+  }
   return 'Nothing to show yet. Run a sample (section 2), combine them, or choose a VCF file below.';
 }
 
@@ -191,6 +195,13 @@ function sharingTables(stats) {
   const head = rows[0].map((h) => `<th>${escapeHtml(h)}</th>`).join('');
   const body = rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
   return `${statsTable(stats, extra)}<table class="stats per-sample"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+/** The rows of the summary of one sample that say what is only in it and what is shared (empty with one finished sample). */
+function singleSampleSharingRows() {
+  const c = sharingCounts(state.vcf);
+  if (!c || viewingAll() || $('vcf-file').files[0]) return [];
+  return [['Only in this sample', String(c.one)], ['Shared with other samples', String(c.shared)], ['Shared by every sample', String(c.every)]];
 }
 
 function statsTable(s, extra = []) {
@@ -279,7 +290,7 @@ const BASE_COLUMNS = [
 ];
 // The merged VCF of all samples adds two columns: how many samples carry the variant, and which.
 const COMBINED_COLUMNS = [
-  { label: 'Samples', kind: 'number', value: (v) => v.ns },
+  { label: 'Samples', kind: 'number', value: (v) => v.ns, text: (v) => (variantMeta.samples ? `${v.ns} of ${variantMeta.samples}` : String(v.ns)) },
   // The names, each with the AF of that sample: the AF column is only their mean.
   { label: 'Called in', kind: 'text', value: (v) => v.samples.join(', '), text: (v) => v.samples.map((n, i) => (Number.isFinite(parseFloat(v.afs[i])) ? `${n} (${parseFloat(v.afs[i]).toFixed(2)})` : n)).join(', ') },
 ];
@@ -323,7 +334,7 @@ function sortBy(index) {
 function renderTable() {
   const filter = $('effect-filter').value;
   const sharing = $('sharing-wrap').hidden ? '' : $('sharing-filter').value;
-  const shared = (v) => !sharing || (sharing === 'one' && v.ns === 1) || (sharing === 'all' && v.ns === variantMeta.samples) || (sharing === 'new' && v.newIn.length > 0);
+  const shared = (v) => !sharing || (sharing === 'one' && v.ns === 1) || (sharing === 'shared' && v.ns >= 2) || (sharing === 'all' && v.ns === variantMeta.samples) || (sharing === 'new' && v.newIn.length > 0);
   // The Genic choice is any variant that overlaps a gene, whatever its effect; the other choices are one effect each.
   const wanted = (v) => !filter || (filter === GENIC ? v.gene !== '' : v.effect === filter);
   const shown = sortedVariants(variants.filter((v) => wanted(v) && shared(v)));
@@ -371,7 +382,13 @@ function loadVariants(vcfText) {
   sortColumn = null; // a new set of variants starts in the order of the file
   variantMeta = { samples: Number((/^##qmutfind_samples=(\d+)/m.exec(vcfText) || [])[1]) || 0, parent: decodeInfo(((/^##qmutfind_parent=(.*)$/m.exec(vcfText) || [])[1]) || '') };
   const sharingSelect = $('sharing-filter');
-  sharingSelect.replaceChildren(new Option('All variants', ''), new Option('Called in one sample only', 'one'), new Option('Called in every sample', 'all'));
+  const oneSample = !viewingAll() && !$('vcf-file').files[0] && Boolean(selectedSample()); // one sample among several finished ones
+  sharingSelect.replaceChildren(
+    new Option('All variants', ''),
+    new Option(oneSample ? 'Only in this sample' : 'Called in one sample only', 'one'),
+    new Option(oneSample ? 'Shared with at least one other sample' : 'Called in two or more samples', 'shared'),
+    new Option(oneSample ? 'Shared by every sample' : 'Called in every sample', 'all'),
+  );
   if (variantMeta.parent) sharingSelect.add(new Option(`New compared with the parent (${variantMeta.parent})`, 'new'));
   $('sharing-wrap').hidden = !variants.some((v) => v.ns !== undefined);
   contigRank = new Map();
@@ -430,7 +447,7 @@ worker.onmessage = (event) => {
     const parts = [];
     if (m.stats) {
       const s = JSON.parse(m.stats);
-      $('stats-table').innerHTML = viewingAll() ? sharingTables(s) : statsTable(s);
+      $('stats-table').innerHTML = viewingAll() ? sharingTables(s) : statsTable(s, singleSampleSharingRows());
       parts.push(`${Number(s.total).toLocaleString()} variants`);
       offer('download-stats', `${sampleName()}.stats.json`, m.stats, 'application/json');
     }
@@ -960,6 +977,69 @@ function viewingAll() { // a function declaration: describeSource() calls it at 
 function selectedSample() { return samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null; }
 
 /** The results panel follows the chosen sample: its VCF and coverage are what the summary and the gene steps use. */
+// ---- One sample among several: which of its variants are only in it and which are shared ----
+const infoOf = (field) => Object.fromEntries(field.split(';').map((kv) => { const i = kv.indexOf('='); return i > 0 ? [kv.slice(0, i), kv.slice(i + 1)] : [kv, '']; }));
+const variantKey = (f) => `${f[0]}\t${f[1]}\t${f[3]}\t${f[4].split(',')[0]}`;
+const escapeSampleName = (name) => name.replace(/[,;=% \x00-\x1f\x7f]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+
+/** The finished samples, and for each variant (contig, position, REF, ALT) the samples that call it with their AF. */
+function sharingIndex() {
+  const finished = samples.filter((s) => s.name && isFinished(s));
+  const index = new Map();
+  for (const s of finished) {
+    for (const line of s.vcf.split('\n')) {
+      if (!line || line[0] === '#') continue;
+      const f = line.split('\t');
+      const af = parseFloat(infoOf(f[7]).AF);
+      const key = variantKey(f);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push({ name: s.name, af });
+    }
+  }
+  return { finished, index };
+}
+
+/**
+ * The VCF of one sample with the sharing tags `NS` (how many finished samples call the variant), `SAMPLES` and `AFS` (the AF in each),
+ * like the merged VCF of all samples, so that the table, the summary and the annotated VCF say what is shared. With one finished
+ * sample there is nothing to share and the text is returned as it is.
+ */
+function withSharing(vcfText) {
+  const { finished, index } = sharingIndex();
+  if (finished.length < 2) return vcfText;
+  const header = [
+    `##qmutfind_samples=${finished.length}`,
+    '##INFO=<ID=NS,Number=1,Type=Integer,Description="Number of finished samples with a call">',
+    '##INFO=<ID=SAMPLES,Number=.,Type=String,Description="Samples with a call (a name has , ; = space and % written as %XX)">',
+    '##INFO=<ID=AFS,Number=.,Type=Float,Description="Alternate allele fraction in each sample listed in SAMPLES, in the same order">',
+  ];
+  return vcfText.split('\n').flatMap((line) => {
+    if (line.startsWith('#CHROM')) return [...header, line];
+    if (!line || line[0] === '#') return [line];
+    const f = line.split('\t');
+    const calls = index.get(variantKey(f)) || [];
+    const tags = `NS=${calls.length};SAMPLES=${calls.map((c) => escapeSampleName(c.name)).join(',')};AFS=${calls.map((c) => (Number.isFinite(c.af) ? c.af.toFixed(4) : '.')).join(',')}`;
+    f[7] = f[7] === '.' || f[7] === '' ? tags : `${f[7]};${tags}`;
+    return [f.join('\t')];
+  }).join('\n');
+}
+
+/** For a VCF with the sharing tags: how many variants are in one sample only, in two or more, and in every sample. */
+function sharingCounts(vcfText) {
+  const total = Number((/^##qmutfind_samples=(\d+)/m.exec(vcfText || '') || [])[1]) || 0;
+  if (!total) return null;
+  const c = { total, variants: 0, one: 0, shared: 0, every: 0 };
+  for (const line of vcfText.split('\n')) {
+    if (!line || line[0] === '#') continue;
+    const ns = Number(infoOf(line.split('\t')[7]).NS);
+    c.variants += 1;
+    if (ns === 1) c.one += 1;
+    if (ns >= 2) c.shared += 1;
+    if (ns === total) c.every += 1;
+  }
+  return c;
+}
+
 const countRecords = (vcfText) => (vcfText ? vcfText.split('\n').filter((l) => l && l[0] !== '#').length : 0);
 
 /** Subtracting the parent is possible after a combine with a parent, for a sample that is not the parent and for all samples together. */
@@ -1007,6 +1087,7 @@ function useSelectedSample() {
   const subtract = subtracting();
   let text = all ? lastCombined.vcf : (s ? s.vcf : null);
   if (text && subtract) text = newInParent(text, all ? null : s.name);
+  if (text && s && !all) text = withSharing(text); // what is only in this sample and what is shared with the others
   state.vcf = text;
   state.depth = s ? s.bed : null; // the coverage of separate samples is not merged
   state.annotated = null;
@@ -1051,7 +1132,7 @@ function sampleRow(s) {
   const name = Object.assign(document.createElement('input'), { type: 'text', className: 'sample-name', value: s.name, disabled: locked });
   name.setAttribute('aria-label', 'Sample name');
   name.addEventListener('input', () => { s.name = name.value.trim(); row.dataset.name = s.name; edited(); });
-  name.addEventListener('change', () => refreshChoices());
+  name.addEventListener('change', () => { refreshChoices(); useSelectedSample(); });
   const nameLine = Object.assign(document.createElement('div'), { className: 'name-line' });
   nameCell.appendChild(nameLine);
   nameLine.appendChild(name);
@@ -1253,6 +1334,7 @@ $('strain-run').addEventListener('click', async () => {
           calls: m.vcf.split('\n').filter((l) => l && l[0] !== '#').length,
         });
         if (!$('result-sample').value) refreshChoices();
+        useSelectedSample(); // a sample that finishes changes what is shared
       } catch (error) {
         next.state = error.name === 'AbortError' ? 'cancelled' : `failed: ${error.message}`;
       }

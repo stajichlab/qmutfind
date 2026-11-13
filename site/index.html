@@ -14,6 +14,16 @@
   if (themes.indexOf(fromAddress) >= 0) chosen = fromAddress;
   document.documentElement.setAttribute('data-theme', chosen);
 })();
+// Choose the layout before the page is drawn: the address (?layout=), then the saved choice, then automatic: the phone layout on
+// a narrow window and the standard layout otherwise. An automatic layout follows the window (theme.js); a chosen one does not.
+(function () {
+  var layouts = ['standard', 'wide', 'phone'], root = document.documentElement, chosen = null, saved = null;
+  try { saved = localStorage.getItem('qmutfind-layout'); } catch (e) {}
+  var fromAddress = new URLSearchParams(location.search).get('layout');
+  if (layouts.indexOf(fromAddress) >= 0) chosen = fromAddress; else if (layouts.indexOf(saved) >= 0) chosen = saved;
+  root.setAttribute('data-layout', chosen || (window.matchMedia('(max-width: 720px)').matches ? 'phone' : 'standard'));
+  root.setAttribute('data-layout-auto', chosen ? 'no' : 'yes');
+})();
 </script>
 <link rel="stylesheet" href="style.css?v=__BUILD__">
 </head>
@@ -35,6 +45,12 @@
     <button type="button" data-set-theme="grey">Grey</button>
     <button type="button" data-set-theme="mono">Mono</button>
     <button type="button" data-set-theme="quest">Quest</button>
+  </nav>
+  <nav class="themes layouts" aria-label="Page layout">
+    <span class="themes-label">Layout</span>
+    <button type="button" data-set-layout="standard">Standard</button>
+    <button type="button" data-set-layout="wide">Wide</button>
+    <button type="button" data-set-layout="phone">Phone</button>
   </nav>
 </header>
 

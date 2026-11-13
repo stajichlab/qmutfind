@@ -1983,14 +1983,18 @@ def test_the_sharing_filter_works_with_the_effect_filter_and_with_sorting(driver
     assert "2 of 3" in driver.find_element(By.ID, "annotate-status").text
 
 
-def test_one_sample_has_no_sharing_filter_and_no_sample_columns(driver, server, shared_samples):
-    run_abc_and_combine(driver, server, shared_samples)
-    choose_result(driver, "a")
+def test_with_one_finished_sample_there_is_nothing_to_share_so_no_sharing_columns_or_filter(driver, server, shared_samples):
+    open_site(driver, server)
+    choose(driver, "reference", shared_samples / "ref.fa")
+    choose(driver, "gff", shared_samples / "genes.gff3")
+    add_sample(driver, "a", "local", shared_samples / "a.fq")
+    run_samples(driver)
 
     assert press(driver, "annotate", "annotate-status").startswith("2 of 2")
 
     assert not driver.find_element(By.ID, "sharing-filter").is_displayed()
     assert "Samples" not in [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#variant-table th button")]
+    assert "only in this sample" not in banner_text(driver)
 
 
 def test_a_combine_without_a_parent_has_no_new_filter_option(driver, server, shared_samples):
@@ -2000,7 +2004,7 @@ def test_a_combine_without_a_parent_has_no_new_filter_option(driver, server, sha
 
     options = [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#sharing-filter option")]
 
-    assert options == ["", "one", "all"]
+    assert options == ["", "one", "shared", "all"]
 
 
 def test_a_frameshift_shows_what_the_protein_becomes_next_to_its_protein_change(driver, server):
@@ -2290,3 +2294,169 @@ def test_the_subtract_choice_goes_away_when_the_combine_is_out_of_date(driver, s
     box = driver.find_element(By.ID, "subtract-parent")
     assert not box.is_enabled() and not box.is_selected()
     assert "2 variants" in banner_text(driver)
+
+
+# Layout: Standard, Wide (the full window) and Phone (the stacked skin), chosen with buttons, saved, automatic on a narrow screen
+
+@pytest.fixture
+def layout_window(driver):
+    size = driver.get_window_size()
+    driver.set_window_size(1600, 1000)
+    yield driver
+    driver.set_window_size(size["width"], size["height"])
+    try:
+        driver.execute_script("localStorage.removeItem('qmutfind-layout')")
+    except Exception:  # the page may not be open
+        pass
+
+
+def layout_of(driver):
+    return driver.execute_script("return document.documentElement.dataset.layout;")
+
+
+def frame_width(driver):
+    return driver.execute_script("return document.querySelector('.frame').getBoundingClientRect().width;")
+
+
+def pressed_layouts(driver):
+    return [b.text for b in driver.find_elements(By.CSS_SELECTOR, "[data-set-layout]") if b.get_attribute("aria-pressed") == "true"]
+
+
+def open_fresh(driver, server, query=""):
+    driver.get(f"{server}/{SITE}")
+    driver.execute_script("localStorage.removeItem('qmutfind-layout')")
+    driver.get(f"{server}/{SITE}{query}")
+
+
+def test_the_layout_buttons_choose_standard_wide_or_phone(layout_window, server):
+    driver = layout_window
+    open_fresh(driver, server)
+
+    assert [b.text for b in driver.find_elements(By.CSS_SELECTOR, "[data-set-layout]")] == ["Standard", "Wide", "Phone"]
+    assert layout_of(driver) == "standard" and pressed_layouts(driver) == ["Standard"]
+    standard = frame_width(driver)
+    assert standard <= 940, standard  # the page column of the standard layout
+
+    driver.find_element(By.CSS_SELECTOR, "[data-set-layout='wide']").click()
+    assert layout_of(driver) == "wide" and pressed_layouts(driver) == ["Wide"]
+    assert frame_width(driver) > 1400, frame_width(driver)  # the page uses the window
+
+    driver.find_element(By.CSS_SELECTOR, "[data-set-layout='phone']").click()
+    assert layout_of(driver) == "phone" and pressed_layouts(driver) == ["Phone"]
+    display = lambda sel: driver.execute_script("return getComputedStyle(document.querySelector(arguments[0])).display;", sel)
+    assert display("#strain-table thead") == "none"  # the sample rows are cards, even in a wide window
+    assert display("#strain-table tbody tr") == "block"
+    driver.find_element(By.CSS_SELECTOR, "[data-set-layout='standard']").click()
+    assert display("#strain-table thead") != "none" and frame_width(driver) <= 940
+
+
+def test_the_chosen_layout_is_saved_and_the_address_can_override_it(layout_window, server):
+    driver = layout_window
+    open_fresh(driver, server)
+    driver.find_element(By.CSS_SELECTOR, "[data-set-layout='wide']").click()
+
+    driver.get(f"{server}/{SITE}")
+    assert layout_of(driver) == "wide"  # saved
+    driver.get(f"{server}/{SITE}?layout=standard")
+    assert layout_of(driver) == "standard"  # the address wins
+    driver.get(f"{server}/{SITE}?layout=nonsense")
+    assert layout_of(driver) == "wide"  # an unknown name is ignored
+
+
+def test_a_narrow_window_starts_in_the_phone_layout_and_follows_the_window_until_a_choice_is_made(layout_window, server):
+    driver = layout_window
+    driver.set_window_size(420, 900)
+    open_fresh(driver, server)
+
+    assert layout_of(driver) == "phone" and pressed_layouts(driver) == ["Phone"]
+    assert driver.execute_script("return localStorage.getItem('qmutfind-layout');") is None  # automatic is not a saved choice
+    driver.set_window_size(1300, 900)
+    WebDriverWait(driver, 10).until(lambda d: layout_of(d) == "standard")  # follows the window while automatic
+    driver.set_window_size(420, 900)
+    WebDriverWait(driver, 10).until(lambda d: layout_of(d) == "phone")
+
+    driver.find_element(By.CSS_SELECTOR, "[data-set-layout='standard']").click()  # an explicit choice beats the window
+    driver.set_window_size(420, 900)
+    driver.get(f"{server}/{SITE}")
+    assert layout_of(driver) == "standard"
+    driver.set_window_size(1300, 900)
+    driver.set_window_size(420, 900)
+    assert layout_of(driver) == "standard"
+
+
+def test_the_phone_layout_has_no_sideways_scroll_and_big_enough_buttons(layout_window, server):
+    driver = layout_window
+    driver.set_window_size(420, 900)
+    open_fresh(driver, server)
+
+    overflow = driver.execute_script("""
+      const w = window.innerWidth;
+      return [document.documentElement.scrollWidth, w, Array.from(document.querySelectorAll('body *')).filter(e => e.getBoundingClientRect().right > w + 1 && e.offsetParent !== null)
+        .slice(0, 6).map(e => e.tagName + '#' + e.id + '.' + e.className + ' right=' + Math.round(e.getBoundingClientRect().right))];""")
+    assert overflow[0] <= overflow[1] + 1, overflow  # no sideways scroll; the list names the elements that stick out
+    heights = driver.execute_script("return Array.from(document.querySelectorAll('button.primary')).filter(b => b.offsetParent !== null).map(b => b.getBoundingClientRect().height);")
+    assert heights and min(heights) >= 40, heights  # a finger can hit them
+
+
+# One sample out of several: the table, the summary and the annotated VCF say what is only in it and what is shared
+
+def test_the_table_of_one_sample_says_how_many_samples_have_each_variant_and_which(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+
+    assert press(driver, "annotate", "annotate-status").startswith("2 of 2")
+
+    headers = [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#variant-table th button")]
+    assert "Samples" in headers and "Called in" in headers
+    cells = lambda name: driver.execute_script("return Array.from(document.querySelectorAll('#variant-table tbody tr')).map(r => r.cells[arguments[0]].textContent);", headers.index(name))
+    assert shown_positions(driver) == ["50000", "52000"]
+    assert cells("Samples") == ["1 of 3", "3 of 3"]
+    assert cells("Called in") == ["a (1.00)", "a (1.00), b (1.00), c (1.00)"]  # each sample with its own AF
+
+
+def test_the_sharing_filter_of_one_sample_has_only_in_this_sample_and_shared(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples, parent="")
+    choose_result(driver, "b")
+    press(driver, "annotate", "annotate-status")
+    select = driver.find_element(By.ID, "sharing-filter")
+    labels = {o.get_attribute("value"): o.text for o in select.find_elements(By.TAG_NAME, "option")}
+    assert labels["one"] == "Only in this sample" and "shared" in labels and "all" in labels and "new" not in labels, labels
+
+    pick = lambda value: (driver.find_element(By.CSS_SELECTOR, f"#sharing-filter option[value='{value}']").click(), shown_positions(driver))[1]
+    assert pick("one") == ["54000"]  # b has 52000 (shared with a and c) and 54000 (only b)
+    assert pick("shared") == ["52000"]
+    assert pick("all") == ["52000"]
+    assert pick("") == ["52000", "54000"]
+
+
+def test_the_banner_and_the_summary_of_one_sample_count_what_is_only_in_it_and_what_is_shared(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+
+    assert "1 only in this sample and 1 shared with other samples" in banner_text(driver), banner_text(driver)
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    flat = " ".join(driver.find_element(By.ID, "stats-table").text.split())
+    assert "Only in this sample 1" in flat and "Shared with other samples 1" in flat and "Shared by every sample 1" in flat, flat
+
+
+def test_the_annotated_vcf_of_one_sample_carries_the_sharing_tags(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+    press(driver, "annotate", "annotate-status")
+
+    text = download_text(driver, "download-annotated")
+
+    assert "##qmutfind_samples=3" in text and "##INFO=<ID=SAMPLES," in text
+    records = [dict(kv.split("=", 1) for kv in l.split("\t")[7].split(";") if "=" in kv) for l in text.splitlines() if l and not l.startswith("#")]
+    assert [(r["NS"], r["SAMPLES"], r["AFS"]) for r in records] == [("1", "a", "1.0000"), ("3", "a,b,c", "1.0000,1.0000,1.0000")]
+
+
+def test_the_sharing_follows_the_finished_samples(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+    assert "shared with other samples" in banner_text(driver)
+
+    strain_rows(driver)["b"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+    assert "Showing the sample a" in banner_text(driver) and "1 only in this sample and 1 shared" in banner_text(driver)  # c still shares 52000
+    strain_rows(driver)["c"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+    assert "shared" not in banner_text(driver).lower().split("allele fraction")[0], banner_text(driver)  # a alone: nothing to share

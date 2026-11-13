@@ -1176,3 +1176,18 @@ unannotated variants are not genic. It works with the sorting and with the "Shar
 - The combined table sorts by every header (up, down, original order; numbers by value; a sample column by the AF of its call; empty
   cells and the "no status" dot last in both directions); the sort stays when the filter changes and resets on a new combine.
 - The locus drawing is titled with the sample (`Sample a: mutations in chrA:...`).
+
+## 12n. Layouts, and sharing in the view of one sample (2026-11-12)
+- Layout buttons next to Style: Standard, Wide (the page uses the whole window, with tables up to 75% of its height) and Phone (one column,
+  bigger text and controls, full-width main buttons, form controls that fit the width, every sample as a card). `html[data-layout]`
+  is chosen in the head before the page is drawn: `?layout=` first, then the saved choice (`localStorage` key `qmutfind-layout`), then
+  automatic: phone when the window is 720 px wide or less, standard otherwise. An automatic layout follows the window; a click is a
+  saved choice and stops that. Checked in Firefox only (headless; its smallest window is 500 px wide).
+- One sample among several finished ones: its VCF gets the same sharing tags as the merged VCF (`NS`, `SAMPLES`, `AFS` and
+  `##qmutfind_samples`), computed in the page from the finished samples. So the banner says "N variants, X only in this sample and Y
+  shared with other samples", the summary has the rows Only in this sample / Shared with other samples / Shared by every sample, the
+  table has the columns Samples ("3 of 13") and Called in (each sample with its own AF), the "Shared by" dropdown works (only in this
+  sample, shared with at least one other sample, shared by every sample), and the annotated VCF download carries the tags. With one
+  finished sample there is nothing to share and none of this is shown. A variant is the same in two samples when contig, position,
+  REF and ALT are equal (the callers left-align indels, so the same event has the same form).
+- New choice in the Shared by dropdown of the all-samples view: "Called in two or more samples".
