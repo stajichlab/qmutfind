@@ -356,6 +356,7 @@ impl Combined {
         out.push_str("##INFO=<ID=CLASS,Number=1,Type=String,Description=\"SNP, SMALL_INDEL or LARGE_INDEL\">\n");
         out.push_str("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Mean depth of the calls\">\n");
         out.push_str("##INFO=<ID=AF,Number=A,Type=Float,Description=\"Mean alternate allele fraction of the calls\">\n");
+        out.push_str("##INFO=<ID=AFS,Number=.,Type=Float,Description=\"Alternate allele fraction in each sample listed in SAMPLES, in the same order\">\n");
         out.push_str(&format!("##qmutfind_samples={}\n", self.strains.len()));
         if let Some(p) = self.parent {
             out.push_str(&format!("##qmutfind_parent={}\n", escape_info(&self.strains[p])));
@@ -376,6 +377,9 @@ impl Combined {
             if !afs.is_empty() {
                 info.push_str(&format!(";AF={:.4}", afs.iter().sum::<f64>() / afs.len() as f64));
             }
+            // The AF of every calling sample, in the order of SAMPLES; a call without an AF is written as a dot.
+            let per_sample: Vec<String> = calls.iter().map(|c| if c.1.is_finite() { format!("{:.4}", c.1) } else { ".".to_string() }).collect();
+            info.push_str(&format!(";AFS={}", per_sample.join(",")));
             let new: Vec<String> = r.status.iter().enumerate().filter(|(_, s)| **s == Status::New).map(|(i, _)| escape_info(&self.strains[i])).collect();
             if !new.is_empty() {
                 info.push_str(&format!(";NEW={}", new.join(",")));
@@ -762,8 +766,12 @@ mod tests {
         assert!(records[0][7].contains("NS=2") && records[0][7].contains("SAMPLES=parent,evolved") && records[0][7].contains("CLASS=SNP"), "{}", records[0][7]);
         assert!(records[0][7].contains("DP=29") && records[0][7].contains("AF=1.0000"), "{}", records[0][7]);
         assert!(!records[0][7].contains("NEW="), "{}", records[0][7]);
+        // The AF of each sample that calls it, in the order of SAMPLES (the AF tag is only their mean).
+        assert!(records[0][7].contains("AFS=1.0000,1.0000"), "{}", records[0][7]);
+        assert!(lines.iter().any(|l| l.starts_with("##INFO=<ID=AFS,")));
         // Position 1500 is called in one strain and is new there.
         assert!(records[1][7].contains("NS=1") && records[1][7].contains("SAMPLES=evolved") && records[1][7].contains("NEW=evolved"), "{}", records[1][7]);
+        assert!(records[1][7].contains("AFS=0.9600"), "{}", records[1][7]);
     }
 
     #[test]

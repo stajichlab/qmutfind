@@ -112,12 +112,12 @@ function describeSource() {
 function showingText() {
   const file = $('vcf-file').files[0];
   if (file) return `Showing the VCF file ${file.name}. AF is the allele fraction recorded in that file.`;
+  const without = subtracting() ? `, without the variants that the parent ${lastCombined.parent} has` : '';
   if (viewingAll()) {
-    const n = lastCombined.vcf.split('\n').filter((l) => l && l[0] !== '#').length;
-    return `Showing all ${lastCombined.names.length} samples together: ${n.toLocaleString()} distinct variants. AF is the mean over the samples that call each variant.`;
+    return `Showing all ${lastCombined.names.length} samples together${without}: ${countRecords(state.vcf).toLocaleString()} distinct variants. AF is the mean over the samples that call each variant.`;
   }
   const s = selectedSample();
-  if (s) return `Showing the sample ${s.name}: ${s.calls.toLocaleString()} variants. AF is the allele fraction of this sample.`;
+  if (s) return `Showing the sample ${s.name}${without}: ${countRecords(state.vcf).toLocaleString()} variants. AF is the allele fraction of this sample.`;
   return 'Nothing to show yet. Run a sample (section 2), combine them, or choose a VCF file below.';
 }
 
@@ -248,6 +248,7 @@ function parseVariants(vcfText) {
       contig: f[0], pos: Number(f[1]), ref: f[3], alt: f[4].split(',')[0],
       cls: info.CLASS || '', effect: (info.EFFECT || 'unannotated').split(',')[0],
       ns: info.NS === undefined ? undefined : Number(info.NS),
+      afs: info.AFS ? info.AFS.split(',') : [], // the AF of each sample in `samples`, in the same order
       samples: info.SAMPLES ? info.SAMPLES.split(',').map(decodeInfo) : [],
       newIn: info.NEW ? info.NEW.split(',').map(decodeInfo) : [],
       gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '',
@@ -279,7 +280,8 @@ const BASE_COLUMNS = [
 // The merged VCF of all samples adds two columns: how many samples carry the variant, and which.
 const COMBINED_COLUMNS = [
   { label: 'Samples', kind: 'number', value: (v) => v.ns },
-  { label: 'Called in', kind: 'text', value: (v) => v.samples.join(', ') },
+  // The names, each with the AF of that sample: the AF column is only their mean.
+  { label: 'Called in', kind: 'text', value: (v) => v.samples.join(', '), text: (v) => v.samples.map((n, i) => (Number.isFinite(parseFloat(v.afs[i])) ? `${n} (${parseFloat(v.afs[i]).toFixed(2)})` : n)).join(', ') },
 ];
 const isCombinedTable = () => variants.some((v) => v.ns !== undefined);
 const activeColumns = () => (isCombinedTable() ? [...BASE_COLUMNS, ...COMBINED_COLUMNS] : BASE_COLUMNS);
@@ -958,27 +960,72 @@ function viewingAll() { // a function declaration: describeSource() calls it at 
 function selectedSample() { return samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null; }
 
 /** The results panel follows the chosen sample: its VCF and coverage are what the summary and the gene steps use. */
+const countRecords = (vcfText) => (vcfText ? vcfText.split('\n').filter((l) => l && l[0] !== '#').length : 0);
+
+/** Subtracting the parent is possible after a combine with a parent, for a sample that is not the parent and for all samples together. */
+function subtractAvailable() {
+  if (!lastCombined || !lastCombined.parent) return false;
+  if (viewingAll()) return true;
+  const s = selectedSample();
+  return Boolean(s && s.name !== lastCombined.parent);
+}
+function subtracting() { return $('subtract-parent').checked && subtractAvailable() && !$('vcf-file').files[0]; }
+
+function updateSubtractControl() {
+  const box = $('subtract-parent');
+  const ok = subtractAvailable();
+  box.disabled = !ok;
+  if (!ok) box.checked = false;
+  show('subtract-note', ok
+    ? `Hides the variants that the parent ${lastCombined.parent} has. A variant is also left out when the parent has weak evidence for it or too little coverage (it is "unknown" in the combined table), because then it cannot be called new.`
+    : 'Needs a combine with a parent sample (section "Combine the samples"). The parent itself has nothing to subtract.');
+}
+
+/** The records of `vcfText` that satisfy `keep(fields)`, with the header lines. */
+function filterVcf(vcfText, keep) {
+  return vcfText.split('\n').filter((l) => !l || l[0] === '#' || keep(l.split('\t'))).join('\n');
+}
+
+/** The records of the merged VCF where the variant is new in the sample `name` (or in any sample when `name` is null). */
+function newInParent(vcfText, name) {
+  const keyOf = (f) => `${f[0]}\t${f[1]}\t${f[3]}\t${f[4]}`;
+  const wanted = new Set();
+  for (const line of lastCombined.vcf.split('\n')) {
+    if (!line || line[0] === '#') continue;
+    const f = line.split('\t');
+    const info = Object.fromEntries(f[7].split(';').map((kv) => { const i = kv.indexOf('='); return i > 0 ? [kv.slice(0, i), kv.slice(i + 1)] : [kv, '']; }));
+    const news = info.NEW ? info.NEW.split(',').map(decodeInfo) : [];
+    if (name === null ? news.length > 0 : news.includes(name)) wanted.add(keyOf(f));
+  }
+  return filterVcf(vcfText, (f) => wanted.has(keyOf(f)));
+}
+
 function useSelectedSample() {
   const all = viewingAll();
   const s = all ? null : selectedSample();
-  state.vcf = all ? lastCombined.vcf : (s ? s.vcf : null);
+  updateSubtractControl();
+  const subtract = subtracting();
+  let text = all ? lastCombined.vcf : (s ? s.vcf : null);
+  if (text && subtract) text = newInParent(text, all ? null : s.name);
+  state.vcf = text;
   state.depth = s ? s.bed : null; // the coverage of separate samples is not merged
   state.annotated = null;
   for (const id of ['download-vcf', 'download-depth-bed']) $(id).hidden = true;
+  const suffix = subtract ? '.new_vs_parent' : '';
   if (all) {
-    offer('download-vcf', 'combined.vcf', lastCombined.vcf, 'text/plain');
-    const n = lastCombined.vcf.split('\n').filter((l) => l && l[0] !== '#').length;
-    show('summary', `${n.toLocaleString()} distinct variants in ${lastCombined.names.length} samples. Go on to the summary or the gene steps.`);
+    offer('download-vcf', `combined${suffix}.vcf`, text, 'text/plain');
+    show('summary', `${countRecords(text).toLocaleString()} distinct variants in ${lastCombined.names.length} samples. Go on to the summary or the gene steps.`);
   } else if (s) {
-    offer('download-vcf', `${s.name}.vcf`, s.vcf, 'text/plain');
+    offer('download-vcf', `${s.name}${suffix}.vcf`, text, 'text/plain');
     if (s.bed) offer('download-depth-bed', `${s.name}.depth.bed`, s.bed, 'text/plain');
-    show('summary', `Calls: ${s.calls.toLocaleString()}. Go on to the summary or the gene steps.`);
+    show('summary', `Calls: ${countRecords(text).toLocaleString()}. Go on to the summary or the gene steps.`);
   } else {
     show('summary', '');
   }
   describeSource();
 }
 $('result-sample').addEventListener('change', useSelectedSample);
+$('subtract-parent').addEventListener('change', useSelectedSample);
 
 function renderSamples() {
   const body = $('strain-table').querySelector('tbody');
@@ -1231,6 +1278,47 @@ function invalidateCombined() {
   lastCombined = null;
   refreshChoices();
   renderCombined();
+  useSelectedSample(); // the subtract choice and the all-samples view depend on the combine
+}
+
+// Sorting the combined table: a header button sorts up, down, and back to the order of the file, like the variant table.
+// A number column sorts by value; a sample column by the AF of its call (a cell that is not a call counts as empty); empty cells
+// (and the dot of "no status") stay last in both directions.
+let combinedSort = { column: null, direction: 1 };
+
+function combinedKind(header, index, nSamples) {
+  if (header === 'POS' || header === 'strains') return 'number';
+  if (index >= 6 && index < 6 + nSamples) return 'af';
+  return 'text';
+}
+
+function combinedValue(kind, text) {
+  if (kind === 'number') { const n = parseFloat(text); return Number.isFinite(n) ? n : null; }
+  if (kind === 'af') { const m = /^([0-9.]+):\d+$/.exec(text); return m ? parseFloat(m[1]) : null; }
+  return text === '' || text === '.' ? null : text;
+}
+
+function sortCombinedRows(rows, header, nSamples) {
+  if (combinedSort.column === null) return rows;
+  const kind = combinedKind(header[combinedSort.column], combinedSort.column, nSamples);
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  const c = combinedSort.column;
+  return [...rows].sort((a, b) => {
+    const va = combinedValue(kind, a[c]);
+    const vb = combinedValue(kind, b[c]);
+    if (va === null || vb === null) return va === vb ? 0 : (va === null ? 1 : -1);
+    return combinedSort.direction * (kind === 'text' ? collator.compare(va, vb) : va - vb);
+  });
+}
+
+function sortCombinedBy(index) {
+  if (combinedSort.column === index) {
+    if (combinedSort.direction === 1) combinedSort.direction = -1;
+    else combinedSort.column = null;
+  } else {
+    combinedSort = { column: index, direction: 1 };
+  }
+  renderCombined();
 }
 
 function renderCombined() {
@@ -1257,9 +1345,19 @@ function renderCombined() {
     return true;
   };
   const tr = document.createElement('tr');
-  for (const h of header) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
+  for (const [index, h] of header.entries()) {
+    const th = document.createElement('th');
+    th.setAttribute('aria-sort', combinedSort.column === index ? (combinedSort.direction === 1 ? 'ascending' : 'descending') : 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sort';
+    button.textContent = h;
+    button.addEventListener('click', () => sortCombinedBy(index));
+    th.appendChild(button);
+    tr.appendChild(th);
+  }
   head.appendChild(tr);
-  const rows = lines.slice(1).filter(keep);
+  const rows = sortCombinedRows(lines.slice(1).filter(keep), header, nSamples);
   for (const f of rows.slice(0, MAX_ROWS)) {
     const row = document.createElement('tr');
     for (const text of f) { const c = document.createElement('td'); c.textContent = text; if (text === 'new') c.className = 'new'; row.appendChild(c); }
@@ -1290,10 +1388,12 @@ $('strain-combine').addEventListener('click', async () => {
       evidence: done.map((s) => s.evidence || ''), parent: parent || undefined, minDepth,
     });
     lastCombined = { table: m.table, summary: m.summary, vcf: m.vcf, parent, minDepth, names: done.map((s) => s.name) };
+    combinedSort = { column: null, direction: 1 }; // a new table starts in the order of the file
     refreshChoices();
     offer('download-combined', 'combined.tsv', m.table, 'text/tab-separated-values');
     renderCombined();
     $('combined-title').scrollIntoView({ block: 'nearest' }); // the table is near the button that made it
+    useSelectedSample(); // a parent may now be known
     const n = m.table.split('\n').filter(Boolean).length - 1;
     show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} samples.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
   } catch (error) {

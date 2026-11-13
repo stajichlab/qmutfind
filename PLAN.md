@@ -1161,3 +1161,18 @@ The Show dropdown (`#effect-filter`) is visible from the start (disabled, "Annot
 choices before the specific effects: All variants, and `Genic: in a gene (N)`: any variant that overlaps a gene (it has a GENE tag),
 whatever its effect (missense, synonymous, frameshift, UTR, intron, splice site, non-coding exon, and so on). Intergenic and
 unannotated variants are not genic. It works with the sorting and with the "Shared by" filter of the all-samples view.
+
+## 12m. Which sample the variants belong to, the parent subtracted, and sorting in the combined table (2026-11-12)
+- The chooser ("Choose what panels 3 and 4 show") and panels 3 and 4 are one coloured group. Each of the two panels has a "Showing" line:
+  the sample, all samples together, or a VCF file, and the number of variants. What AF is: for one sample it is that sample's allele
+  fraction (alternate reads divided by depth at the site); for all samples together it is the MEAN over the samples that call the
+  variant, never a frequency of the whole data set. The note under the Show dropdown and the AF and DP header tooltips say the same.
+  In the all-samples table, "Called in" lists each sample with its own AF (new INFO tag `AFS` of the merged VCF).
+- "Subtract the parent" (a check box in the chooser): after a combine with a parent, panels 3 and 4 can show only the variants that the
+  parent does not have: for one sample, the variants that are `new` in it; for all samples together, the variants that are new in any
+  sample. The summary, the annotation table, the drawing and the VCF download follow it (the file is named `.new_vs_parent.vcf`).
+  A variant for which the parent has weak evidence or too little coverage is `unknown` in the combine and is left out of this view,
+  so the view is conservative. The parent itself has nothing to subtract; the check box is off when the combine is out of date.
+- The combined table sorts by every header (up, down, original order; numbers by value; a sample column by the AF of its call; empty
+  cells and the "no status" dot last in both directions); the sort stays when the filter changes and resets on a new combine.
+- The locus drawing is titled with the sample (`Sample a: mutations in chrA:...`).

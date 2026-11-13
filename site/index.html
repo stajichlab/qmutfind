@@ -188,6 +188,8 @@
     <label for="result-sample">Sample</label>
     <select id="result-sample"><option value="">No finished sample yet</option></select>
     <p class="hint">After you combine the samples, choose <b>All samples together</b> to summarize and annotate every variant once, with the samples that carry it.</p>
+    <p class="check"><label><input type="checkbox" id="subtract-parent" disabled> Subtract the parent: show only the variants that the parent does not have</label></p>
+    <p class="hint" id="subtract-note">Needs a combine with a parent sample (section "Combine the samples"). The parent itself has nothing to subtract.</p>
     <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-depth-bed" hidden>Download the coverage (BED)</a></p>
     <label for="vcf-file">Or a VCF file from another tool (optional). It replaces the sample's result.</label>
     <input id="vcf-file" type="file">

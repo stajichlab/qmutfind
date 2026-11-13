@@ -1963,7 +1963,7 @@ def test_the_variant_table_of_all_samples_has_sample_columns_and_the_sharing_fil
     assert "Samples" in headers and "Called in" in headers
     assert shown_positions(driver) == ["50000", "52000", "54000"]
     called_in = driver.execute_script("return Array.from(document.querySelectorAll('#variant-table tbody tr')).map(r => r.cells[arguments[0]].textContent);", headers.index("Called in"))
-    assert called_in == ["a", "a, b, c", "b"]
+    assert called_in == ["a (1.00)", "a (1.00), b (1.00), c (1.00)", "b (1.00)"]  # each sample with its own AF
     sharing = lambda value: (driver.find_element(By.CSS_SELECTOR, f"#sharing-filter option[value='{value}']").click(), shown_positions(driver))[1]
     assert driver.find_element(By.ID, "sharing-filter").is_displayed()
     assert sharing("one") == ["50000", "54000"]
@@ -2170,3 +2170,123 @@ def test_the_combine_panel_says_there_is_no_table_yet_then_titles_it_and_keeps_t
     strain_rows(driver)["a"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
     assert driver.find_element(By.ID, "combined-empty").is_displayed()
     assert driver.find_element(By.ID, "combined-title").text == ""
+
+
+# The combined table sorts by every header
+
+COMBINED_HEADERS = ["CHROM", "POS", "REF", "ALT", "CLASS", "strains", "a", "b", "c", "a.status", "b.status", "c.status"]
+
+
+def combined_column(driver, name):
+    index = COMBINED_HEADERS.index(name)
+    return driver.execute_script(
+        "return Array.from(document.querySelectorAll('#combined-table tbody tr')).map(r => r.cells[arguments[0]].textContent);", index)
+
+
+def sort_combined(driver, name):
+    driver.find_element(By.XPATH, f"//table[@id='combined-table']//th/button[normalize-space()='{name}']").click()
+
+
+def combined_aria(driver, name):
+    return driver.find_element(By.XPATH, f"//table[@id='combined-table']//th[button[normalize-space()='{name}']]").get_attribute("aria-sort")
+
+
+def test_every_header_of_the_combined_table_sorts_up_then_down_then_back(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    assert [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#combined-table th button")] == COMBINED_HEADERS
+    assert all(combined_aria(driver, h) == "none" for h in COMBINED_HEADERS)
+    original = combined_column(driver, "POS")
+    assert original == ["50000", "52000", "54000"]
+
+    sort_combined(driver, "POS")
+    assert combined_column(driver, "POS") == ["50000", "52000", "54000"] and combined_aria(driver, "POS") == "ascending"
+    sort_combined(driver, "POS")
+    assert combined_column(driver, "POS") == ["54000", "52000", "50000"] and combined_aria(driver, "POS") == "descending"
+    sort_combined(driver, "POS")
+    assert combined_column(driver, "POS") == original and combined_aria(driver, "POS") == "none"
+
+
+def test_the_combined_table_sorts_numbers_by_value_and_a_sample_column_by_its_allele_fraction(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+
+    sort_combined(driver, "strains")
+    sort_combined(driver, "strains")  # descending: the variant of all 3 samples first
+    assert combined_column(driver, "POS")[0] == "52000"
+    sort_combined(driver, "b")  # b has the variant at 52000 and 54000 (AF 1.00) and a reference cell at 50000, which is last
+    assert combined_column(driver, "POS") == ["52000", "54000", "50000"]
+    sort_combined(driver, "b")
+    assert combined_column(driver, "POS") == ["52000", "54000", "50000"]  # empty cells stay last when descending too
+    sort_combined(driver, "a.status")  # the dot (no status) is last
+    assert combined_column(driver, "a.status")[-1] == "."
+
+
+def test_the_combined_sort_stays_when_the_filter_changes_and_resets_on_a_new_combine(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    sort_combined(driver, "POS")
+    sort_combined(driver, "POS")
+
+    driver.find_element(By.CSS_SELECTOR, "#combined-filter option[value='one']").click()
+    assert combined_column(driver, "POS") == ["54000", "50000"]
+
+    driver.find_element(By.ID, "strain-combine").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "combine-status").text.startswith("Done"))
+    assert combined_aria(driver, "POS") == "none"
+
+
+# Subtract the parent: show only what the parent does not have, in the summary, the table and the drawing
+
+def banner_text(driver):
+    return driver.find_element(By.ID, "showing-draw").text
+
+
+def test_subtract_parent_is_off_and_explained_until_a_combine_with_a_parent_exists(driver, server, shared_samples):
+    open_site(driver, server)
+    box = driver.find_element(By.ID, "subtract-parent")
+    assert not box.is_enabled() and "parent" in driver.find_element(By.ID, "subtract-note").text
+
+    run_abc_and_combine(driver, server, shared_samples, parent="")  # a combine without a parent
+    assert not driver.find_element(By.ID, "subtract-parent").is_enabled()
+    run_abc_and_combine(driver, server, shared_samples, parent="c")
+    choose_result(driver, "a")
+    assert driver.find_element(By.ID, "subtract-parent").is_enabled()
+    choose_result(driver, "c")  # the parent itself has nothing to subtract
+    assert not driver.find_element(By.ID, "subtract-parent").is_enabled()
+
+
+def test_subtracting_the_parent_keeps_only_the_variants_the_parent_lacks_everywhere(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples, parent="c")
+    choose_result(driver, "a")
+    assert "2 variants" in banner_text(driver)  # a has 50000 and 52000; c has 52000
+
+    driver.find_element(By.ID, "subtract-parent").click()
+
+    assert "without the variants that the parent c has" in banner_text(driver) and "1 variants" in banner_text(driver)
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+    assert " ".join(driver.find_element(By.ID, "stats-table").text.split()).startswith("Variants 1")
+    press(driver, "annotate", "annotate-status")
+    assert shown_positions(driver) == ["50000"]
+    assert "new_vs_parent" in driver.find_element(By.ID, "download-vcf").get_attribute("download")
+    driver.find_element(By.ID, "subtract-parent").click()  # off again
+    assert "2 variants" in banner_text(driver)
+
+
+def test_subtracting_the_parent_from_all_samples_keeps_the_variants_new_in_any_sample(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples, parent="c")
+    choose_result(driver, "__all__")
+    driver.find_element(By.ID, "subtract-parent").click()
+
+    assert "2 distinct variants" in banner_text(driver)
+    press(driver, "annotate", "annotate-status")
+    assert shown_positions(driver) == ["50000", "54000"]  # the variant of all three samples is gone
+
+
+def test_the_subtract_choice_goes_away_when_the_combine_is_out_of_date(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples, parent="c")
+    choose_result(driver, "a")
+    driver.find_element(By.ID, "subtract-parent").click()
+
+    strain_rows(driver)["b"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+
+    box = driver.find_element(By.ID, "subtract-parent")
+    assert not box.is_enabled() and not box.is_selected()
+    assert "2 variants" in banner_text(driver)
