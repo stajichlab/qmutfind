@@ -1342,7 +1342,7 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   Two first-run failures were useful: a one-base microhomology moved the reported flank (now reported as homology), and one test had a wrong coordinate after an earlier splice.
 - Real reads (A1163, 4 M reads, dummy 2 kb construct, 95-100 s, 520 MB): ΔcrpA strain: `target_replaced` Pass (0% of genome depth inside AFUB_036430), no integration (correct); wild type: 105%, Fail. About 20 genome-to-genome junctions with 5 or more reads appear in each
   (repeats and artefacts); no check uses them, and the text report lists only the junctions that involve the cassette or lie within 5 kb of the target.
-- Open: real transformant data; long reads; mate pairs as junction evidence; donor with arms (auto-strip by alignment of the construct to the genome); the page (`confirm.html`, worker step, WASM export); thresholds on real data.
+- Open: real transformant data; long reads; mate pairs as junction evidence; donor with arms (auto-strip by alignment of the construct to the genome); the page (`confirm_allele.html`, worker step, WASM export); thresholds on real data.
 - Tests now: 317 Rust (+1 opt-in), 62 Node, 201 browser, 74 bench.
 
 ## 12w. Allele confirmation page (2026-11-13)
@@ -1366,3 +1366,9 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
 - Real data: MinION wild type SRR28035789 (A. fumigatus ATCC 46645, 300,000 reads, 13x) against A1163 with a dummy construct: no integration, gene present, 146 s, 1.7 GB; 668 genome-to-genome junctions with 3 or more reads (real chimeras and repeats), not used by any check.
 - CI: new pixi task `test-confirm` (release build, `--include-ignored`: the long-read tests and the sweeps, about 25 s once built); the long-read tests are ignored in a debug build.
 - Tests now: 329 Rust in debug (10 ignored there), 34 for confirm in release, 66 Node, 218 browser, 74 bench.
+
+## 12y. confirm_allele.html and the shared reference panel (2026-11-13)
+- The page `confirm.html` was renamed `confirm_allele.html` (user request); `confirm.html` is now a small redirect that keeps the address options (query and hash). Links in both headers, the build script, the docs and the tests follow the new name.
+- The reference panel of the page is the main page's: the same ids and texts (`reference-source`, `genome-menu`, `genome-load`, `genome-fungidb`, `reference`, `gff`, `url-reference`, `ref-url-load`, `genome-status`, `source-reference`), the NCBI list from `genomes/genomes.json` (`?genomes=PATH` for the tests) with the FungiDB list as a command, a size warning above 50 Mb,
+  the Dropbox address rewrite, and "a chosen file wins over a loaded one". The genome and its genes are loaded when you press the button, not at the run; the gene lookup uses the loaded genes. The code was copied from `app.js` into `confirm.js` (not shared): a change to one must be made in the other. 8 browser tests (starts on the NCBI list; two groups; filter; load with genes and a gene name finds the target and confirms;
+  a genome without gene models asks for a GFF3 or a region; FungiDB shows the command; addresses; a chosen file wins; the old address redirects). Tests now: 226 browser.

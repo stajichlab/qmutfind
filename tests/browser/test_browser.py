@@ -3059,9 +3059,9 @@ def test_a_gene_name_with_html_characters_is_shown_as_text_in_the_sequence_view(
     assert driver.execute_script("return document.querySelectorAll('#context-view b').length;") == 0
 
 
-# The allele confirmation page (confirm.html): is an introduced cassette integrated where it should be, and intact?
+# The allele confirmation page (confirm_allele.html): is an introduced cassette integrated where it should be, and intact?
 
-CONFIRM = "dist-site/confirm.html"
+CONFIRM = "dist-site/confirm_allele.html"
 _COMP = {"A": "T", "C": "G", "G": "C", "T": "A"}
 
 
@@ -3137,7 +3137,8 @@ def open_confirm(driver, server, theme=None):
 
 
 def confirm_fill(driver, inputs, reads="mutant.fq", target="region", construct="file", reference="ref.fa", gff=None):
-    driver.find_element(By.ID, "confirm-reference").send_keys(str(inputs / reference))
+    set_reference_mode(driver, "upload")  # the reference panel starts on the NCBI list, as on the main page
+    driver.find_element(By.ID, "reference").send_keys(str(inputs / reference))
     if construct == "file":
         driver.find_element(By.ID, "confirm-construct-file").send_keys(str(inputs / "cassette.fa"))
     elif construct:
@@ -3148,7 +3149,7 @@ def confirm_fill(driver, inputs, reads="mutant.fq", target="region", construct="
     elif target == "gene":
         driver.find_element(By.ID, "confirm-gene").send_keys("G1")
     if gff:
-        driver.find_element(By.ID, "confirm-gff").send_keys(str(inputs / gff))
+        driver.find_element(By.ID, "gff").send_keys(str(inputs / gff))
     if reads:
         driver.find_element(By.ID, "confirm-reads").send_keys(str(inputs / reads))
 
@@ -3176,12 +3177,12 @@ def cli_confirm_text(inputs, extra):
 def test_the_confirmation_page_has_its_inputs_and_links_to_and_from_the_main_page(driver, server):
     open_confirm(driver, server)
 
-    for element_id in ["confirm-reference", "confirm-construct-file", "confirm-construct-text", "confirm-target-kind", "confirm-reads", "confirm-kind", "confirm-run"]:
+    for element_id in ["reference-source", "genome-menu", "genome-load", "reference", "gff", "confirm-construct-file", "confirm-construct-text", "confirm-target-kind", "confirm-reads", "confirm-kind", "confirm-run"]:
         assert driver.find_element(By.ID, element_id), element_id
     assert "allele" in driver.title.lower()
     assert driver.find_element(By.CSS_SELECTOR, "a[href^='index.html']").is_displayed()
     open_site(driver, server)
-    assert driver.find_element(By.CSS_SELECTOR, "a[href^='confirm.html']").is_displayed()
+    assert driver.find_element(By.CSS_SELECTOR, "a[href^='confirm_allele.html']").is_displayed()
 
 
 def test_a_replacement_is_confirmed_in_the_page_and_the_downloaded_report_equals_the_cli(driver, server, confirm_inputs):
@@ -3272,7 +3273,8 @@ def test_missing_or_wrong_inputs_give_a_reason_before_or_after_the_run(driver, s
     open_confirm(driver, server)
     assert confirm_run(driver).startswith("Choose the reference"), driver.find_element(By.ID, "confirm-status").text
 
-    driver.find_element(By.ID, "confirm-reference").send_keys(str(confirm_inputs / "ref.fa"))
+    set_reference_mode(driver, "upload")
+    driver.find_element(By.ID, "reference").send_keys(str(confirm_inputs / "ref.fa"))
     assert confirm_run(driver).startswith("Give the construct")
 
     driver.find_element(By.ID, "confirm-construct-text").send_keys(">chrA\n" + "ACGT" * 100)
@@ -3367,3 +3369,115 @@ def test_long_reads_confirm_the_allele_and_the_whole_insertion_check_passes(driv
     assert kind == "confirmed", (kind, text, check_statuses(driver))
     assert check_statuses(driver)["whole_insertion_in_one_read"] == "pass"
     assert "reads across the whole insertion" in driver.find_element(By.ID, "confirm-checks").text.lower() or "cross the whole insertion" in driver.find_element(By.ID, "confirm-checks").text.lower()
+
+
+# The reference panel of the confirmation page is the main page's: the NCBI list (and the FungiDB command), files, or addresses.
+
+def open_confirm_menu(driver, server):
+    driver.get(f"{server}/{CONFIRM}?genomes=_test_genomes/genomes.json%3Fv%3D{time.time_ns()}")
+    WebDriverWait(driver, 20).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#genome-menu option")) > 0)
+
+
+def test_the_reference_panel_starts_on_the_ncbi_list_and_lists_genomes_and_fungidb_organisms_in_two_groups(driver, server, genome_site):
+    open_confirm_menu(driver, server)
+
+    assert driver.find_element(By.ID, "reference-source").get_attribute("value") == "ncbi"
+    assert driver.find_element(By.ID, "genome-section").is_displayed() and not driver.find_element(By.ID, "reference-upload").is_displayed()
+    groups = [g.get_attribute("label") for g in driver.find_elements(By.CSS_SELECTOR, "#genome-menu optgroup")]
+    assert groups == ["NCBI (loads in this page)", "FungiDB (needs the command line and a key)"], groups
+    texts = [o.text for o in driver.find_elements(By.CSS_SELECTOR, "#genome-menu option")]
+    assert any("Aspergillus testii" in t and "100 genes" in t for t in texts) and any("no gene models" in t for t in texts), texts
+    assert "3 NCBI genomes" in driver.find_element(By.ID, "genome-text").text
+
+
+def test_the_filter_narrows_the_list_on_the_confirmation_page_too(driver, server, genome_site):
+    open_confirm_menu(driver, server)
+
+    driver.find_element(By.ID, "genome-filter").send_keys("candida")
+
+    texts = [o.text for o in driver.find_elements(By.CSS_SELECTOR, "#genome-menu option")]
+    assert len(texts) == 1 and "Candida testii" in texts[0], texts
+
+
+def test_a_genome_from_the_ncbi_list_loads_with_its_genes_and_a_gene_name_finds_the_target(driver, server, confirm_inputs, genome_site):
+    # The listed genome is the test genome and its test gene G1 (49,000-51,000). The cassette replaces exactly that gene.
+    cassette = _cassette()
+    modified = CHR_A[:48_999] + cassette + CHR_A[51_000:]
+    (confirm_inputs / "gene1.fq").write_text(_sim_reads(modified, 30, 8))
+    open_confirm_menu(driver, server)
+    driver.find_element(By.CSS_SELECTOR, "#genome-menu option[value='ncbi:GCF_1.1']").click()
+    driver.find_element(By.ID, "genome-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded: Aspergillus testii (strain A) (GCF_1.1)"), driver.find_element(By.ID, "genome-status").text
+    assert "the genome menu (GCF_1.1" in driver.find_element(By.ID, "source-reference").text
+    assert "genes.gff3" in driver.find_element(By.ID, "source-gff").text
+    driver.find_element(By.ID, "confirm-construct-file").send_keys(str(confirm_inputs / "cassette.fa"))
+    driver.find_element(By.CSS_SELECTOR, "#confirm-target-kind option[value='gene']").click()
+    driver.find_element(By.ID, "confirm-gene").send_keys("G1")
+    driver.find_element(By.ID, "confirm-reads").send_keys(str(confirm_inputs / "gene1.fq"))
+
+    status = confirm_run(driver)
+
+    assert status.startswith("Done"), status
+    assert verdict_of(driver)[0] == "confirmed", (verdict_of(driver), check_statuses(driver))
+    assert "chrA:49000-51000" in driver.find_element(By.ID, "confirm-result").text
+
+
+def test_a_genome_without_gene_models_loads_and_a_gene_name_then_asks_for_a_gff_or_a_region(driver, server, confirm_inputs, genome_site):
+    open_confirm_menu(driver, server)
+    driver.find_element(By.CSS_SELECTOR, "#genome-menu option[value='ncbi:GCA_3.1']").click()
+    driver.find_element(By.ID, "genome-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+    assert "no gene models" in driver.find_element(By.ID, "genome-status").text
+    driver.find_element(By.ID, "confirm-construct-file").send_keys(str(confirm_inputs / "cassette.fa"))
+    driver.find_element(By.CSS_SELECTOR, "#confirm-target-kind option[value='gene']").click()
+    driver.find_element(By.ID, "confirm-gene").send_keys("G1")
+    driver.find_element(By.ID, "confirm-reads").send_keys(str(confirm_inputs / "mutant.fq"))
+
+    status = confirm_run(driver)
+
+    assert status.startswith("Choose") and "GFF3" in status and "region" in status, status
+
+
+def test_a_fungidb_organism_shows_the_command_and_loads_nothing(driver, server, genome_site):
+    open_confirm_menu(driver, server)
+
+    driver.find_element(By.CSS_SELECTOR, "#genome-menu option[value^='fungidb:Aspergillus fakeii']").click()
+    driver.find_element(By.ID, "genome-load").click()
+
+    assert driver.find_element(By.ID, "genome-fungidb").is_displayed()
+    assert 'qmutfind fetch --organism "Aspergillus fakeii X1"' in driver.find_element(By.ID, "genome-command").text
+    assert driver.find_element(By.ID, "source-reference").text.startswith("Not set")
+
+
+def test_the_genome_can_be_downloaded_from_addresses_on_the_confirmation_page(driver, server, confirm_inputs, example_site):
+    open_confirm(driver, server)
+    driver.find_element(By.CSS_SELECTOR, "#reference-source option[value='url']").click()
+    driver.find_element(By.ID, "url-reference").send_keys(f"{server}/dist-site/_test_example/ref.fa.gz")
+    driver.find_element(By.ID, "url-gff").send_keys(f"{server}/dist-site/_test_example/genes.gff3")
+
+    driver.find_element(By.ID, "ref-url-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded: the reference genome and the gene file"), driver.find_element(By.ID, "genome-status").text
+    assert "the address 127.0.0.1" in driver.find_element(By.ID, "source-reference").text
+
+
+def test_a_file_chosen_for_the_genome_wins_over_a_loaded_one(driver, server, confirm_inputs, genome_site):
+    open_confirm_menu(driver, server)
+    driver.find_element(By.CSS_SELECTOR, "#genome-menu option[value='ncbi:GCF_1.1']").click()
+    driver.find_element(By.ID, "genome-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Loaded"))
+
+    set_reference_mode(driver, "upload")
+    driver.find_element(By.ID, "reference").send_keys(str(confirm_inputs / "ref.fa"))
+
+    assert driver.find_element(By.ID, "source-reference").text.startswith("Local file: ref.fa")
+
+
+def test_the_old_confirm_address_goes_to_the_new_page_and_keeps_the_address_options(driver, server):
+    driver.get(f"{server}/dist-site/confirm.html?theme=mono")
+    WebDriverWait(driver, 20).until(lambda d: "confirm_allele.html" in d.current_url)
+
+    assert "theme=mono" in driver.current_url
+    assert driver.find_element(By.ID, "confirm-run").is_displayed()

@@ -24,21 +24,12 @@ function offer(id, filename, text, type) {
   a.hidden = false;
 }
 
-// ---- Choices that show or hide parts of the form --------------------------------------------------------------------------------------
-function showSource() {
-  const source = $('confirm-genome-source').value;
-  for (const group of document.querySelectorAll('[data-source-group]')) {
-    const name = group.dataset.sourceGroup;
-    group.hidden = name === 'gff-file' ? source === 'ncbi' : name !== source;
-  }
-}
+// ---- The target choice shows its own fields ------------------------------------------------------------------------------------------------
 function showTarget() {
   const kind = $('confirm-target-kind').value;
   for (const group of document.querySelectorAll('[data-target-group]')) group.hidden = group.dataset.targetGroup !== kind;
 }
-$('confirm-genome-source').addEventListener('change', showSource);
 $('confirm-target-kind').addEventListener('change', showTarget);
-showSource();
 showTarget();
 
 // ---- The construct ----------------------------------------------------------------------------------------------------------------------
@@ -64,21 +55,6 @@ async function describeConstruct() {
 $('confirm-construct-file').addEventListener('change', describeConstruct);
 $('confirm-construct-text').addEventListener('input', describeConstruct);
 
-// ---- The NCBI list ----------------------------------------------------------------------------------------------------------------------
-let genomeList = [];
-(async function loadList() {
-  const select = $('confirm-ncbi');
-  try {
-    const response = await fetch('genomes/genomes.json', { cache: 'no-cache' });
-    if (!response.ok) throw new Error(`answer ${response.status}`);
-    genomeList = (await response.json()).genomes || [];
-    select.replaceChildren(new Option('Choose a genome', ''));
-    for (const g of genomeList) select.appendChild(new Option(`${g.label} (${g.accession}${g.gff ? '' : ', no gene models'})`, g.accession));
-  } catch (error) {
-    select.replaceChildren(new Option('The list could not be loaded', ''));
-  }
-})();
-
 // ---- Downloads --------------------------------------------------------------------------------------------------------------------------
 /** An address the page may download from: https (or this site), and no user name or password. */
 function checkUrl(text, label) {
@@ -89,7 +65,7 @@ function checkUrl(text, label) {
   return url;
 }
 
-async function download(item, label, signal, budget) {
+async function download(item, label, signal, budget, statusId = 'confirm-status') {
   const url = checkUrl(item.url, label);
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
@@ -104,7 +80,7 @@ async function download(item, label, signal, budget) {
     parts.push(value);
     got += value.length;
     if (got > budget.left) { await reader.cancel(); throw new Error(`${label}: the download is too large (more than ${mb(budget.left)}).`); }
-    show('confirm-status', `Downloading ${label}: ${mb(got)}${expected ? ` of ${mb(expected)}` : ''}`);
+    show(statusId, `Downloading ${label}: ${mb(got)}${expected ? ` of ${mb(expected)}` : ''}`);
   }
   if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
   budget.left -= got;
@@ -141,6 +117,203 @@ async function downloadFirstReads(address, label, maxReads, budget) {
   return new File([m.bytes], `${name}.gz`);
 }
 
+// ---- The reference genome: the same panel as the main page ---------------------------------------------------------------------------------
+// genomes/genomes.json lists NCBI genomes (RefSeq, and some GenBank without gene models); the page downloads them: NCBI allows that. genomes/fungidb.json lists
+// FungiDB organisms. FungiDB blocks downloads from web pages and needs an API key, so for those the page only shows the `qmutfind fetch` command.
+// ?genomes=PATH uses another list, but only a path on this site (the tests use that).
+const LARGE_GENOME = 50e6;
+let genomeList = [];
+let genomesBase = location.href; // file addresses in the list are relative to the list
+let fungidbList = [];
+let loading = false;
+// What the menu or the addresses loaded. A file chosen in an input always wins over it.
+const loaded = { reference: null, gff: null, genesMissing: false, source: { reference: '', gff: '' } };
+const refFile = () => $('reference').files[0] || loaded.reference;
+const gffFile = () => $('gff').files[0] || loaded.gff;
+const hostOf = (item, base) => new URL(item.url, base).host;
+
+function sitePath(asked, fallback) {
+  if (!asked || asked !== asked.trim() || /[\u0000-\u001f]/.test(asked)) return fallback; // the URL parser would drop these characters
+  if (/^[\\/]/.test(asked) || /^[a-z][a-z0-9+.-]*:/i.test(asked)) return fallback;
+  try {
+    return new URL(asked, location.href).origin === location.origin ? asked : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+/** Say, under each input, where its data comes from: a local file, or a download (the menu or the web addresses). */
+function describeSources() {
+  const size = (f) => `${(f.size / 1e6).toFixed(f.size < 1e5 ? 3 : 1)} MB`;
+  const line = (slot, inputId, file) => {
+    const chosen = [...$(inputId).files];
+    const element = $(`source-${slot}`);
+    element.classList.remove('from-web');
+    if (chosen.length) {
+      element.textContent = `Local file: ${chosen.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
+    } else if (file) {
+      element.textContent = `From ${loaded.source[slot]}: ${file.name} (${size(file)})`;
+      element.classList.add('from-web');
+    } else {
+      element.textContent = 'Not set. Use the NCBI list, upload files or give addresses above.';
+    }
+  };
+  line('reference', 'reference', loaded.reference);
+  line('gff', 'gff', loaded.gff);
+}
+for (const id of ['reference', 'gff']) $(id).addEventListener('change', describeSources);
+describeSources();
+
+function fillMenu() {
+  const filter = $('genome-filter').value.trim().toLowerCase();
+  const menu = $('genome-menu');
+  menu.replaceChildren();
+  const group = (label) => { const g = document.createElement('optgroup'); g.label = label; return g; };
+  const ncbi = group('NCBI (loads in this page)');
+  for (const g of genomeList) {
+    if (filter && !`${g.label} ${g.accession}`.toLowerCase().includes(filter)) continue;
+    ncbi.appendChild(new Option(`${g.label} (${(g.genome_size / 1e6).toFixed(1)} Mb, ${g.gff && g.genes > 0 ? `${g.genes.toLocaleString()} genes` : 'no gene models'}, ${g.level}${g.source === 'GenBank' ? ', GenBank' : ''})`, `ncbi:${g.accession}`));
+  }
+  const fungidb = group('FungiDB (needs the command line and a key)');
+  for (const o of fungidbList) {
+    if (filter && !o.name.toLowerCase().includes(filter)) continue;
+    fungidb.appendChild(new Option(`${o.name} (${o.genes.toLocaleString()} genes)`, `fungidb:${o.name}`));
+  }
+  if (ncbi.children.length) menu.appendChild(ncbi);
+  if (fungidb.children.length) menu.appendChild(fungidb);
+}
+
+async function loadGenome() {
+  if (loading || running) return;
+  const value = $('genome-menu').value;
+  if (!value) { show('genome-status', 'Choose a genome in the list.'); return; }
+  $('genome-fungidb').hidden = true;
+  if (value.startsWith('fungidb:')) {
+    const name = value.slice('fungidb:'.length);
+    show('genome-status', `${name} is in FungiDB.`);
+    $('genome-command').textContent = `qmutfind fetch --organism "${name}" --out-dir genome --eupathdb-key-file ~/.eupathdb_keys`;
+    $('genome-fungidb').hidden = false;
+    return;
+  }
+  const entry = genomeList.find((g) => `ncbi:${g.accession}` === value);
+  if (!entry) return;
+  loading = true;
+  $('genome-load').disabled = true;
+  try {
+    const budget = { left: MAX_DOWNLOAD };
+    const at = (item) => ({ ...item, url: new URL(item.url, genomesBase).href });
+    const reference = await download(at(entry.fasta), 'the genome', undefined, budget, 'genome-status');
+    const gff = entry.gff ? await download(at(entry.gff), 'the gene models', undefined, budget, 'genome-status') : null;
+    Object.assign(loaded, {
+      reference, gff, genesMissing: !entry.gff,
+      source: {
+        reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, genomesBase)})`,
+        gff: entry.gff ? `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, genomesBase)})` : '',
+      },
+    });
+    describeSources();
+    let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so a gene cannot be found by name unless you upload a GFF3 file; a region still works.';
+    note += ' Now give the cassette, the target and the reads.';
+    if (entry.genome_size > LARGE_GENOME) {
+      note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
+    }
+    show('genome-status', `Loaded: ${entry.label} (${entry.accession}).${note}`);
+  } catch (error) {
+    show('genome-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
+  } finally {
+    loading = false;
+    $('genome-load').disabled = false;
+  }
+}
+
+async function setupGenomes() {
+  const asked = new URLSearchParams(location.search).get('genomes');
+  const path = sitePath(asked, 'genomes/genomes.json');
+  const base = new URL(path, location.href);
+  genomesBase = base;
+  try {
+    const response = await fetch(base, { cache: 'no-cache' });
+    if (!response.ok) throw new Error(`the server answered ${response.status}`);
+    genomeList = (await response.json()).genomes || [];
+  } catch (error) {
+    $('genome-text').textContent = `The NCBI genome list could not be loaded (${error.message}). Upload files or give addresses instead.`;
+    return;
+  }
+  try {
+    const response = await fetch(new URL('fungidb.json', base), { cache: 'no-cache' });
+    if (response.ok) {
+      const document_ = await response.json();
+      fungidbList = document_.organisms || [];
+      $('genome-text').textContent = `${genomeList.length} NCBI genomes (RefSeq, and two GenBank) download in this page. ` +
+        `${fungidbList.length} FungiDB organisms (${document_.release || 'FungiDB'}) are listed too; they need the command line.`;
+    }
+  } catch (error) {
+    // The FungiDB list is optional.
+  }
+  if (!$('genome-text').textContent) $('genome-text').textContent = `${genomeList.length} NCBI genomes download in this page.`;
+  fillMenu();
+  $('genome-filter').addEventListener('input', fillMenu);
+  $('genome-load').addEventListener('click', loadGenome);
+  $('genome-menu').addEventListener('dblclick', loadGenome);
+}
+setupGenomes();
+
+// The reference panel asks one question and shows the controls of the answer: the NCBI list, files, or https addresses.
+function applyReferenceMode() {
+  const mode = $('reference-source').value;
+  $('genome-section').hidden = mode !== 'ncbi';
+  $('reference-upload').hidden = mode !== 'upload';
+  $('reference-url').hidden = mode !== 'url';
+}
+$('reference-source').addEventListener('change', applyReferenceMode);
+applyReferenceMode();
+
+/**
+ * A Dropbox share link (www.dropbox.com/s/... or /scl/fi/...) answers with a redirect that has no CORS header, so a browser page cannot follow it.
+ * The same path on dl.dropboxusercontent.com has the header, so the host is changed and the `dl` and `raw` options are dropped. Any other address is returned as it is.
+ */
+function directAddress(text) {
+  let url;
+  try { url = new URL(text); } catch (error) { return text; }
+  const shared = /^\/(s|scl\/fi)\//.test(url.pathname);
+  if (url.protocol !== 'https:' || !['www.dropbox.com', 'dropbox.com'].includes(url.hostname) || !shared) return text;
+  url.hostname = 'dl.dropboxusercontent.com';
+  url.searchParams.delete('dl');
+  url.searchParams.delete('raw');
+  return url.href;
+}
+
+$('ref-url-load').addEventListener('click', async () => {
+  if (loading || running) return;
+  const fastaText = $('url-reference').value.trim();
+  const gffText = $('url-gff').value.trim();
+  if (!fastaText) { show('genome-status', 'Type the address of the reference FASTA.'); return; }
+  loading = true;
+  $('ref-url-load').disabled = true;
+  try {
+    const wanted = [['reference', 'the reference genome', fastaText], ...(gffText ? [['gff', 'the gene file', gffText]] : [])];
+    let changed = false;
+    const urls = wanted.map(([, label, text]) => { const d = directAddress(text); changed ||= d !== text; return checkUrl(d, label); }); // all checked before any download
+    const budget = { left: MAX_DOWNLOAD };
+    const got = {};
+    const source = {};
+    for (const [i, [slot, label]] of wanted.entries()) {
+      const url = urls[i];
+      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
+      got[slot] = await download({ name, url: url.href }, label, undefined, budget, 'genome-status');
+      source[slot] = `the address ${url.host}${url.pathname}`;
+    }
+    Object.assign(loaded, { reference: got.reference, gff: got.gff || null, genesMissing: !got.gff, source: { reference: source.reference, gff: source.gff || '' } });
+    describeSources();
+    show('genome-status', `Loaded: the reference genome${got.gff ? ' and the gene file' : ''}.${changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''}`);
+  } catch (error) {
+    show('genome-status', `Error: ${error.message}`);
+  } finally {
+    loading = false;
+    $('ref-url-load').disabled = false;
+  }
+});
+
 // ---- The run ----------------------------------------------------------------------------------------------------------------------------
 const number = (id, fallback) => { const v = Number($(id).value); return Number.isFinite(v) && v >= 0 ? v : fallback; };
 
@@ -164,29 +337,30 @@ function targetOfForm() {
 
 $('confirm-run').addEventListener('click', async () => {
   if (running) return;
-  const source = $('confirm-genome-source').value;
-  const refFile = $('confirm-reference').files[0];
-  const refUrl = $('confirm-ref-url').value.trim();
-  const ncbi = genomeList.find((g) => g.accession === $('confirm-ncbi').value);
-  if ((source === 'upload' && !refFile) || (source === 'url' && !refUrl) || (source === 'ncbi' && !ncbi)) {
-    show('confirm-status', 'Choose the reference genome first (section 1).');
+  if (loading) { show('confirm-status', 'Wait until the genome has loaded.'); return; }
+  const reference = refFile();
+  if (!reference) {
+    show('confirm-status', 'Choose the reference genome first (section 1): load one from the NCBI list, upload a file, or download it from an address.');
     return;
   }
   let construct;
   try { construct = await constructText(); } catch (error) { show('confirm-status', `Give the construct: the file cannot be read (${error.message}).`); return; }
-  if (!construct) { show('confirm-status', 'Give the construct: a FASTA file or the pasted sequence of the cassette (section 1).'); return; }
+  if (!construct) { show('confirm-status', 'Give the construct: a FASTA file or the pasted sequence of the cassette (section 2).'); return; }
   let wanted;
   try { wanted = targetOfForm(); } catch (error) { show('confirm-status', error.message); return; }
-  const gffFile = $('confirm-gff').files[0];
-  if (wanted.gene && source !== 'ncbi' && !gffFile) { show('confirm-status', 'Choose the GFF3 file that holds the gene: a gene name needs it (section 1).'); return; }
-  if (wanted.gene && source === 'ncbi' && !ncbi.gff) { show('confirm-status', 'This genome has no gene models: choose a GFF3 file, or give a region instead.'); return; }
+  const gff = gffFile();
+  if (wanted.gene && !gff) {
+    show('confirm-status', loaded.genesMissing && !$('gff').files[0]
+      ? 'Choose a GFF3 file or give a region: this genome has no gene models, and a gene name needs them (section 1).'
+      : 'Choose the GFF3 file that holds the gene: a gene name needs it (section 1).');
+    return;
+  }
   const localReads = [...$('confirm-reads').files];
   const addresses = $('confirm-reads-urls').value.split('\n').map((x) => x.trim()).filter(Boolean);
   if (!localReads.length && !addresses.length) { show('confirm-status', 'Choose the reads: files from your computer or https addresses (section 3).'); return; }
   let urls;
   try {
     urls = addresses.map((a) => checkUrl(a, 'the reads').href); // all checked before any download
-    if (source === 'url') checkUrl(refUrl, 'the reference genome');
   } catch (error) { show('confirm-status', `Error: ${error.message}`); return; }
 
   running = true;
@@ -197,16 +371,6 @@ $('confirm-run').addEventListener('click', async () => {
   activeAbort = new AbortController();
   try {
     const budget = { left: MAX_DOWNLOAD };
-    let reference = refFile;
-    let gff = gffFile || null;
-    if (source === 'url') {
-      const url = checkUrl(refUrl, 'the reference genome');
-      reference = await download({ url: url.href }, 'the reference genome', activeAbort.signal, budget);
-    } else if (source === 'ncbi') {
-      const base = new URL('genomes/genomes.json', location.href);
-      reference = await download({ ...ncbi.fasta, url: new URL(ncbi.fasta.url, base).href }, 'the genome', activeAbort.signal, budget);
-      if (ncbi.gff) gff = await download({ ...ncbi.gff, url: new URL(ncbi.gff.url, base).href }, 'the gene models', activeAbort.signal, budget);
-    }
     const limitThousands = number('confirm-read-limit', 0);
     const maxReads = Math.round(limitThousands * 1000);
     const reads = [...localReads];
@@ -217,7 +381,7 @@ $('confirm-run').addEventListener('click', async () => {
     }
     show('confirm-status', 'Starting');
     const m = await callWorker({
-      step: 'confirm', reference, construct: new TextEncoder().encode(construct), reads, kind: $('confirm-kind').value, gff,
+      step: 'confirm', reference, construct: new TextEncoder().encode(construct), reads, kind: $('confirm-kind').value, gff: gff || null,
       ...wanted, maxReads,
       options: { minReads: Math.max(1, Math.round(number('confirm-min-reads', 3))), minDepth: number('confirm-min-depth', 10), tolerance: $('confirm-tolerance').value === '' ? -1 : Math.round(number('confirm-tolerance', 20)) },
     }, (p) => show('confirm-status', `Mapping: ${p.reads.toLocaleString()} reads`));
