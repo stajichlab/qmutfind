@@ -171,7 +171,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/rust-1.99.1-h6344a40_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/scipy-1.18.1-py313he2a5f1a_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/tk-8.6.13-noxft_h1df4ec4_4.conda
-      - conda: https://conda.anaconda.org/conda-forge/linux-64/wasm-bindgen-cli-0.2.114-h392c2a1_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/wasm-bindgen-cli-0.2.130-h392c2a1_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wget-1.25.0-h653f8fd_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/xorg-libice-1.1.2-h280c20c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/xorg-libsm-1.2.6-h0d788c3_1.conda
@@ -2015,17 +2015,17 @@ packages:
   run_exports: {}
   size: 1127380
   timestamp: 1793541848496
-- conda: https://conda.anaconda.org/conda-forge/linux-64/wasm-bindgen-cli-0.2.114-h392c2a1_0.conda
-  sha256: 481f92434e432c39cfde0b516141e6583efcf189fe234ee90810c235e266d6e1
-  md5: 1035d5d31b2cf19e5176e88142487e66
+- conda: https://conda.anaconda.org/conda-forge/linux-64/wasm-bindgen-cli-0.2.130-h392c2a1_0.conda
+  sha256: 3132aeca760831de7a5cd61f0fea230adacd29ccea046c3938bc6b4569a96035
+  md5: 86bbf9f4f1a9a4377a7968e9096c9417
   depends:
   - __glibc >=2.17,<3.0.a0
   constrains:
   - __glibc >=2.17
   license: MIT OR Apache-2.0
   run_exports: {}
-  size: 7288234
-  timestamp: 1786745829178
+  size: 7907162
+  timestamp: 1793368027175
 - conda: https://conda.anaconda.org/conda-forge/linux-64/wget-1.25.0-h653f8fd_1.conda
   sha256: 66a5a05e0e44fd7a57e24d77665d5d6672646a7b316575b2f679108966d9124e
   md5: 3b97a15e7345c7f6c51bb57bffad7c93

@@ -8,8 +8,9 @@ platforms = ["linux-64"]
 rust = ">=1.96,<2"
 rust-std-wasm32-unknown-unknown = ">=1.96,<2"
 # `wasm-bindgen` CLI must equal the `wasm-bindgen` library version in Cargo.lock
-# (rammap-core 1.2.0 at the pinned commit locks 0.2.114; checked 2026-11-11).
-wasm-bindgen-cli = "==0.2.114"
+# (updated to 0.2.130, the newest on conda-forge and crates.io, on 2026-11-12; rammap-core locks 0.2.114 in its own lockfile,
+# which does not constrain this workspace).
+wasm-bindgen-cli = "==0.2.130"
 # Runs the WASM modules in tests (same V8 engine as Chrome).
 nodejs = ">=22,<23"
 
