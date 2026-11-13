@@ -29,35 +29,61 @@ pub(crate) fn layout(contigs: &[(String, usize)]) -> Layout {
     Layout { starts, widths, scale }
 }
 
-/// The alternating shaded bands behind the plot (from `top` to `bottom`) and one label per contig at `label_y`.
-/// A label that does not fit is shortened; the full name and length stay in a tooltip.
-pub(crate) fn bands_and_labels(contigs: &[(String, usize)], l: &Layout, top: f64, bottom: f64, label_y: f64) -> String {
+/// The distance between two rotated labels (the text height plus a gap), the longest label shown, and the width of one bold
+/// character at font size 10 (an estimate for the room the labels need), all in pixels or characters.
+const LABEL_PITCH: f64 = 12.0;
+const MAX_LABEL_CHARS: usize = 24;
+const LABEL_CHAR_WIDTH: f64 = 6.6;
+
+/// The alternating shaded bands behind the plot (from `top` to `bottom`) and one label per contig.
+///
+/// A label is bold and turned 90 degrees (it reads from the bottom up), and right-justified: its end is at (`x`, `label_top`), so
+/// the text hangs below `label_top` and never reaches up into the drawing. Two labels are never closer than `LABEL_PITCH`; when
+/// two would collide the wider contig keeps its label, and the other shows nothing (its band and label still carry a tooltip with
+/// the full name and length). A name over `MAX_LABEL_CHARS` is shortened. Returns the SVG and the height the labels need.
+pub(crate) fn bands_and_labels(contigs: &[(String, usize)], l: &Layout, top: f64, bottom: f64, label_top: f64) -> (String, f64) {
+    let centres: Vec<f64> = (0..contigs.len()).map(|i| l.starts[i] + l.widths[i] / 2.0).collect();
+    // Choose the labels, widest contig first (equal widths: the earlier contig first).
+    let mut by_width: Vec<usize> = (0..contigs.len()).collect();
+    by_width.sort_by(|&a, &b| l.widths[b].partial_cmp(&l.widths[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
+    let mut shown = vec![false; contigs.len()];
+    let mut placed: Vec<f64> = Vec::new();
+    for i in by_width {
+        if placed.iter().all(|c| (c - centres[i]).abs() >= LABEL_PITCH) {
+            placed.push(centres[i]);
+            shown[i] = true;
+        }
+    }
+
     let mut body = String::new();
+    let mut longest = 0usize;
     for (i, (name, len)) in contigs.iter().enumerate() {
         body.push_str(&format!(
-            "<rect data-band=\"{}\" x=\"{:.2}\" y=\"{top:.0}\" width=\"{:.2}\" height=\"{:.0}\" style=\"fill:var(--fg,#222)\" fill-opacity=\"{}\"/>",
-            escape(name),
+            "<rect data-band=\"{n}\" x=\"{:.2}\" y=\"{top:.0}\" width=\"{:.2}\" height=\"{:.0}\" style=\"fill:var(--fg,#222)\" fill-opacity=\"{}\"><title>{n}: {len} bp</title></rect>",
             l.starts[i],
             l.widths[i],
             bottom - top,
-            if i % 2 == 0 { "0.10" } else { "0.03" }
+            if i % 2 == 0 { "0.10" } else { "0.03" },
+            n = escape(name)
         ));
-        let fit = (l.widths[i] / 6.5) as usize;
-        let shown: String = if name.chars().count() <= fit {
-            name.clone()
-        } else if fit >= 3 {
-            name.chars().take(fit - 1).chain(std::iter::once('…')).collect()
-        } else {
+        let text: String = if !shown[i] {
             String::new()
+        } else if name.chars().count() <= MAX_LABEL_CHARS {
+            name.clone()
+        } else {
+            name.chars().take(MAX_LABEL_CHARS - 1).chain(std::iter::once('…')).collect()
         };
+        longest = longest.max(text.chars().count());
+        // The text is turned about its anchor; the anchor is moved right by a third of the font size so that the turned text is
+        // centred on the contig.
+        let x = centres[i] + 3.5;
         body.push_str(&format!(
-            "<text data-contig-label=\"{n}\" x=\"{:.2}\" y=\"{label_y:.0}\" font-size=\"10\" text-anchor=\"middle\" style=\"fill:var(--fg,#222)\"><title>{n}: {len} bp</title>{}</text>",
-            l.starts[i] + l.widths[i] / 2.0,
-            escape(&shown),
+            "<text data-contig-label=\"{n}\" x=\"{x:.2}\" y=\"{label_top:.0}\" font-size=\"10\" font-weight=\"700\" text-anchor=\"end\" transform=\"rotate(-90 {x:.2} {label_top:.0})\" style=\"fill:var(--fg,#222)\"><title>{n}: {len} bp</title>{}</text>",
+            escape(&text),
             n = escape(name)
         ));
     }
-    body
+    (body, longest as f64 * LABEL_CHAR_WIDTH + 6.0)
 }
 
 /// Compare names so that `chr2` comes before `chr10`: digit runs compare as numbers, other text ignores case.

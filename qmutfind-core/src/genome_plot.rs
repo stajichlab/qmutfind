@@ -102,7 +102,9 @@ pub fn genome_plot_svg(vcf: &str, contigs: Option<&[(String, usize)]>, order: &s
     let band_width = |i: usize| l.widths[i];
     let x_of = |c: &Call| starts[c.contig] + (c.pos.saturating_sub(1)) as f64 * scale;
 
-    let mut body = bands_and_labels(&contigs, &l, 30.0, AF_BOTTOM, 324.0);
+    // The labels hang below the allele fraction area; the legend and the picture height follow them.
+    let label_top = AF_BOTTOM + 10.0;
+    let (mut body, label_room) = bands_and_labels(&contigs, &l, 30.0, AF_BOTTOM, label_top);
 
     // The density panel: calls per bin.
     let mut bins: Vec<Vec<usize>> = contigs.iter().enumerate().map(|(i, _)| vec![0; ((band_width(i) / BIN_PX).round() as usize).max(1)]).collect();
@@ -182,13 +184,14 @@ pub fn genome_plot_svg(vcf: &str, contigs: Option<&[(String, usize)]>, order: &s
     }
 
     // The legend.
-    let ly = 352.0;
+    let ly = label_top + label_room + 22.0;
     body.push_str(&format!("<circle cx=\"{:.1}\" cy=\"{ly}\" r=\"3.5\" fill=\"{SNP_COLOUR}\" stroke=\"#222\" stroke-width=\"0.4\"/><text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" style=\"fill:var(--fg,#222)\">SNP</text>", LEFT + 4.0, LEFT + 14.0, ly + 4.0));
     body.push_str(&format!("<rect x=\"{:.1}\" y=\"{:.1}\" width=\"7\" height=\"7\" fill=\"{SMALL_INDEL_COLOUR}\" stroke=\"#222\" stroke-width=\"0.4\"/><text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" style=\"fill:var(--fg,#222)\">small indel (1 to 49 bp)</text>", LEFT + 70.0, ly - 3.5, LEFT + 82.0, ly + 4.0));
     body.push_str(&format!("<polygon points=\"{:.1},{:.1} {:.1},{:.1} {:.1},{:.1}\" fill=\"{LARGE_INDEL_COLOUR}\" stroke=\"#222\" stroke-width=\"0.4\"/><text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" style=\"fill:var(--fg,#222)\">large indel (50 bp or more)</text>", LEFT + 230.0, ly - 5.0, LEFT + 225.0, ly + 4.0, LEFT + 235.0, ly + 4.0, LEFT + 244.0, ly + 4.0));
 
     Ok(format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH} 372\" width=\"100%\" font-family=\"system-ui, sans-serif\" role=\"img\" aria-label=\"Variants along the genome: {} calls on {} contigs\">{body}</svg>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH} {:.0}\" width=\"100%\" font-family=\"system-ui, sans-serif\" role=\"img\" aria-label=\"Variants along the genome: {} calls on {} contigs\">{body}</svg>",
+        ly + 20.0,
         calls.len(),
         contigs.len()
     ))

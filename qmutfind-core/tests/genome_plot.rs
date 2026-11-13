@@ -1,5 +1,8 @@
 //! The whole-genome plot: where the variants are along the contigs, drawn as SVG.
 
+mod common;
+
+use common::{assert_label_rules, contig_labels, crowded_contigs, scaffold_contigs, viewbox_height};
 use qmutfind_core::genome_plot_svg;
 
 const HEADER: &str = "##fileformat=VCFv4.2
@@ -210,4 +213,57 @@ fn the_variant_plot_orders_contigs_by_input_length_or_natural_name_like_the_dept
     assert_eq!(order("length"), vec!["chr2", "chr1", "chr10"]);
     assert_eq!(order("name"), vec!["chr1", "chr2", "chr10"]);
     assert!(genome_plot_svg(text, None, "sideways").is_err());
+}
+
+
+// Contig labels: bold, turned 90 degrees, right-justified below the plot, and never on top of each other.
+
+const EMPTY_VCF: &str = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n";
+
+fn plot_of(contigs: &[(String, usize)]) -> String {
+    genome_plot_svg(EMPTY_VCF, Some(contigs), "input").unwrap()
+}
+
+#[test]
+fn the_labels_of_the_variant_plot_follow_the_label_rules_and_hang_below_the_allele_fraction_area() {
+    // The allele fraction area ends at y 300, so no label may start above it.
+    assert_label_rules(&genome_plot_svg(&vcf(&CALLS), None, "input").unwrap(), 300.0);
+    assert_label_rules(&plot_of(&scaffold_contigs()), 300.0);
+}
+
+#[test]
+fn when_labels_would_collide_the_wider_contig_keeps_its_label() {
+    let labels = contig_labels(&plot_of(&crowded_contigs()));
+
+    let shown = |name: &str| !labels.iter().find(|l| l.name == name).unwrap().text.is_empty();
+    assert!(shown("wider") && !shown("narrow"), "the narrow contig comes first in the file but the wider one gets the label");
+}
+
+#[test]
+fn a_contig_without_a_label_still_names_itself_in_a_tooltip_on_its_band() {
+    let svg = plot_of(&crowded_contigs());
+
+    assert!(svg.contains("data-band=\"narrow\""));
+    let band = &svg[svg.find("data-band=\"narrow\"").unwrap()..];
+    assert!(band[..band.find("</rect>").unwrap()].contains("<title>narrow: 2300 bp</title>"));
+}
+
+#[test]
+fn a_long_contig_name_is_cut_with_an_ellipsis_and_the_tooltip_keeps_the_full_name() {
+    let name = "scaffold_with_a_very_long_name_that_does_not_fit_1234567890";
+    let svg = plot_of(&[(name.to_string(), 5_000_000)]);
+
+    let label = &contig_labels(&svg)[0];
+    assert!(label.text.ends_with('…') && label.text.chars().count() <= 24, "{}", label.text);
+    assert!(svg.contains(&format!("<title>{name}: 5000000 bp</title>")));
+}
+
+#[test]
+fn the_legend_is_below_the_labels_and_inside_the_picture() {
+    let svg = plot_of(&scaffold_contigs());
+
+    let label_bottom = contig_labels(&svg).iter().filter(|l| !l.text.is_empty()).map(|l| l.y + l.text.chars().count() as f64 * 6.6).fold(0.0, f64::max);
+    let legend_y = num(&svg, "<circle cx=\"74.0\"", 0, "cy");
+    assert!(legend_y > label_bottom, "legend at {legend_y}, labels end at {label_bottom}");
+    assert!(legend_y + 10.0 <= viewbox_height(&svg));
 }

@@ -1,5 +1,8 @@
 //! Windowed read depth (from the caller's counts), its mosdepth-style BED text, and the genome-wide depth plot.
 
+mod common;
+
+use common::{assert_label_rules, contig_labels, crowded_contigs, scaffold_contigs};
 use qmutfind_core::{depth_plot_svg, Caller, CallerConfig, CigarOp, SamRecord};
 
 const LEN: usize = 1000;
@@ -146,4 +149,32 @@ fn a_bed_row_on_a_contig_missing_from_a_given_list_is_an_error() {
     let err = depth_plot_svg(&bed(&[("z", 0, 100, 5.0)]), Some(&[("a".to_string(), 100)]), "input", None).unwrap_err();
 
     assert!(err.contains("z"), "{err}");
+}
+
+
+// Contig labels: bold, turned 90 degrees, right-justified below the variant tick row, and never on top of each other.
+
+fn depth_plot_of(contigs: &[(String, usize)], vcf: Option<&str>) -> String {
+    let rows: String = contigs.iter().map(|(n, l)| format!("{n}\t0\t{}\t10.0\n", (*l).min(1000))).collect();
+    depth_plot_svg(&rows, Some(contigs), "input", vcf).unwrap()
+}
+
+fn one_call_vcf(contig: &str) -> String {
+    format!("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n{contig}\t500\t.\tA\tG\t.\tPASS\tCLASS=SNP;AF=1.0\n")
+}
+
+#[test]
+fn the_labels_of_the_depth_plot_follow_the_label_rules_and_hang_below_the_variant_tick_row() {
+    // The variant ticks end at y 262, so no label may start above that.
+    let contigs = scaffold_contigs();
+    assert_label_rules(&depth_plot_of(&contigs, Some(&one_call_vcf(&contigs[0].0))), 262.0);
+    assert_label_rules(&depth_plot_of(&contigs, None), 262.0);
+}
+
+#[test]
+fn in_the_depth_plot_too_the_wider_contig_keeps_its_label_when_two_collide() {
+    let labels = contig_labels(&depth_plot_of(&crowded_contigs(), None));
+
+    let shown = |name: &str| !labels.iter().find(|l| l.name == name).unwrap().text.is_empty();
+    assert!(shown("wider") && !shown("narrow"));
 }

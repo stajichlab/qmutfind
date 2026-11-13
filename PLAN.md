@@ -1108,3 +1108,20 @@ script; the data are in `qmutfind_data/prjna1094460/`). This is not a unit-teste
   checked (no alignment view, no second caller), and the published list of this study was not read, so no biological claim is made.
 - Limits: no truth set; the calls were not checked with a second method; subsampled reads; the evidence thresholds and the 1 kb
   window were not tuned; the `lost` and `unknown` counts are large (9 to 51 and 125 to 213 per sample) and were not examined.
+
+## 12i. Plot labels, gene arrows and a sortable variant table (2026-11-12)
+- Contig labels of the variant plot and the coverage plot (`bands_and_labels` in `layout.rs`): bold, turned 90 degrees, right-justified
+  (`text-anchor="end"` about the anchor) so that they hang BELOW `label_top` and never reach into the drawing. The coverage plot had a
+  real overlap: its variant tick row uses y 254 to 262 and the labels were drawn at y 266; they now start at y 270. No two labels are
+  closer than 12 px; when two collide the wider contig keeps its label (the others show nothing, but every band and label has a tooltip
+  with the full name and length). A name over 24 characters is cut with an ellipsis. The picture is as tall as the longest label
+  needs, and the legend of the variant plot follows the labels. Checked by eye on the 55-scaffold A1163 plots; tests in
+  `tests/genome_plot.rs`, `tests/depth.rs` and `tests/common/mod.rs` (mutation checks: widest-first and the overlap rule).
+- Locus drawing (`report.rs`): an arrow under each gene model (a line over the visible gene, an arrowhead at the end of transcription;
+  at the plot edge, pointing out, when that end is outside the region) and chevrons along the gene line that point the same way.
+- Variant table: every column header (not the Draw button) sorts: up, down, original order; numbers by value, text ignoring case with
+  numbers in order, empty cells last in both directions, all variants sorted before the first 500 are shown, the sort stays when the effect
+  filter changes and resets when new variants load.
+- Build stamp: every file the page loads is named with a hash (`?v=`), because GitHub Pages lets a browser keep a file for 10 minutes and an
+  old script could meet a new page. Not confirmed as the cause of the report that the reference dropdown did nothing; the deployed page
+  worked in a fresh Firefox.

@@ -70,7 +70,9 @@ pub fn depth_plot_svg(bed: &str, contigs: Option<&[(String, usize)]>, order: &st
     }
 
     let l = layout(&contigs);
-    let mut body = bands_and_labels(&contigs, &l, TOP, BOTTOM, 266.0);
+    // The variant ticks use y 254 to 262, so the labels start below them.
+    let label_top = 270.0;
+    let (mut body, label_room) = bands_and_labels(&contigs, &l, TOP, BOTTOM, label_top);
 
     // Bins: about 2 px wide, but never narrower than 1 kb.
     let mut sums: Vec<Vec<f64>> = contigs
@@ -178,7 +180,8 @@ pub fn depth_plot_svg(bed: &str, contigs: Option<&[(String, usize)]>, order: &st
     }
 
     Ok(format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH} 280\" width=\"100%\" font-family=\"system-ui, sans-serif\" role=\"img\" aria-label=\"Read depth along the genome, {} contigs, median {median:.1}x\">{body}</svg>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH} {:.0}\" width=\"100%\" font-family=\"system-ui, sans-serif\" role=\"img\" aria-label=\"Read depth along the genome, {} contigs, median {median:.1}x\">{body}</svg>",
+        label_top + label_room + 10.0,
         contigs.len()
     ))
 }
