@@ -44,6 +44,10 @@ fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
     let mut it = args.iter();
     while let Some(key) = it.next() {
         let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
+        if name == "paired" {
+            flags.insert(name.to_string(), "true".to_string()); // a switch without a value
+            continue;
+        }
         let value = it.next().ok_or_else(|| format!("missing value for --{name}"))?;
         flags.insert(name.to_string(), value.clone());
     }
@@ -127,6 +131,14 @@ fn call(args: &[String]) -> Result<(), String> {
     if let Some(second) = flags.get("reads2") {
         read_paths.push(second.clone());
     }
+    let paired = flags.contains_key("paired");
+    if paired && !flags.contains_key("reads2") {
+        return Err("--paired needs --reads2: the second file of the pairs".to_string());
+    }
+    let max_insert: usize = match flags.get("max-insert") {
+        Some(v) => v.parse().ok().filter(|m| *m > 0).ok_or_else(|| format!("--max-insert must be a whole number of bases above 0, not {v}"))?,
+        None => qmutfind_core::DEFAULT_MAX_INSERT,
+    };
     let mut caller = Caller::new(reference.clone(), config);
     caller.set_min_mapq(min_mapq);
     caller.set_min_indel_alt_reads(min_indel_alt_reads);
@@ -178,9 +190,31 @@ fn call(args: &[String]) -> Result<(), String> {
         engine.set_min_indel_alt_reads(min_indel_alt_reads);
         engine.set_min_qual(min_qual);
         engine.set_max_depth_ratio(max_depth_ratio);
-        // Version 1 maps every read, including a second mate file, as an independent single-end read.
         let mut buffer = vec![0u8; 4 << 20];
-        for path in &read_paths {
+        if paired {
+            // Both files are read in turn, one chunk each, and mapped as pairs (see `qmutfind_core::choose_pair`).
+            engine.set_max_insert(max_insert);
+            let mut readers = [open_input(&read_paths[0])?, open_input(&read_paths[1])?];
+            let mut done = [false, false];
+            while !(done[0] && done[1]) {
+                for k in 0..2 {
+                    if done[k] {
+                        continue;
+                    }
+                    let n = readers[k].read(&mut buffer).map_err(|e| format!("{}: {e}", read_paths[k]))?;
+                    if n == 0 {
+                        done[k] = true;
+                    } else if k == 0 {
+                        engine.add_mate1(&buffer[..n]).map_err(|e| format!("{}: {e}", read_paths[k]))?;
+                    } else {
+                        engine.add_mate2(&buffer[..n]).map_err(|e| format!("{}: {e}", read_paths[k]))?;
+                    }
+                }
+            }
+            engine.end_mates().map_err(|e| format!("{} and {}: {e}", read_paths[0], read_paths[1]))?;
+        }
+        // Without --paired every read, including a second file, is mapped as an independent single-end read.
+        for path in read_paths.iter().filter(|_| !paired) {
             let mut reader = open_input(path)?;
             loop {
                 let n = reader.read(&mut buffer).map_err(|e| format!("{path}: {e}"))?;

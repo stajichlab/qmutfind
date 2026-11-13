@@ -1191,3 +1191,28 @@ unannotated variants are not genic. It works with the sorting and with the "Shar
   finished sample there is nothing to share and none of this is shown. A variant is the same in two samples when contig, position,
   REF and ALT are equal (the callers left-align indels, so the same event has the same form).
 - New choice in the Shared by dropdown of the all-samples view: "Called in two or more samples".
+
+## 12o. Pair-aware mapping with rammap (2026-11-12)
+- Why: rammap maps each mate alone. A mate inside a repeat has mapping quality 0 and is dropped by the caller (min mapq 20), although its
+  mate in unique sequence says where it belongs. `rammap` has `Aligner::map_pair`, but it returns PAF text without mate identity, so the
+  pairing is our own, on top of single-read candidates.
+- Core: `Alignment` has `score` and `primary`; `Aligner::align_candidates` gives primary and secondary alignments (`align` is unchanged);
+  `pairing::choose_pair` (rule in the file header: proper pair = one contig, opposite strands, forward mate first, insert <= `max_insert`;
+  best total score; a unique proper pair raises each mate to at least the quality of the other, capped at 60; no proper pair = old
+  behaviour). `Engine::add_mate1/add_mate2/end_mates/set_max_insert`: chunks of the two files may split records anywhere; names must match
+  (`/1`, `/2` and text after a space are ignored); different read counts are an error. `read_count` counts every mate.
+- CLI: `call --paired` (needs `--reads2`; rammap path) and `--max-insert`. Default is off. The page and WASM do not use it yet.
+- Tests: `qmutfind-core/tests/pairing.rs` (6), `pairing.rs` unit tests (7), two CLI tests. Mutation check: with the quality rescue switched
+  off, the two paired-call tests fail.
+- Evaluation, same binary with and without `--paired` (no truth set for the real data; scripts `bench/prjna1094460/compare_pairing.py`,
+  `run_calls_paired.sh`, `run_calls_single.sh`, `bench/run_paired_heldout.sh`):
+  - PRJNA1094460, 13 samples (2,000,000 pairs each, A1163): calls per sample 427 single, 429 paired (SNP 3069 -> 3115, indel 2487 -> 2466).
+    Pairing gained 114 SNP and 25 indels and lost 68 SNP and 46 indels (pooled). Of the gained SNPs 88% are also called by another pipeline
+    in the same sample; of the lost SNPs 82% are (so pairing also loses calls that others make). Recall proxy for background SNP 0.820 ->
+    0.830, indel 0.928 -> 0.928 (the proxy is defined with the single-read set, so it favours it). Private calls per sample 26.6 -> 25.5.
+    Jaccard with the bwa-mem2 built-in set: SNP 0.615 -> 0.630, indel 0.846 -> 0.849. bwa-mem2 still calls 1,376 SNP that paired rammap
+    misses, so pairing closes about 4% of that difference (59 of 1,435).
+  - Time and memory: 13 samples in 5 min 29 s paired against 5 min 13 s single; peak 600-665 MB in both.
+  - Simulated ART pairs (seeds 3-5, 10x and 20x): SNP sensitivity 0.966 / 0.992 paired against 0.966 / 0.991 single; false positive SNP 0 in
+    both; small-indel false positives 16 / 18 paired against 15 / 17 single. No regression, and no gain.
+  - Reading: the effect is small. The cause of the larger gap to bwa-mem2 is not pairing; it was not investigated further here.

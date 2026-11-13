@@ -28,7 +28,9 @@ qmutfind call --reference ref.fa.gz --reads r1.fastq.gz --reads2 r2.fastq.gz \
 | Option | Meaning |
 |---|---|
 | `--preset short\|long` | Illumina or Nanopore reads. Sets the aligner preset and the default thresholds. |
-| `--reads2 FILE` | A second reads file. With `--aligner bwa-mem2` it is the second mate. With the default aligner it is mapped as more single-end reads. |
+| `--reads2 FILE` | A second reads file. With `--aligner bwa-mem2` it is the second mate. With the default aligner it is mapped as more single-end reads, unless `--paired` is given. |
+| `--paired` | With `--reads2` and the default aligner: map the two files as pairs. A mate in a repeat takes the place that makes a proper pair with its mate (same contig, opposite strands, insert up to `--max-insert`), and the mate's mapping quality. Default off. |
+| `--max-insert N` | The largest insert for `--paired`, in bases (default 1000). |
 | `--aligner rammap\|bwa-mem2` | `rammap` (pure Rust, default) or `bwa-mem2` (short reads only, runs as an external program). |
 | `--caller builtin\|freebayes` | The built-in haploid caller, or FreeBayes (needs `--aligner bwa-mem2`). |
 | `--min-depth N`, `--min-snp-fraction X`, `--min-indel-fraction X` | Calling thresholds. Defaults: depth 5, SNP fraction 0.8 (short) or 0.7 (long), indel fraction 0.5. |

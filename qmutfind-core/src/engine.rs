@@ -1,14 +1,28 @@
 //! The whole pipeline over bytes: a reference FASTA and FASTQ chunks go in, VCF text comes out.
 //! No file access and no threads. The browser build and the CLI both drive this type.
 
+use std::collections::VecDeque;
+
 use crate::{
-    read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqChunker, ReadKind, RammapAligner,
+    choose_pair, read_fasta, write_vcf, Aligner, Caller, CallerConfig, FastqChunker, ReadKind, RammapAligner, DEFAULT_MAX_INSERT,
 };
+
+type Read = (String, Vec<u8>);
+
+/// The read name without the part after the first space and without a trailing `/1` or `/2`.
+fn pair_name(name: &str) -> &str {
+    let first = name.split_whitespace().next().unwrap_or("");
+    first.strip_suffix("/1").or_else(|| first.strip_suffix("/2")).unwrap_or(first)
+}
 
 pub struct Engine {
     aligner: RammapAligner,
     caller: Caller,
     chunker: FastqChunker,
+    chunker2: FastqChunker,
+    /// Reads of each mate file that wait for their mate.
+    waiting: [VecDeque<Read>; 2],
+    max_insert: usize,
     contigs: Vec<(String, usize)>,
     sample: String,
     config: CallerConfig,
@@ -32,6 +46,9 @@ impl Engine {
             aligner: RammapAligner::new(reference, kind),
             caller,
             chunker: FastqChunker::new(),
+            chunker2: FastqChunker::new(),
+            waiting: [VecDeque::new(), VecDeque::new()],
+            max_insert: DEFAULT_MAX_INSERT,
             contigs,
             sample: sample.to_string(),
             config,
@@ -86,6 +103,60 @@ impl Engine {
     pub fn end_file(&mut self) -> Result<(), String> {
         let records = self.chunker.finish().map_err(|e| format!("reads: {e}"))?;
         self.map_records(records);
+        Ok(())
+    }
+
+    /// The largest insert (start of the forward mate to end of the reverse mate) of a proper pair. Call before adding reads.
+    pub fn set_max_insert(&mut self, max_insert: usize) {
+        self.max_insert = max_insert;
+    }
+
+    /// Add a chunk of the first mate file of a paired run. `add_mate2` takes the second file. The chunks of the two files
+    /// can have any size and can come in any order; reads are mapped as pairs when both mates are present.
+    pub fn add_mate1(&mut self, chunk: &[u8]) -> Result<(), String> {
+        let records = self.chunker.push(chunk).map_err(|e| format!("reads (mate 1): {e}"))?;
+        self.waiting[0].extend(records);
+        self.map_pairs()
+    }
+
+    /// Add a chunk of the second mate file. See `add_mate1`.
+    pub fn add_mate2(&mut self, chunk: &[u8]) -> Result<(), String> {
+        let records = self.chunker2.push(chunk).map_err(|e| format!("reads (mate 2): {e}"))?;
+        self.waiting[1].extend(records);
+        self.map_pairs()
+    }
+
+    /// Mark the end of both mate files. A truncated record, or a file with more reads than the other, is an error.
+    pub fn end_mates(&mut self) -> Result<(), String> {
+        let r1 = self.chunker.finish().map_err(|e| format!("reads (mate 1): {e}"))?;
+        let r2 = self.chunker2.finish().map_err(|e| format!("reads (mate 2): {e}"))?;
+        self.waiting[0].extend(r1);
+        self.waiting[1].extend(r2);
+        self.map_pairs()?;
+        if !self.waiting[0].is_empty() || !self.waiting[1].is_empty() {
+            let (a, b) = (self.waiting[0].len(), self.waiting[1].len());
+            self.waiting = [VecDeque::new(), VecDeque::new()];
+            return Err(format!("the two read files have different numbers of reads: {a} reads of mate 1 and {b} reads of mate 2 have no mate"));
+        }
+        Ok(())
+    }
+
+    fn map_pairs(&mut self) -> Result<(), String> {
+        while !self.waiting[0].is_empty() && !self.waiting[1].is_empty() {
+            let (n1, s1) = self.waiting[0].pop_front().expect("checked non-empty");
+            let (n2, s2) = self.waiting[1].pop_front().expect("checked non-empty");
+            if pair_name(&n1) != pair_name(&n2) {
+                return Err(format!("the read files are not in the same order: mate 1 read {n1:?} is paired with mate 2 read {n2:?}"));
+            }
+            let (a1, a2) = choose_pair(self.aligner.align_candidates(&n1, &s1), self.aligner.align_candidates(&n2, &s2), self.max_insert);
+            for alignment in &a1 {
+                self.caller.add(alignment, &s1);
+            }
+            for alignment in &a2 {
+                self.caller.add(alignment, &s2);
+            }
+            self.reads += 2;
+        }
         Ok(())
     }
 

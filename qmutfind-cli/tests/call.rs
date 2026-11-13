@@ -576,3 +576,63 @@ fn evidence_out_is_rejected_with_freebayes_because_that_path_keeps_no_counts() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--evidence-out"));
 }
+
+/// A reference with a 600 bp block at 20,000 and again at 60,000. Ten pairs: mate 1 is in the unique flank, mate 2 is in the block
+/// and carries a SNP at 0-based 20,300. Without pairing mate 2 has mapping quality 0 and the SNP is lost.
+fn write_repeat_pairs(dir: &Path) {
+    let mut rng = Lcg(7);
+    let mut seq: Vec<u8> = (0..120_000).map(|_| rng.base()).collect();
+    let block = seq[20_000..20_600].to_vec();
+    seq[60_000..60_600].copy_from_slice(&block);
+    write_reference(dir, &seq);
+    let alt = if seq[20_300] == b'G' { b'T' } else { b'G' };
+    let comp = |b: &u8| match b { b'A' => b'T', b'C' => b'G', b'G' => b'C', _ => b'A' };
+    let (mut r1, mut r2) = (String::new(), String::new());
+    for i in 0..10 {
+        let m1 = seq[19_850 + i..19_950 + i].to_vec();
+        let mut m2 = seq[20_250 + i..20_350 + i].to_vec();
+        m2[20_300 - (20_250 + i)] = alt;
+        let m2: Vec<u8> = m2.iter().rev().map(comp).collect();
+        r1.push_str(&format!("@p{i}/1\n{}\n+\n{}\n", String::from_utf8_lossy(&m1), "I".repeat(100)));
+        r2.push_str(&format!("@p{i}/2\n{}\n+\n{}\n", String::from_utf8_lossy(&m2), "I".repeat(100)));
+    }
+    fs::write(dir.join("r1.fq"), r1).unwrap();
+    fs::write(dir.join("r2.fq"), r2).unwrap();
+}
+
+fn run_pair_call(dir: &Path, extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "r1.fq", "--reads2", "r2.fq", "--out", "out.vcf", "--sample", "s", "--preset", "short"])
+        .args(extra)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn call_with_paired_uses_the_mate_to_place_a_read_in_a_repeat() {
+    let dir = tempfile::tempdir().unwrap();
+    write_repeat_pairs(dir.path());
+
+    let plain = run_pair_call(dir.path(), &[]);
+    assert!(plain.status.success(), "{}", String::from_utf8_lossy(&plain.stderr));
+    assert!(records(&fs::read_to_string(dir.path().join("out.vcf")).unwrap()).iter().all(|r| r[1] != "20301"));
+
+    let paired = run_pair_call(dir.path(), &["--paired"]);
+    assert!(paired.status.success(), "{}", String::from_utf8_lossy(&paired.stderr));
+    let calls = records(&fs::read_to_string(dir.path().join("out.vcf")).unwrap());
+    assert!(calls.iter().any(|r| r[1] == "20301"), "{calls:?}");
+}
+
+#[test]
+fn call_with_paired_and_without_reads2_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    write_repeat_pairs(dir.path());
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "r1.fq", "--out", "out.vcf", "--sample", "s", "--preset", "short", "--paired"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--reads2"), "{}", String::from_utf8_lossy(&out.stderr));
+}
