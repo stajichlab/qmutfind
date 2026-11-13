@@ -28,6 +28,8 @@ pub struct Transcript {
     pub gene_name: Option<String>,
     /// The product (for example `response regulator`), from the mRNA or else the CDS line.
     pub product: Option<String>,
+    /// The nucleotide accession of the transcript (for example `XM_001481640.2`) when the mRNA line of the GFF gives one. See `nucleotide_accession`.
+    pub accession: Option<String>,
 }
 
 impl Transcript {
@@ -114,6 +116,37 @@ fn attribute<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
     attrs.split(';').find_map(|kv| kv.trim().strip_prefix(key)?.strip_prefix('='))
 }
 
+/// Whether `text` has the shape of an NCBI nucleotide accession with an optional version: one or two capital letters, an optional
+/// underscore, 5 to 12 digits, then optionally `.` and digits (`XM_001481640.2`, `NM_000001.3`, `AB123456.1`).
+fn is_accession(text: &str) -> bool {
+    let (body, version) = match text.split_once('.') {
+        Some((body, version)) => (body, Some(version)),
+        None => (text, None),
+    };
+    if let Some(v) = version {
+        if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    let letters = body.bytes().take_while(|b| b.is_ascii_uppercase()).count();
+    let rest = &body[letters..];
+    let rest = rest.strip_prefix('_').unwrap_or(rest);
+    (1..=2).contains(&letters) && (5..=12).contains(&rest.len()) && rest.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The NCBI nucleotide accession of the transcript on a GFF3 mRNA line: a `GenBank` entry in `Dbxref` (any capitals; RefSeq files write
+/// `GenBank:XM_...`), or else a `transcript_id` that is an accession. Nothing is guessed: a GFF without either gives `None`.
+fn nucleotide_accession(attrs: &str) -> Option<String> {
+    attribute(attrs, "Dbxref")
+        .and_then(|d| {
+            d.split(',').find_map(|entry| {
+                let (source, id) = entry.split_once(':')?;
+                (source.eq_ignore_ascii_case("genbank") && is_accession(id)).then(|| id.to_string())
+            })
+        })
+        .or_else(|| attribute(attrs, "transcript_id").filter(|t| is_accession(t)).map(str::to_string))
+}
+
 /// Decode the `%XX` escapes of a GFF3 attribute value. A `%` that is not followed by two hex digits stays as it is.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
@@ -151,6 +184,7 @@ struct Feature {
     label: String,
     name: Option<String>,
     product: Option<String>,
+    accession: Option<String>,
 }
 
 impl Annotation {
@@ -225,6 +259,7 @@ impl Annotation {
                             label,
                             name,
                             product: attribute(attrs, "product").map(percent_decode),
+                            accession: nucleotide_accession(attrs),
                         },
                     );
                 }
@@ -256,6 +291,7 @@ impl Annotation {
                 transl_table: tables.get(id).copied().unwrap_or(1),
                 gene_name,
                 product,
+                accession: feature.accession.clone(),
             });
         }
         let mut by_contig: HashMap<String, Vec<Transcript>> = HashMap::new();
@@ -302,6 +338,7 @@ pub struct Effect {
     pub n_transcripts: usize,
     pub gene_name: Option<String>,
     pub product: Option<String>,
+    pub accession: Option<String>,
 }
 
 fn complement(b: u8) -> u8 {
@@ -347,6 +384,7 @@ fn effect_of(label: &str, tx: Option<&Transcript>, aa: Option<String>, ann: &Ann
         n_transcripts: tx.map(|t| ann.transcripts_per_gene.get(&t.gene).copied().unwrap_or(1)).unwrap_or(0),
         gene_name: tx.and_then(|t| t.gene_name.clone()),
         product: tx.and_then(|t| t.product.clone()),
+        accession: tx.and_then(|t| t.accession.clone()),
     }
 }
 
@@ -535,9 +573,10 @@ fn coding_snp(ann: &Annotation, genome: &Genome, tx: &Transcript, idx: u64, alt:
     effect_of(label, Some(tx), Some(aa), ann)
 }
 
-const INFO_DEFINITIONS: [&str; 6] = [
+const INFO_DEFINITIONS: [&str; 7] = [
     "##INFO=<ID=EFFECT,Number=A,Type=String,Description=\"Effect on the canonical transcript, one per alternate allele (the _derived labels come from exons and CDS, not from UTR or intron features)\">",
     "##INFO=<ID=GENE,Number=1,Type=String,Description=\"Gene (locus tag) of the canonical transcript\">",
+    "##INFO=<ID=NUCCORE,Number=1,Type=String,Description=\"NCBI nucleotide accession of the canonical transcript, when the GFF3 gives one on the mRNA line (a GenBank entry in Dbxref, or a transcript_id that is an accession); used for a link to https://www.ncbi.nlm.nih.gov/nuccore/\">",
     "##INFO=<ID=TRANSCRIPT,Number=1,Type=String,Description=\"Canonical transcript: the one with the longest CDS\">",
     "##INFO=<ID=AA,Number=A,Type=String,Description=\"Protein change of a coding SNP, for example L424I; * is a stop. For a frameshift: the first changed residue, what it becomes, fs, and *N for the residues up to the new stop, for example E3Dfs*4 (E3Dfs*? when no stop is found)\">",
     "##INFO=<ID=TRUNC,Number=A,Type=String,Description=\"For a frameshift with a new stop: residues in the new protein / residues in the reference protein\">",
@@ -585,6 +624,9 @@ pub fn annotate_vcf<R: BufRead, W: io::Write>(
                         }
                         if let Some(product) = &first.product {
                             tags.push_str(&format!(";PRODUCT={}", percent_encode_info(product)));
+                        }
+                        if let Some(accession) = &first.accession {
+                            tags.push_str(&format!(";NUCCORE={accession}"));
                         }
                     }
                     if effects.iter().any(|e| e.aa.is_some()) {

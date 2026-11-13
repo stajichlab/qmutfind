@@ -1306,3 +1306,14 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   - Whole page in headless Firefox, no read limit: old 146.1, 146.5, 147.1 s; new 152.0, 150.0, 152.5 s (mean 146.6 against 151.5 s, +3.3%, +4.9 s); peak memory 2.47-2.50 GB for both.
     The extra time is the CRC-32 check of gzip files in JavaScript: fflate alone 1.31-1.43 s, with the check 1.84-2.03 s per 208 MB unpacked (+41% of unpack time).
   - CLI single-read calls, 13 samples: 5 min 13 s with the old binary and with the new one.
+
+## 12t. Links out from the Gene column (2026-11-13)
+- Page: "Link the Gene column to" (No links, FungiDB gene page, NCBI nucleotide), default No links, remembered in `localStorage` (`qmutfind-gene-links`). FungiDB:
+  `https://fungidb.org/gene/<GENE>` (checked 2026-11-13: it answers with a redirect). NCBI: `https://www.ncbi.nlm.nih.gov/nuccore/<ACCESSION>`. Links open in a
+  new tab with `rel="noopener noreferrer"`; the gene is always set as text and URL-encoded. No request goes to either site until a link is clicked.
+- NCBI accession comes only from the GFF3: new INFO tag `NUCCORE` (core `annotate`, so the CLI, the WASM build and the page agree). Sources, in order: a `GenBank:` entry
+  (any capitals) in `Dbxref` of the mRNA line (the Af293 RefSeq GFF has `GenBank:XM_001481640.2`), else a `transcript_id` of the mRNA line that has the shape of an
+  accession (1-2 capitals, optional `_`, 5-12 digits, optional `.version`). Gene-line and CDS-line entries are not used. The A1163 GenBank GFF has neither, so
+  with it the NCBI choice links nothing, and the page says so. FungiDB links use the gene (locus tag) as it is; a gene that FungiDB does not hold gives its not-found page.
+- Tests: 7 in `qmutfind-core/tests/gene_names.rs` (two had passed without testing anything because their accessions were too short; fixed), 6 browser tests;
+  mutation check: without the accession guard the "no accession" test fails. Tests now: 283 Rust, 56 Node, 196 browser.

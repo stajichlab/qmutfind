@@ -263,7 +263,14 @@
     </span>
     <label for="window-kb">Window around the variant (kb on each side)</label>
     <input id="window-kb" type="number" min="0.1" step="0.5" value="2.5">
+    <label for="gene-links">Link the Gene column to</label>
+    <select id="gene-links">
+      <option value="none">No links</option>
+      <option value="fungidb">FungiDB gene page</option>
+      <option value="ncbi">NCBI nucleotide (accession from the GFF3)</option>
+    </select>
   </div>
+  <p class="hint" id="gene-links-note"></p>
   <p class="hint" id="af-note"></p>
   <div id="variant-table-wrap"><table id="variant-table" hidden></table></div>
   <div class="form">

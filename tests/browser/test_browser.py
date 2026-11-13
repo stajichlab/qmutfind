@@ -2890,3 +2890,88 @@ def test_a_failed_write_to_the_store_leaves_nothing_behind(driver, server):
         done({ failed, found });
       }).catch((e) => done({ error: String(e) }));""")
     assert result == {"failed": True, "found": {}}, result
+
+
+# Gene links: the Gene column can link to FungiDB or to the NCBI nucleotide record of the transcript
+
+GFF_WITH_ACCESSION = GFF.replace("ID=tx1;Parent=gene1", "ID=tx1;Parent=gene1;Dbxref=GeneID:1,GenBank:XM_000001.1,FungiDB:G1")
+
+
+def gene_cells(driver):
+    """[(text, href or None, target, rel)] of the Gene column of the variant table."""
+    return driver.execute_script("""
+      const col = Array.from(document.querySelectorAll('#variant-table thead th')).findIndex((th) => th.textContent.trim() === 'Gene');
+      return Array.from(document.querySelectorAll('#variant-table tbody tr')).map((r) => {
+        const td = r.cells[col]; const a = td.querySelector('a');
+        return [td.textContent, a ? a.getAttribute('href') : null, a ? a.getAttribute('target') : null, a ? a.getAttribute('rel') : null];
+      });""")
+
+
+def annotated_with(driver, server, inputs, gff_text):
+    (inputs / "genes_acc.gff3").write_text(gff_text)
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    choose(driver, "gff", inputs / "genes_acc.gff3")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    assert run_samples(driver)["s1"].startswith("Done")
+    assert "variants" in press(driver, "annotate", "annotate-status")
+
+
+def set_gene_links(driver, value):
+    driver.find_element(By.CSS_SELECTOR, f"#gene-links option[value='{value}']").click()
+
+
+def test_gene_links_are_off_by_default_and_the_gene_is_plain_text(driver, server, inputs):
+    annotated_with(driver, server, inputs, GFF_WITH_ACCESSION)
+
+    assert driver.find_element(By.ID, "gene-links").get_attribute("value") == "none"
+    assert gene_cells(driver) == [["G1", None, None, None]]
+
+
+def test_fungidb_links_point_to_the_gene_page_and_open_in_a_new_tab(driver, server, inputs):
+    annotated_with(driver, server, inputs, GFF_WITH_ACCESSION)
+
+    set_gene_links(driver, "fungidb")
+
+    assert gene_cells(driver) == [["G1", "https://fungidb.org/gene/G1", "_blank", "noopener noreferrer"]]
+
+
+def test_ncbi_links_use_the_transcript_accession_from_the_gff(driver, server, inputs):
+    annotated_with(driver, server, inputs, GFF_WITH_ACCESSION)
+
+    set_gene_links(driver, "ncbi")
+
+    assert gene_cells(driver) == [["G1", "https://www.ncbi.nlm.nih.gov/nuccore/XM_000001.1", "_blank", "noopener noreferrer"]]
+
+
+def test_ncbi_links_are_left_out_when_the_gff_has_no_accession(driver, server, inputs):
+    annotated_with(driver, server, inputs, GFF)  # no Dbxref, no transcript_id
+
+    set_gene_links(driver, "ncbi")
+
+    assert gene_cells(driver) == [["G1", None, None, None]]
+    assert "no accession" in driver.find_element(By.ID, "gene-links-note").text.lower()
+
+
+def test_the_link_choice_applies_at_once_is_remembered_and_can_be_switched_off(driver, server, inputs):
+    annotated_with(driver, server, inputs, GFF_WITH_ACCESSION)
+    set_gene_links(driver, "fungidb")
+    assert gene_cells(driver)[0][1] is not None
+
+    set_gene_links(driver, "none")
+    assert gene_cells(driver)[0][1] is None
+    set_gene_links(driver, "ncbi")
+    open_site(driver, server)  # a new visit keeps the choice
+    assert driver.find_element(By.ID, "gene-links").get_attribute("value") == "ncbi"
+    set_gene_links(driver, "none")  # leave it off for the other tests
+
+
+def test_the_gene_name_in_a_link_is_encoded_and_never_read_as_html(driver, server, inputs):
+    from urllib.parse import quote
+    hostile = 'G<b>1"x'
+    annotated_with(driver, server, inputs, GFF_WITH_ACCESSION.replace("locus_tag=G1", f"locus_tag={hostile}"))
+
+    set_gene_links(driver, "fungidb")
+
+    assert gene_cells(driver) == [[hostile, "https://fungidb.org/gene/" + quote(hostile, safe=""), "_blank", "noopener noreferrer"]]
+    assert driver.execute_script("return document.querySelectorAll('#variant-table b').length;") == 0

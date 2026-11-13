@@ -85,3 +85,51 @@ fn the_locus_page_table_and_drawing_use_the_gene_name() {
     assert!(page.contains("hrmA") && page.contains("protein hrmA"), "gene name and product are on the page");
     assert!(page.contains(">hrmA (G1)<"), "the gene model is labelled with the name and the ID");
 }
+
+// NCBI nucleotide accession of the transcript (NUCCORE), for a link out. Only what the GFF3 itself holds is used: a GenBank entry in the
+// Dbxref of the mRNA line (RefSeq files have `GenBank:XM_...`), or a `transcript_id` that looks like an accession. No guess is made.
+
+#[test]
+fn a_genbank_entry_in_the_dbxref_of_the_mrna_gives_the_nucleotide_accession() {
+    let i = info(&gff("", ";Dbxref=GeneID:3507995,GenBank:XM_001481640.2,FungiDB:G1", ""));
+    assert_eq!(tag(&i, "NUCCORE"), Some("XM_001481640.2"));
+}
+
+#[test]
+fn the_dbxref_source_is_matched_without_regard_to_case() {
+    assert_eq!(tag(&info(&gff("", ";Dbxref=Genbank:XM_000005.1", "")), "NUCCORE"), Some("XM_000005.1"));
+    assert_eq!(tag(&info(&gff("", ";Dbxref=GENBANK:XM_000006.1", "")), "NUCCORE"), Some("XM_000006.1"));
+}
+
+#[test]
+fn a_transcript_id_that_looks_like_an_accession_is_used_when_there_is_no_dbxref_entry() {
+    assert_eq!(tag(&info(&gff("", ";transcript_id=NM_000001.3", "")), "NUCCORE"), Some("NM_000001.3"));
+    assert_eq!(tag(&info(&gff("", ";transcript_id=AB123456.1", "")), "NUCCORE"), Some("AB123456.1"));
+}
+
+#[test]
+fn a_transcript_id_that_is_not_an_accession_gives_no_link() {
+    assert_eq!(tag(&info(&gff("", ";transcript_id=gnl|WGS:AAHF|AFUA_1G00100-T", "")), "NUCCORE"), None);
+    assert_eq!(tag(&info(&gff("", ";transcript_id=tx1", "")), "NUCCORE"), None);
+    assert_eq!(tag(&info(&gff("", ";transcript_id=xm_001481640.2", "")), "NUCCORE"), None);
+}
+
+#[test]
+fn a_gff_without_any_accession_has_no_nuccore_tag() {
+    // The shape of a GenBank-format GFF3 such as A1163: no Dbxref, no transcript_id.
+    assert_eq!(tag(&info(&gff(";Name=G1", ";product=kinase", ";product=kinase")), "NUCCORE"), None);
+    assert_eq!(tag(&info(&gff("", "", "")), "NUCCORE"), None);
+}
+
+#[test]
+fn a_genbank_entry_on_the_gene_line_or_the_cds_line_is_not_taken_for_the_transcript() {
+    // A gene-level or protein-level entry is not the transcript's nucleotide record.
+    assert_eq!(tag(&info(&gff(";Dbxref=GenBank:XM_000009.1", "", "")), "NUCCORE"), None);
+    assert_eq!(tag(&info(&gff("", "", ";Dbxref=Genbank:XP_000009.1")), "NUCCORE"), None);
+}
+
+#[test]
+fn the_header_declares_the_nuccore_tag() {
+    let out = annotate_text(VCF, &fasta(), Some(gff("", ";Dbxref=GenBank:XM_000001.1", "").as_bytes())).unwrap();
+    assert!(out.contains("##INFO=<ID=NUCCORE,"), "{out}");
+}

@@ -263,7 +263,7 @@ function parseVariants(vcfText) {
       afs: info.AFS ? info.AFS.split(',') : [], // the AF of each sample in `samples`, in the same order
       samples: info.SAMPLES ? info.SAMPLES.split(',').map(decodeInfo) : [],
       newIn: info.NEW ? info.NEW.split(',').map(decodeInfo) : [],
-      gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '',
+      gene: info.GENE || '', nuccore: info.NUCCORE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '',
       // trunc is for a frameshift with a new stop: the new and the reference number of residues
       trunc: info.TRUNC && info.TRUNC !== '.' ? info.TRUNC.split(',')[0] : '', af: info.AF || '', dp: info.DP || '',
     });
@@ -274,6 +274,47 @@ function parseVariants(vcfText) {
 let variants = [];
 const cell = (text) => { const td = document.createElement('td'); td.textContent = text; return td; };
 
+// Links out from the Gene column. FungiDB: https://fungidb.org/gene/<gene>. NCBI: the nucleotide record of the transcript, from the accession that the
+// GFF3 gives (NUCCORE in the annotated VCF); a gene without one is not linked. The text of the cell is always the gene, set as text, never as HTML.
+const GENE_LINK_KEY = 'qmutfind-gene-links';
+function geneUrl(v, mode) {
+  if (!v.gene) return '';
+  if (mode === 'fungidb') return `https://fungidb.org/gene/${encodeURIComponent(v.gene)}`;
+  if (mode === 'ncbi' && v.nuccore) return `https://www.ncbi.nlm.nih.gov/nuccore/${encodeURIComponent(v.nuccore)}`;
+  return '';
+}
+function geneCell(v) {
+  const td = cell(v.gene);
+  const url = geneUrl(v, $('gene-links').value);
+  if (url) {
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = v.gene;
+    td.replaceChildren(a);
+  }
+  return td;
+}
+function describeGeneLinks() {
+  const mode = $('gene-links').value;
+  const genic = variants.filter((v) => v.gene);
+  let text = '';
+  if (mode === 'fungidb') text = 'Gene links go to fungidb.org. A gene that FungiDB does not hold gives its not-found page.';
+  if (mode === 'ncbi' && genic.length) {
+    const linked = genic.filter((v) => v.nuccore).length;
+    text = linked === 0
+      ? 'The GFF3 has no accession for these genes (a GenBank entry in Dbxref, or a transcript_id, on the mRNA lines), so no gene is linked.'
+      : linked < genic.length ? 'Genes whose mRNA line has no accession in the GFF3 are not linked.' : '';
+  }
+  show('gene-links-note', text);
+}
+try { const saved = localStorage.getItem(GENE_LINK_KEY); if (['none', 'fungidb', 'ncbi'].includes(saved)) $('gene-links').value = saved; } catch (error) { /* the choice is then not remembered */ }
+$('gene-links').addEventListener('change', () => {
+  try { localStorage.setItem(GENE_LINK_KEY, $('gene-links').value); } catch (error) { /* not remembered */ }
+  renderTable();
+});
+
 // The columns of the variant table. A header is a button: the first click sorts up, the second sorts down, the third
 // restores the order of the file. Empty cells stay last in both directions. All variants are sorted, not only the rows shown.
 const short = (text) => (text.length > 12 ? `${text.slice(0, 12)}\u2026` : text);
@@ -282,7 +323,7 @@ const BASE_COLUMNS = [
   { label: 'Change', kind: 'text', value: (v) => `${v.ref} > ${v.alt}`, text: (v) => `${short(v.ref)} > ${short(v.alt)}` },
   { label: 'Class', kind: 'text', value: (v) => v.cls },
   { label: 'Effect', kind: 'text', value: (v) => v.effect },
-  { label: 'Gene', kind: 'text', value: (v) => v.gene },
+  { label: 'Gene', kind: 'text', value: (v) => v.gene, cell: (v) => geneCell(v) },
   { label: 'Name', kind: 'text', value: (v) => v.geneName },
   { label: 'Protein change', kind: 'text', value: (v) => v.aa, text: (v) => (v.trunc && v.aa ? `${v.aa} (protein ${v.trunc.replace('/', ' of ')} aa)` : v.aa) },
   { label: 'Product', kind: 'text', value: (v) => v.product },
@@ -359,7 +400,7 @@ function renderTable() {
   const body = table.createTBody();
   for (const v of shown.slice(0, MAX_ROWS)) {
     const row = body.insertRow();
-    row.append(...columns.map((c) => cell(c.text ? c.text(v) : String(c.value(v) ?? ''))));
+    row.append(...columns.map((c) => (c.cell ? c.cell(v) : cell(c.text ? c.text(v) : String(c.value(v) ?? '')))));
     const last = row.insertCell();
     const button = document.createElement('button');
     button.type = 'button';
@@ -370,6 +411,7 @@ function renderTable() {
     last.appendChild(button);
   }
   table.hidden = false;
+  describeGeneLinks();
   const note = shown.length > MAX_ROWS ? ` Showing the first ${MAX_ROWS}.` : '';
   show('annotate-status', `${shown.length.toLocaleString()} of ${variants.length.toLocaleString()} variants.${note}`);
 }

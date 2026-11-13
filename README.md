@@ -51,6 +51,7 @@ It adds `EFFECT` (synonymous, missense, nonsense, start_lost, stop_lost, framesh
 inframe_deletion, splice_site, 5UTR_derived, 3UTR_derived, intron_derived, non_coding, complex,
 large_indel_in_cds, intergenic, unannotated), `GENE`, `TRANSCRIPT`, `AA` (for example `D304G`) and `NTX`.
 UTRs and introns are derived from the exons and the CDS. Without `--gff` every record is `unannotated`.
+`NUCCORE` is the NCBI nucleotide accession of the transcript, when the mRNA line of the GFF3 gives one (a `GenBank:` entry in `Dbxref`, as RefSeq files do, or a `transcript_id` that is an accession); a GFF3 without either has no `NUCCORE` tag. In the web page, "Link the Gene column to" makes the gene a link to FungiDB (`https://fungidb.org/gene/GENE`) or to `https://www.ncbi.nlm.nih.gov/nuccore/ACCESSION`; a gene without an accession is not linked in the NCBI mode.
 
 `qmutfind stats --vcf FILE --out-prefix P` writes `P.stats.json` and `P.stats.tsv`: counts by class and effect,
 Ts/Tv, the substitution spectrum, indel lengths, density per contig, an allele-fraction histogram, the share
