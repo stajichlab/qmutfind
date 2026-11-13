@@ -2069,3 +2069,20 @@ def test_the_genic_choice_keeps_working_after_sorting_and_with_the_sample_sharin
     sort_by(driver, "DP")  # descending
 
     assert shown_positions(driver) == ["40", "30"]
+
+
+# The main button of each panel looks like "Run the waiting samples": dark and bold
+
+def test_the_main_buttons_of_the_panels_are_dark_and_bold_like_the_run_button(driver, server):
+    open_site(driver, server)
+    style = lambda element_id: driver.execute_script(
+        "const s = getComputedStyle(document.getElementById(arguments[0])); return [s.backgroundColor, s.color, s.fontWeight];", element_id)
+    run = style("strain-run")
+    assert int(run[2]) >= 700
+
+    for element_id in ("strain-combine", "genome-load"):
+        assert style(element_id) == run, f"{element_id} {style(element_id)} differs from the run button {run}"
+    set_reference_mode(driver, "url")
+    assert style("ref-url-load") == run  # the same step in the other way of giving the genome
+    # The secondary buttons stay plain.
+    assert style("strain-export")[0] != run[0]

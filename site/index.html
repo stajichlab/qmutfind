@@ -73,7 +73,7 @@
       <label for="genome-filter">Filter the list (for example <code>Candida</code> or <code>pombe</code>)</label>
       <input id="genome-filter" type="search" autocomplete="off">
       <select id="genome-menu" size="8" aria-label="Reference genomes"></select>
-      <p><button id="genome-load" type="button">Load the genome and genes</button></p>
+      <p><button id="genome-load" type="button" class="primary">Load the genome and genes</button></p>
     </div>
     <div id="genome-fungidb" hidden>
       <p>FungiDB does not let a web page download its files, and it needs your API key. Run this on your computer, then choose
@@ -93,7 +93,7 @@
     <input id="url-reference" type="url" placeholder="https://...">
     <label for="url-gff">Genes (GFF3, optional)</label>
     <input id="url-gff" type="url" placeholder="https://...">
-    <p><button id="ref-url-load" type="button">Download the genome and genes</button></p>
+    <p><button id="ref-url-load" type="button" class="primary">Download the genome and genes</button></p>
   </div>
   <div id="genome-status" role="status" class="readout"></div>
   <div class="source" id="source-reference" role="status"></div>
@@ -140,7 +140,7 @@
     <select id="strain-parent"><option value="">No parent</option></select>
     <label for="combine-min-depth">Minimum depth to call a site covered (the mean of its coverage window)</label>
     <input id="combine-min-depth" type="number" min="0" step="1" value="5">
-    <p><button id="strain-combine" type="button">Combine the finished samples</button>
+    <p><button id="strain-combine" type="button" class="primary">Combine the finished samples</button>
     <button id="strain-export" type="button">Export the catalog</button>
     <a id="download-combined" hidden>Download the table (TSV)</a>
     <a id="download-catalog" hidden>Download the catalog (zip)</a></p>
