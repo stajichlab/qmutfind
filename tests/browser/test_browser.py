@@ -99,7 +99,16 @@ def open_site(driver, server, theme=None):
     driver.get(f"{server}/{SITE}" + (f"?theme={theme}" if theme else ""))
 
 
+REFERENCE_MODE_OF = {"reference": "upload", "gff": "upload", "url-reference": "url", "url-gff": "url"}
+
+
+def set_reference_mode(driver, mode):
+    driver.find_element(By.CSS_SELECTOR, f"#reference-source option[value='{mode}']").click()
+
+
 def choose(driver, element_id, *paths):
+    if element_id in REFERENCE_MODE_OF:  # the reference panel shows one way to give the genome at a time
+        set_reference_mode(driver, REFERENCE_MODE_OF[element_id])
     driver.find_element(By.ID, element_id).send_keys("\n".join(str(p) for p in paths))
 
 
@@ -118,13 +127,92 @@ def download_text(driver, link_id):
     return driver.execute_async_script("const cb = arguments[arguments.length - 1]; fetch(arguments[0]).then(r => r.text()).then(cb);", href)
 
 
+# The sample set: rows with a name, a source (SRA, web addresses or local files) and the reads. These helpers fill and run it.
+
+def _blank_last_row(driver):
+    return driver.execute_script("""
+      const rows = document.querySelectorAll('#strain-table tbody tr'); const r = rows[rows.length - 1];
+      if (!r) return false;
+      return r.querySelector('.sample-name').value === '' && !r.querySelector('.sample-sra').value &&
+        !r.querySelector('.sample-urls').value && !r.querySelector('.sample-files-names').textContent;
+    """)
+
+
+def add_sample(driver, name, source="local", value=None, note=""):
+    """Fill the blank last row of the sample table (or add a row with +). `value` is a path or list of paths (local), a list of
+    addresses (url) or an accession (sra)."""
+    if not _blank_last_row(driver):
+        driver.find_element(By.ID, "strain-add").click()
+    row = driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr")[-1]
+    if name:
+        row.find_element(By.CSS_SELECTOR, ".sample-name").send_keys(name)
+    row.find_element(By.CSS_SELECTOR, f".sample-source option[value='{source}']").click()
+    if value is not None:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        if source == "local":
+            row.find_element(By.CSS_SELECTOR, ".sample-files").send_keys("\n".join(str(v) for v in values))
+        elif source == "url":
+            row.find_element(By.CSS_SELECTOR, ".sample-urls").send_keys("\n".join(str(v) for v in values))
+        else:
+            row.find_element(By.CSS_SELECTOR, ".sample-sra").send_keys(str(values[0]))
+    if note:
+        row.find_element(By.CSS_SELECTOR, ".sample-note").send_keys(note)
+    return row
+
+
+def strain_states(driver):
+    """{name: state text} of the named rows, read in one script call (the page rebuilds the rows, so held elements go stale)."""
+    return {n: t for n, t in driver.execute_script(
+        "return Array.from(document.querySelectorAll('#strain-table tbody tr')).map(r => [r.dataset.name, r.querySelector('.strain-state').textContent]);") if n}
+
+
+def strain_state(driver, name):
+    return strain_states(driver)[name]
+
+
+def strain_rows(driver):
+    return {r.get_attribute("data-name"): r for r in driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr") if r.get_attribute("data-name")}
+
+
+def wait_all_settled(driver, wait=180):
+    WebDriverWait(driver, wait).until(lambda d: all(
+        state.split(":")[0] in ("done", "failed", "cancelled", "imported") for state in strain_states(d).values())
+        and d.find_element(By.ID, "strain-run").is_enabled())
+
+
+def run_samples(driver, wait=180):
+    """Press Run and wait until every named sample has settled. Returns {name: 'Done: N reads' | 'Error: ...' | state}."""
+    driver.find_element(By.ID, "strain-run").click()
+    wait_all_settled(driver, wait)
+    reads = {n: t for n, t in driver.execute_script(
+        "return Array.from(document.querySelectorAll('#strain-table tbody tr')).map(r => [r.dataset.name, r.querySelector('.strain-reads').textContent]);") if n}
+    out = {}
+    for name, state in strain_states(driver).items():
+        if state.startswith("done"):
+            out[name] = f"Done: {reads[name]} reads" + (" " + state.split(":", 1)[1].strip() if ":" in state else "")
+        elif state.startswith("failed"):
+            out[name] = "Error: " + state[len("failed: "):]
+        else:
+            out[name] = state
+    return out
+
+
+def sample_status(driver):
+    return driver.find_element(By.ID, "strain-status").text
+
+
+def set_read_limit_thousands(driver, value):
+    box = driver.find_element(By.ID, "read-limit")
+    box.clear()
+    box.send_keys(str(value))
+
+
 def step1(driver, server, inputs, reference="ref.fa", reads="reads.fq", theme=None):
+    """Open the page, give the reference file and one local sample 's1', run it. Returns 'Done: N reads' or 'Error: ...'."""
     open_site(driver, server, theme)
     choose(driver, "reference", inputs / reference)
-    choose(driver, "reads", inputs / reads)
-    driver.find_element(By.ID, "sample").clear()
-    driver.find_element(By.ID, "sample").send_keys("s1")
-    return press(driver, "run", "status")
+    add_sample(driver, "s1", "local", inputs / reads)
+    return run_samples(driver)["s1"]
 
 
 def cli_results(tmp_path):
@@ -296,19 +384,20 @@ def test_step_2_after_step_3_carries_the_annotation_into_the_statistics(driver, 
     assert "Effects" in driver.find_element(By.ID, "stats-table").text
 
 
-def test_a_new_run_of_step_1_replaces_the_annotated_vcf_so_step_2_never_uses_stale_results(driver, server, inputs):
+def test_choosing_another_sample_replaces_the_annotated_vcf_so_the_summary_never_uses_stale_results(driver, server, inputs):
     assert annotate_after_step_1(driver, server, inputs)
-    # Reads copied from the reference carry no variant, so the new VCF has no calls.
+    # Reads copied from the reference carry no variant, so the second sample has no calls.
     clean = "".join(f"@c{i}\n{CHR_A[49_900 + i * 10 : 50_050 + i * 10]}\n+\n{'I' * 150}\n" for i in range(10))
     (inputs / "clean.fq").write_text(clean)
-    choose(driver, "reads", inputs / "clean.fq")
-    assert press(driver, "run", "status").startswith("Done")
+    add_sample(driver, "clean", "local", inputs / "clean.fq")
+    assert run_samples(driver)["clean"].startswith("Done")
+    driver.find_element(By.CSS_SELECTOR, "#result-sample option[value='clean']").click()
 
     assert press(driver, "summarize", "summarize-status").startswith("Done")
 
     import json
     assert json.loads(download_text(driver, "download-stats"))["total"] == 0
-    assert "step 1" in driver.find_element(By.ID, "vcf-source").text
+    assert "clean" in driver.find_element(By.ID, "vcf-source").text
 
 
 def test_step_3_without_the_gff_file_says_what_is_missing(driver, server, inputs):
@@ -375,7 +464,7 @@ def test_the_page_states_its_limits_and_links_to_the_source(driver, server):
 
 def test_step_1_keeps_the_coverage_and_step_2_draws_it_like_the_cli(driver, server, inputs):
     run_cli("call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1", "--preset", "short", "--out", "called.vcf",
-            "--depth-out", "depth.bed", "--depth-window", "10000", cwd=inputs)
+            "--depth-out", "depth.bed", "--depth-window", "1000", cwd=inputs)  # the sample set uses 1 kb windows
     run_cli("depth-plot", "--bed", "depth.bed", "--vcf", "called.vcf", "--order", "name", "--out", "depth.svg", cwd=inputs)
     assert step1(driver, server, inputs).startswith("Done")
     assert download_text(driver, "download-depth-bed") == (inputs / "depth.bed").read_text()
@@ -451,8 +540,9 @@ def test_an_example_fills_in_the_files_and_step_1_runs_without_choosing_any(driv
 
     status = load_example(driver, server)
     assert status.startswith("Loaded"), status
-    assert driver.find_element(By.ID, "sample").get_attribute("value") == "ex"
-    result = press(driver, "run", "status")
+    assert list(strain_states(driver)) == ["ex"] and strain_state(driver, "ex") == "waiting"
+    assert "reads.fq.gz" in driver.find_element(By.CSS_SELECTOR, "#strain-table .sample-files-names").text
+    result = run_samples(driver)["ex"]
 
     assert result.startswith("Done") and "WARNING" not in result, result
     assert download_text(driver, "download-vcf").replace("SAMPLE=ex", "SAMPLE=s1") == expected["vcf"].replace("SAMPLE=s1", "SAMPLE=s1")
@@ -460,30 +550,31 @@ def test_an_example_fills_in_the_files_and_step_1_runs_without_choosing_any(driv
 
 def test_the_gene_file_of_the_example_is_used_by_step_3(driver, server, inputs, example_site):
     assert load_example(driver, server).startswith("Loaded")
-    assert press(driver, "run", "status").startswith("Done")
+    assert run_samples(driver)["ex"].startswith("Done")
 
     status = press(driver, "annotate", "annotate-status")
 
     assert "1 of 1 variants" in status, status
 
 
-def test_a_file_chosen_by_the_user_replaces_the_examples_file(driver, server, inputs, example_site):
+def test_the_user_can_add_a_sample_of_their_own_next_to_the_example(driver, server, inputs, example_site):
     clean = "".join(f"@c{i}\n{CHR_A[49_900 + i * 10 : 50_050 + i * 10]}\n+\n{'I' * 150}\n" for i in range(10))
     (inputs / "clean.fq").write_text(clean)
     assert load_example(driver, server).startswith("Loaded")
-    choose(driver, "reads", inputs / "clean.fq")
+    add_sample(driver, "mine", "local", inputs / "clean.fq")
 
-    result = press(driver, "run", "status")
+    results = run_samples(driver)
 
-    assert result.startswith("Done"), result
-    assert "Calls: 0." in driver.find_element(By.ID, "summary").text
+    assert results["ex"].startswith("Done") and results["mine"].startswith("Done"), results
+    assert strain_rows(driver)["ex"].find_element(By.CSS_SELECTOR, ".strain-calls").text == "1"
+    assert strain_rows(driver)["mine"].find_element(By.CSS_SELECTOR, ".strain-calls").text == "0"
 
 
 def test_a_read_count_that_differs_from_the_manifest_gives_a_warning(driver, server, inputs, example_site):
     example_site(expected_reads=999)
     assert load_example(driver, server).startswith("Loaded")
 
-    result = press(driver, "run", "status")
+    result = run_samples(driver)["ex"]
 
     assert "WARNING" in result and "999" in result, result
 
@@ -494,7 +585,8 @@ def test_a_download_with_the_wrong_size_is_an_error_and_loads_nothing(driver, se
     status = load_example(driver, server)
 
     assert status.startswith("Error") and "incomplete" in status, status
-    assert "Choose" in press(driver, "run", "status")
+    driver.find_element(By.ID, "strain-run").click()
+    assert "reference" in sample_status(driver).lower()  # nothing was loaded
 
 
 def test_a_missing_example_file_is_an_error_that_names_the_status_code(driver, server, inputs, example_site):
@@ -559,7 +651,7 @@ def genome_site(inputs):
 
 def open_menu(driver, server):
     driver.get(f"{server}/{SITE}?genomes=_test_genomes/genomes.json%3Fv%3D{time.time_ns()}")
-    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-section").is_displayed())
+    WebDriverWait(driver, 20).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#genome-menu option")) > 0)
 
 
 def options(driver):
@@ -597,10 +689,8 @@ def test_loading_an_ncbi_genome_fills_in_the_reference_and_genes_and_step_1_then
     choose_genome(driver, "ncbi:GCF_1.1")
     WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
     assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded"), driver.find_element(By.ID, "genome-status").text
-    choose(driver, "reads", inputs / "reads.fq")
-    driver.find_element(By.ID, "sample").clear()
-    driver.find_element(By.ID, "sample").send_keys("s1")
-    assert press(driver, "run", "status").startswith("Done")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    assert run_samples(driver)["s1"].startswith("Done")
     assert download_text(driver, "download-vcf") == expected["vcf"]
 
     assert press(driver, "annotate", "annotate-status").startswith("1 of 1")  # the genome's gene file was loaded too
@@ -637,7 +727,9 @@ def test_a_fungidb_entry_shows_the_fetch_command_and_downloads_nothing(driver, s
     command = driver.find_element(By.ID, "genome-command").text
     assert command.startswith('qmutfind fetch --organism "Aspergillus fakeii X1"') and "--out-dir" in command, command
     assert driver.find_element(By.ID, "genome-fungidb").is_displayed()
-    assert "Choose a reference" in press(driver, "run", "status")  # nothing was loaded
+    add_sample(driver, "x", "local", inputs / "reads.fq")
+    driver.find_element(By.ID, "strain-run").click()
+    assert "reference" in sample_status(driver).lower()  # nothing was loaded
 
 
 def test_a_wrong_download_size_is_an_error_and_loads_nothing(driver, server, inputs, genome_site):
@@ -673,7 +765,7 @@ def test_the_real_genome_lists_are_complete_and_point_at_https_ncbi_files():
     assert fungidb["release"].startswith("FungiDB-") and len(fungidb["organisms"]) > 100
 
 
-def test_choosing_a_genome_after_loading_an_example_drops_the_examples_reads(driver, server, inputs, example_site, genome_site):
+def test_choosing_a_genome_after_loading_an_example_drops_the_example_sample(driver, server, inputs, example_site, genome_site):
     driver.get(f"{server}/{SITE}?example=_test_example/manifest.json%3Fv%3D{time.time_ns()}&genomes=_test_genomes/genomes.json%3Fv%3D{time.time_ns()}")
     WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "example-section").is_displayed() and d.find_element(By.ID, "genome-section").is_displayed())
     driver.find_element(By.CSS_SELECTOR, "[data-example=small]").click()
@@ -682,8 +774,8 @@ def test_choosing_a_genome_after_loading_an_example_drops_the_examples_reads(dri
     choose_genome(driver, "ncbi:GCF_1.1")
     WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Loaded"))
 
-    # The example's reads belong to another genome, so step 1 must ask for reads again.
-    assert "Choose a reference FASTA and at least one reads file" in press(driver, "run", "status")
+    # The example's reads belong to another genome, so the example sample is gone from the list.
+    assert strain_states(driver) == {}
 
 
 # Where the data came from: every input says so, and the web import (an SRA run or https addresses) checks what it gets
@@ -697,7 +789,7 @@ def source_text(driver, slot):
 
 def test_every_input_says_where_its_data_comes_from(driver, server, inputs, example_site):
     open_site(driver, server)
-    assert all(source_text(driver, s).startswith("Not set") for s in ("reference", "gff", "reads"))
+    assert all(source_text(driver, s).startswith("Not set") for s in ("reference", "gff"))
 
     choose(driver, "reference", inputs / "ref.fa")
     assert source_text(driver, "reference").startswith("Local file: ref.fa")
@@ -705,10 +797,10 @@ def test_every_input_says_where_its_data_comes_from(driver, server, inputs, exam
     assert load_example(driver, server).startswith("Loaded")
     assert source_text(driver, "reference").startswith("From the example")
     assert "ref.fa.gz" in source_text(driver, "reference") and "127.0.0.1" in source_text(driver, "reference")
-    assert source_text(driver, "reads").startswith("From the example") and "reads.fq.gz" in source_text(driver, "reads")
+    assert "reads.fq.gz" in driver.find_element(By.CSS_SELECTOR, "#strain-table .sample-files-names").text
 
-    choose(driver, "reads", inputs / "reads.fq")
-    assert source_text(driver, "reads").startswith("Local file: reads.fq")  # a chosen file replaces the example's
+    choose(driver, "reference", inputs / "ref.fa")
+    assert source_text(driver, "reference").startswith("Local file: ref.fa")  # a chosen file replaces the example's
 
 
 def test_a_genome_from_the_menu_names_its_accession_and_the_ncbi_host_in_the_source_line(driver, server, genome_site):
@@ -754,8 +846,9 @@ HOST_PLACEHOLDER = "{HOST}"
 
 
 def open_web(driver, server, ena_dir="_test_ena"):
+    """Open the page with a mock ENA service (a path on the test site)."""
     driver.get(f"{server}/{SITE}?enaapi={ena_dir}/%3Fv%3D{time.time_ns()}")
-    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-section").is_displayed())
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "strain-table").is_displayed())
 
 
 def fix_host(server):
@@ -764,156 +857,56 @@ def fix_host(server):
     _write_fresh(path, path.read_text().replace(HOST_PLACEHOLDER, server))
 
 
-def sra_lookup(driver, accession):
-    box = driver.find_element(By.ID, "sra-accession")
-    box.clear()
-    box.send_keys(accession)
-    driver.find_element(By.ID, "sra-lookup").click()
-    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "sra-info").text.strip() != "")
-    return driver.find_element(By.ID, "sra-info").text
+def sra_check(driver, accession, row=None):
+    """Type an accession in the (blank) row and press Check. Returns the text under it."""
+    row = row or add_sample(driver, "", "sra", accession)
+    row.find_element(By.CSS_SELECTOR, ".sample-check").click()
+    WebDriverWait(driver, 30).until(lambda d: row.find_element(By.CSS_SELECTOR, ".sample-info").text.strip() not in ("", "Looking the run up in ENA"))
+    return row.find_element(By.CSS_SELECTOR, ".sample-info").text
 
 
-def test_an_sra_run_is_looked_up_shown_and_downloaded_with_its_checks(driver, server, inputs, ena_site):
+def open_with_reference(driver, server, inputs, ena=False):
+    if ena:
+        fix_host(server)
+        open_web(driver, server)
+    else:
+        open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+
+
+# SRA samples: looked up in ENA, downloaded, checked
+
+def test_an_sra_sample_is_checked_in_ena_and_run_with_its_checks(driver, server, inputs, ena_site):
     expected = cli_results(inputs)
-    fix_host(server)
-    open_web(driver, server)
+    open_with_reference(driver, server, inputs, ena=True)
+    row = add_sample(driver, "s1", "sra", "srr9999991")
 
-    info = sra_lookup(driver, "srr9999991")
+    info = sra_check(driver, "", row)
 
     assert "Testus fungus" in info and "ILLUMINA" in info and "SINGLE" in info and "10 reads" in info, info
-    driver.find_element(By.ID, "sra-load").click()
-    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
-    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
-    assert "SRR9999991" in source_text(driver, "reads") and "ENA" in source_text(driver, "reads")
-    assert driver.find_element(By.ID, "kind").get_attribute("value") == "short"
-
-    choose(driver, "reference", inputs / "ref.fa")
-    driver.find_element(By.ID, "sample").clear()
-    driver.find_element(By.ID, "sample").send_keys("s1")
-    result = press(driver, "run", "status")
-
-    assert result.startswith("Done") and "WARNING" not in result, result
+    result = run_samples(driver)["s1"]
+    assert result.startswith("Done: 10 reads") and "WARNING" not in result, result
     assert download_text(driver, "download-vcf") == expected["vcf"]
 
 
 def test_a_read_count_that_differs_from_the_enas_gives_a_warning_after_mapping(driver, server, inputs, ena_site):
     ena_site(read_count="999")
-    fix_host(server)
-    open_web(driver, server)
-    sra_lookup(driver, "SRR9999991")
-    driver.find_element(By.ID, "sra-load").click()
-    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith("Loaded"))
-    choose(driver, "reference", inputs / "ref.fa")
+    open_with_reference(driver, server, inputs, ena=True)
+    add_sample(driver, "s1", "sra", "SRR9999991")
 
-    result = press(driver, "run", "status")
+    result = run_samples(driver)["s1"]
 
     assert "WARNING" in result and "999" in result, result
-
-
-# Read limit: the page keeps only the first N reads of each reads file and stops downloading
-
-def set_max_reads(driver, value):
-    box = driver.find_element(By.ID, "max-reads")
-    box.clear()
-    box.send_keys(value)
-
-
-def load_urls_and_run(driver, server, inputs, reads_name, limit):
-    open_web(driver, server)
-    set_max_reads(driver, limit)
-    driver.find_element(By.ID, "url-reads").send_keys(f"{server}/dist-site/_test_example/{reads_name}")
-    driver.find_element(By.ID, "url-load").click()
-    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
-    loaded = driver.find_element(By.ID, "web-status").text
-    if not loaded.startswith("Loaded"):
-        return loaded
-    choose(driver, "reference", inputs / "ref.fa")
-    return press(driver, "run", "status")
-
-
-def test_the_read_limit_box_has_a_default_and_says_it_is_reads_per_file(driver, server):
-    open_web(driver, server)
-
-    box = driver.find_element(By.ID, "max-reads")
-    assert box.get_attribute("value") == "2000000"
-    assert "per file" in driver.find_element(By.CSS_SELECTOR, "label[for=max-reads]").text
-
-
-def test_a_gzip_reads_file_is_cut_to_the_first_n_reads(driver, server, inputs, example_site):
-    result = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "4")
-
-    assert result.startswith("Done: 4 reads"), result
-    assert "first 4 reads" in source_text(driver, "reads")
-
-
-def test_a_limit_above_the_number_of_reads_keeps_them_all(driver, server, inputs, example_site):
-    result = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "100")
-
-    assert result.startswith("Done: 10 reads"), result
-    assert "first" not in source_text(driver, "reads")
-
-
-def test_a_plain_fastq_is_cut_the_same_way(driver, server, inputs, example_site):
-    _shutil.copy(inputs / "reads.fq", EXAMPLE_DIR / "reads.fq")
-
-    result = load_urls_and_run(driver, server, inputs, "reads.fq", "3")
-
-    assert result.startswith("Done: 3 reads"), result
-
-
-def test_the_download_stops_at_the_limit_so_data_after_it_is_never_read(driver, server, inputs, example_site):
-    # A valid gzip member of 10 reads followed by 3 MB of noise. Reading past the reads would fail.
-    (EXAMPLE_DIR / "tail.fq.gz").write_bytes(gzip.compress(snp_reads().encode()) + os.urandom(3_000_000))
-
-    result = load_urls_and_run(driver, server, inputs, "tail.fq.gz", "4")
-
-    assert result.startswith("Done: 4 reads"), result
-
-
-def test_zero_or_an_empty_box_means_no_limit_and_a_bad_value_is_refused(driver, server, inputs, example_site):
-    assert load_urls_and_run(driver, server, inputs, "reads.fq.gz", "0").startswith("Done: 10 reads")
-    assert load_urls_and_run(driver, server, inputs, "reads.fq.gz", "").startswith("Done: 10 reads")
-    bad = load_urls_and_run(driver, server, inputs, "reads.fq.gz", "-5")
-    assert bad.startswith("Error") and "read limit" in bad, bad
-
-
-def test_an_sra_run_is_cut_to_the_limit_and_the_read_count_check_uses_the_cut_count(driver, server, inputs, ena_site):
-    fix_host(server)
-    open_web(driver, server)
-    set_max_reads(driver, "4")
-    sra_lookup(driver, "SRR9999991")
-    driver.find_element(By.ID, "sra-load").click()
-    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
-    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
-    choose(driver, "reference", inputs / "ref.fa")
-
-    result = press(driver, "run", "status")
-
-    assert result.startswith("Done: 4 reads") and "WARNING" not in result, result
-
-
-def test_a_run_above_the_size_limit_is_allowed_when_a_read_limit_is_set(driver, server, ena_site):
-    ena_site(fastq_bytes=str(5 * 10**9))
-    fix_host(server)
-    open_web(driver, server)
-    set_max_reads(driver, "1000")
-
-    info = sra_lookup(driver, "SRR9999991")
-
-    assert "too large" not in info and "first 1,000 reads" in info, info
-    assert driver.find_element(By.ID, "sra-load").is_displayed()
 
 
 @pytest.mark.parametrize("accession,fragment", [("hello", "does not look like"), ("SRR1", "does not look like"), ("PRJNA417720", "run accession")])
 def test_something_that_is_not_a_run_accession_is_refused_before_any_request(driver, server, ena_site, accession, fragment):
     open_web(driver, server)
 
-    assert fragment in sra_lookup(driver, accession)
+    assert fragment in sra_check(driver, accession)
 
 
 def test_an_unknown_run_a_run_without_fastq_an_unsupported_platform_and_a_huge_run_are_each_refused_with_a_reason(driver, server, ena_site):
-    fix_host(server)
-    open_web(driver, server)
     cases = [
         ({"fastq_ftp": "", "fastq_bytes": ""}, "no FASTQ"),
         ({"instrument_platform": "PACBIO_SMRT"}, "not supported"),
@@ -923,14 +916,13 @@ def test_an_unknown_run_a_run_without_fastq_an_unsupported_platform_and_a_huge_r
         ena_site(**changes)
         fix_host(server)
         open_web(driver, server)
-        set_max_reads(driver, "0")  # with a read limit a big run is allowed (tested separately)
-        info = sra_lookup(driver, "SRR9999991")
+        set_read_limit_thousands(driver, 0)  # with a read limit a big run is allowed (tested below)
+        info = sra_check(driver, "SRR9999991")
         assert fragment in info, (changes, info)
-        assert not driver.find_element(By.ID, "sra-load").is_displayed(), changes
 
     _write_fresh(ENA_DIR / "filereport", "[]")
     open_web(driver, server)
-    assert "not found" in sra_lookup(driver, "SRR9999992")
+    assert "not found" in sra_check(driver, "SRR9999992")
 
 
 def test_a_paired_run_is_flagged_because_the_page_maps_each_mate_as_a_separate_read(driver, server, ena_site):
@@ -938,44 +930,135 @@ def test_a_paired_run_is_flagged_because_the_page_maps_each_mate_as_a_separate_r
     fix_host(server)
     open_web(driver, server)
 
-    info = sra_lookup(driver, "SRR9999991")
+    info = sra_check(driver, "SRR9999991")
 
     assert "PAIRED" in info and "separate" in info, info
 
 
-def test_https_addresses_load_each_file_and_say_where_they_came_from(driver, server, inputs, example_site):
-    expected = cli_results(inputs)
-    _shutil.copy(inputs / "ref.fa.gz", EXAMPLE_DIR / "refdata")  # no .gz in the name, but gzip inside
+def test_an_sra_run_is_cut_to_the_limit_and_the_read_count_check_uses_the_cut_count(driver, server, inputs, ena_site):
+    open_with_reference(driver, server, inputs, ena=True)
+    set_read_limit_thousands(driver, "0.004")  # 4 reads
+    add_sample(driver, "s1", "sra", "SRR9999991")
+
+    result = run_samples(driver)["s1"]
+
+    assert result.startswith("Done: 4 reads") and "WARNING" not in result, result
+
+
+def test_a_run_above_the_size_limit_is_allowed_when_a_read_limit_is_set(driver, server, ena_site):
+    ena_site(fastq_bytes=str(5 * 10**9))
+    fix_host(server)
     open_web(driver, server)
-    driver.find_element(By.ID, "url-reference").send_keys(f"{server}/dist-site/_test_example/refdata")
-    driver.find_element(By.ID, "url-gff").send_keys(f"{server}/dist-site/_test_example/genes.gff3")
-    driver.find_element(By.ID, "url-reads").send_keys(f"{server}/dist-site/_test_example/reads.fq.gz")
+    set_read_limit_thousands(driver, 1)
 
-    driver.find_element(By.ID, "url-load").click()
-    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Loaded", "Error")))
-    assert driver.find_element(By.ID, "web-status").text.startswith("Loaded"), driver.find_element(By.ID, "web-status").text
-    assert source_text(driver, "reference").startswith("From the address") and "refdata" in source_text(driver, "reference")
-    driver.find_element(By.ID, "sample").clear()
-    driver.find_element(By.ID, "sample").send_keys("s1")
+    info = sra_check(driver, "SRR9999991")
 
-    assert press(driver, "run", "status").startswith("Done")
-    assert download_text(driver, "download-vcf") == expected["vcf"]
+    assert "too large" not in info and "first 1,000 reads" in info, info
+
+
+# The read limit: in thousands of reads per file; the page keeps the first reads of each file and downloads stop there
+
+def test_the_read_limit_box_has_a_default_in_thousands_and_says_what_it_means(driver, server):
+    open_site(driver, server)
+
+    box = driver.find_element(By.ID, "read-limit")
+    assert box.get_attribute("value") == "2000"
+    assert "thousands" in driver.find_element(By.CSS_SELECTOR, "label[for=read-limit]").text
+    assert driver.find_element(By.ID, "read-limit-echo").text == "= 2,000,000 reads from each file"
+    set_read_limit_thousands(driver, 500)
+    assert driver.find_element(By.ID, "read-limit-echo").text == "= 500,000 reads from each file"
+    set_read_limit_thousands(driver, 0)
+    assert "All reads" in driver.find_element(By.ID, "read-limit-echo").text
+
+
+def run_one(driver, server, inputs, source, value, limit=None, name="u"):
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    if limit is not None:
+        set_read_limit_thousands(driver, limit)
+    add_sample(driver, name, source, value)
+    return run_samples(driver)[name]
+
+
+def test_a_local_file_is_cut_to_the_first_n_reads(driver, server, inputs):
+    assert run_one(driver, server, inputs, "local", inputs / "reads.fq", "0.004").startswith("Done: 4 reads")
+
+
+def test_a_gzip_file_from_a_web_address_is_cut_to_the_first_n_reads(driver, server, inputs, example_site):
+    result = run_one(driver, server, inputs, "url", f"{server}/dist-site/_test_example/reads.fq.gz", "0.004")
+
+    assert result.startswith("Done: 4 reads"), result
+
+
+def test_a_limit_above_the_number_of_reads_keeps_them_all(driver, server, inputs, example_site):
+    result = run_one(driver, server, inputs, "url", f"{server}/dist-site/_test_example/reads.fq.gz", 100)
+
+    assert result.startswith("Done: 10 reads"), result
+
+
+def test_a_plain_fastq_from_a_web_address_is_cut_the_same_way(driver, server, inputs, example_site):
+    _shutil.copy(inputs / "reads.fq", EXAMPLE_DIR / "reads.fq")
+
+    result = run_one(driver, server, inputs, "url", f"{server}/dist-site/_test_example/reads.fq", "0.003")
+
+    assert result.startswith("Done: 3 reads"), result
+
+
+def test_the_download_stops_at_the_limit_so_data_after_it_is_never_read(driver, server, inputs, example_site):
+    # A valid gzip member of 10 reads followed by 3 MB of noise. Reading past the reads would fail.
+    (EXAMPLE_DIR / "tail.fq.gz").write_bytes(gzip.compress(snp_reads().encode()) + os.urandom(3_000_000))
+
+    result = run_one(driver, server, inputs, "url", f"{server}/dist-site/_test_example/tail.fq.gz", "0.004")
+
+    assert result.startswith("Done: 4 reads"), result
+
+
+def test_zero_or_an_empty_box_means_no_limit_and_a_bad_value_is_refused(driver, server, inputs):
+    assert run_one(driver, server, inputs, "local", inputs / "reads.fq", 0).startswith("Done: 10 reads")
+    assert run_one(driver, server, inputs, "local", inputs / "reads.fq", "").startswith("Done: 10 reads")
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    set_read_limit_thousands(driver, "-5")
+    add_sample(driver, "u", "local", inputs / "reads.fq")
+    driver.find_element(By.ID, "strain-run").click()
+    assert "read limit" in sample_status(driver), sample_status(driver)
+    assert strain_state(driver, "u") == "waiting"
+
+
+# Web addresses: several files make one sample
+
+def test_several_web_addresses_are_downloaded_and_make_one_sample(driver, server, inputs, example_site):
+    expected = cli_results(inputs)
+    _shutil.copy(inputs / "reads.fq.gz", EXAMPLE_DIR / "reads_b.fq.gz")
+    base = f"{server}/dist-site/_test_example"
+
+    result = run_one(driver, server, inputs, "url", [f"{base}/reads.fq.gz", f"{base}/reads_b.fq.gz"], name="s1")
+
+    assert result.startswith("Done: 20 reads"), result  # both files, mapped as separate reads
+    assert strain_rows(driver)["s1"].find_element(By.CSS_SELECTOR, ".strain-calls").text == "1"
+    assert "SAMPLE=s1" in download_text(driver, "download-vcf") and expected["vcf"].count("\n") == download_text(driver, "download-vcf").count("\n")
 
 
 @pytest.mark.parametrize("address,fragment", [
-    ("http://example.org/ref.fa.gz", "https"),
-    ("ftp://example.org/ref.fa.gz", "https"),
-    ("https://user:secret@example.org/ref.fa.gz", "user name"),
+    ("http://example.org/reads.fq.gz", "https"),
+    ("ftp://example.org/reads.fq.gz", "https"),
+    ("https://user:secret@example.org/reads.fq.gz", "user name"),
     ("not a url", "address"),
 ])
-def test_an_unsafe_or_malformed_address_is_refused_before_any_request(driver, server, address, fragment):
-    open_web(driver, server)
-    driver.find_element(By.ID, "url-reference").send_keys(address)
+def test_an_unsafe_or_malformed_reads_address_fails_the_sample_before_any_request(driver, server, inputs, address, fragment):
+    result = run_one(driver, server, inputs, "url", address)
 
-    driver.find_element(By.ID, "url-load").click()
-    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-status").text.startswith("Error"))
+    assert result.startswith("Error") and fragment in result, result
 
-    assert fragment in driver.find_element(By.ID, "web-status").text
+
+def test_a_reads_address_without_a_file_has_no_reads_and_the_page_says_so(driver, server, inputs):
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "u", "url", None)
+
+    driver.find_element(By.ID, "strain-run").click()
+
+    assert "no reads" in sample_status(driver) and "address" in sample_status(driver), sample_status(driver)
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -999,9 +1082,9 @@ def test_a_file_that_unpacks_to_more_than_the_limit_is_refused_instead_of_fillin
     (inputs / "big.fa").write_text(big)
     driver.get(f"{server}/{SITE}?limit_mb=1")
     choose(driver, "reference", inputs / "big.fa")
-    choose(driver, "reads", inputs / "reads.fq")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
 
-    result = press(driver, "run", "status")
+    result = run_samples(driver)["s1"]
 
     assert result.startswith("Error") and "too large" in result, result
 
@@ -1103,21 +1186,21 @@ def test_plot_text_and_marks_are_readable_against_their_background_in_every_them
 
 def test_a_download_larger_than_the_limit_is_refused_from_its_announced_size_before_it_is_read(driver, server, inputs, example_site):
     driver.get(f"{server}/{SITE}?download_limit_mb=0.001")  # a limit of about 1 KB
-    driver.find_element(By.ID, "url-reference").send_keys(f"{server}/dist-site/_test_example/ref.fa.gz")
+    choose(driver, "url-reference", f"{server}/dist-site/_test_example/ref.fa.gz")
 
-    driver.find_element(By.ID, "url-load").click()
-    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "web-status").text.startswith(("Error", "Loaded")))
+    driver.find_element(By.ID, "ref-url-load").click()
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Error", "Loaded")))
 
-    text = driver.find_element(By.ID, "web-status").text
+    text = driver.find_element(By.ID, "genome-status").text
     # "the limit is" is the message of the check on the announced size, which runs before any byte is read.
     assert text.startswith("Error") and "too large" in text and "the limit is" in text, text
     assert source_text(driver, "reference").startswith("Not set")
 
 
-def test_the_web_section_lists_its_limits_and_risks(driver, server):
+def test_the_sample_section_lists_the_limits_and_risks_of_loading_reads_from_the_web(driver, server):
     open_site(driver, server)
 
-    text = driver.find_element(By.CSS_SELECTOR, "#web-section details").get_attribute("textContent")
+    text = driver.find_element(By.CSS_SELECTOR, "#sample-section details").get_attribute("textContent")
 
     for needle in ["https", "2 GB", "MD5", "access-controlled", "Nothing is sent to this site"]:
         assert needle in text, needle
@@ -1198,48 +1281,15 @@ def test_effect_names_in_a_vcf_are_shown_as_text_not_as_html(driver, server, inp
     assert driver.execute_script("return window.__pwned === undefined;")
 
 
-# Several strains: a list of strains, run one at a time, a catalog table, a combined table, an export and an import
+# The sample set: rows with + and -, three sources, a queue, a catalog, a combined table, an export and an import
 
 def plain_reads(count=10):
-    """Reads from the reference with no change: a strain without the SNP of `snp_reads`."""
+    """Reads from the reference with no change: a sample without the SNP of `snp_reads`."""
     fastq = ""
     for i in range(count):
         start = 49_900 + i * 10
         fastq += f"@p{i}\n{CHR_A[start : start + 150]}\n+\n{'I' * 150}\n"
     return fastq
-
-
-def add_strain(driver, name, r1, r2=None, note=""):
-    box = driver.find_element(By.ID, "strain-name")
-    box.clear()
-    box.send_keys(name)
-    choose(driver, "strain-r1", r1)
-    if r2:
-        choose(driver, "strain-r2", r2)
-    driver.find_element(By.ID, "strain-note").clear()
-    if note:
-        driver.find_element(By.ID, "strain-note").send_keys(note)
-    driver.find_element(By.ID, "strain-add").click()
-
-
-def strain_rows(driver):
-    return {r.get_attribute("data-name"): r for r in driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr")}
-
-
-def strain_states(driver):
-    """{name: state text}, read in one script call (the page rebuilds the table rows, so held elements go stale)."""
-    return dict(driver.execute_script(
-        "return Array.from(document.querySelectorAll('#strain-table tbody tr')).map(r => [r.dataset.name, r.querySelector('.strain-state').textContent]);"))
-
-
-def strain_state(driver, name):
-    return strain_states(driver)[name]
-
-
-def wait_all_settled(driver, wait=180):
-    WebDriverWait(driver, wait).until(lambda d: all(
-        state.split(":")[0] in ("done", "failed", "cancelled", "imported") for state in strain_states(d).values())
-        and d.find_element(By.ID, "strain-run").is_enabled())
 
 
 @pytest.fixture
@@ -1252,54 +1302,109 @@ def strain_files(inputs):
 def open_strains(driver, server, inputs):
     open_site(driver, server)
     choose(driver, "reference", inputs / "ref.fa")
-    WebDriverWait(driver, 10).until(lambda d: d.find_element(By.ID, "strain-section").is_displayed())
 
 
-def test_a_strain_is_added_with_a_name_and_reads_and_listed_as_waiting(driver, server, strain_files):
+def row_count(driver):
+    return len(driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr"))
+
+
+def test_the_sample_table_starts_with_one_blank_row_and_plus_and_minus_add_and_remove_rows(driver, server):
+    open_site(driver, server)
+    assert row_count(driver) == 1
+
+    driver.find_element(By.ID, "strain-add").click()
+    driver.find_element(By.ID, "strain-add").click()
+    assert row_count(driver) == 3
+
+    driver.find_elements(By.CSS_SELECTOR, "button.strain-remove")[0].click()
+    assert row_count(driver) == 2
+    assert driver.find_element(By.ID, "strain-add").text.startswith("+")
+    assert driver.find_element(By.CSS_SELECTOR, "button.strain-remove").text == "\u2212"
+
+
+def test_each_source_shows_only_its_own_reads_fields(driver, server):
+    open_site(driver, server)
+    row = driver.find_elements(By.CSS_SELECTOR, "#strain-table tbody tr")[0]
+    shown = lambda: [row.find_element(By.CSS_SELECTOR, sel).is_displayed() for sel in (".sample-sra", ".sample-urls", ".sample-files")]
+    options = [o.get_attribute("value") for o in row.find_elements(By.CSS_SELECTOR, ".sample-source option")]
+    assert options == ["sra", "url", "local"]
+
+    assert shown() == [False, False, True]  # the default source is local files
+    row.find_element(By.CSS_SELECTOR, ".sample-source option[value='sra']").click()
+    assert shown() == [True, False, False]
+    row.find_element(By.CSS_SELECTOR, ".sample-source option[value='url']").click()
+    assert shown() == [False, True, False]
+    assert row.find_element(By.CSS_SELECTOR, ".sample-files").get_attribute("multiple") is not None
+
+
+def test_a_sample_is_filled_with_a_name_a_source_and_reads_and_listed_as_waiting(driver, server, strain_files):
     open_strains(driver, server, strain_files)
 
-    add_strain(driver, "parent", strain_files / "parent.fq", note="the ancestor")
+    add_sample(driver, "parent", "local", strain_files / "parent.fq", note="the ancestor")
 
     assert list(strain_rows(driver)) == ["parent"]
     row = strain_rows(driver)["parent"]
-    assert "parent.fq" in row.text and "the ancestor" in row.text
+    assert "parent.fq" in row.find_element(By.CSS_SELECTOR, ".sample-files-names").text
+    assert row.find_element(By.CSS_SELECTOR, ".sample-note").get_attribute("value") == "the ancestor"
     assert strain_state(driver, "parent") == "waiting"
-    assert driver.find_element(By.ID, "strain-name").get_attribute("value") == ""  # ready for the next strain
 
 
-def test_a_strain_needs_a_name_reads_and_a_name_that_is_not_used_yet(driver, server, strain_files):
+def test_a_sample_can_group_several_files(driver, server, strain_files):
     open_strains(driver, server, strain_files)
+    add_sample(driver, "two", "local", [strain_files / "reads.fq", strain_files / "parent.fq"])
 
-    driver.find_element(By.ID, "strain-name").send_keys("noreads")  # no reads file chosen yet
-    driver.find_element(By.ID, "strain-add").click()
-    assert "reads" in driver.find_element(By.ID, "strain-status").text.lower()
-    add_strain(driver, "", strain_files / "reads.fq")  # a reads file but no name
-    assert "name" in driver.find_element(By.ID, "strain-status").text.lower()
-    add_strain(driver, "one", strain_files / "reads.fq")
-    add_strain(driver, "one", strain_files / "reads.fq")
-    assert "already" in driver.find_element(By.ID, "strain-status").text.lower()
-    assert list(strain_rows(driver)) == ["one"]
+    result = run_samples(driver)["two"]
+
+    assert result.startswith("Done: 20 reads"), result  # each file is mapped as separate reads
+    names = strain_rows(driver)["two"].find_element(By.CSS_SELECTOR, ".sample-files-names").text
+    assert "reads.fq" in names and "parent.fq" in names
 
 
-def test_a_strain_name_is_shown_as_text_and_never_as_html(driver, server, strain_files):
+def test_run_needs_a_name_for_every_sample_reads_for_each_and_names_that_are_not_used_twice(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    run = lambda: (driver.find_element(By.ID, "strain-run").click(), sample_status(driver))[1]
+
+    add_sample(driver, "", "local", strain_files / "reads.fq")  # a reads file but no name
+    assert "name" in run().lower()
+    driver.find_element(By.CSS_SELECTOR, ".sample-name").send_keys("one")
+    add_sample(driver, "one", "local", strain_files / "reads.fq")  # the same name twice
+    assert "more than once" in run()
+    driver.find_elements(By.CSS_SELECTOR, "button.strain-remove")[1].click()
+    add_sample(driver, "empty", "local", None)  # a name but no reads
+    assert "no reads" in run() and "empty" in run()
+    assert set(strain_states(driver).values()) == {"waiting"}
+
+
+def test_a_blank_row_is_ignored_when_the_samples_run(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    add_sample(driver, "only", "local", strain_files / "reads.fq")
+    driver.find_element(By.ID, "strain-add").click()  # a blank row stays
+
+    results = run_samples(driver)
+
+    assert results["only"].startswith("Done: 10 reads")
+
+
+def test_a_sample_name_is_shown_as_text_and_never_as_html(driver, server, strain_files):
     hostile = "<img src=x onerror=window.__pwned=1>"
     open_strains(driver, server, strain_files)
 
-    add_strain(driver, hostile, strain_files / "reads.fq", note="<b>bold</b>")
+    add_sample(driver, hostile, "local", strain_files / "reads.fq", note="<b>bold</b>")
+    run_samples(driver)
 
-    assert hostile in driver.find_element(By.ID, "strain-table").text
-    assert len(driver.find_elements(By.CSS_SELECTOR, "#strain-table img, #strain-table b")) == 0
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#strain-table img, #strain-table b, #result-sample img")) == 0
+    assert driver.find_element(By.CSS_SELECTOR, "#strain-table .sample-name").get_attribute("value") == hostile
+    assert hostile in [o.text for o in driver.find_elements(By.CSS_SELECTOR, "#result-sample option")]
     assert driver.execute_script("return window.__pwned === undefined;")
 
 
-def test_run_all_maps_each_strain_in_turn_and_a_failed_strain_does_not_stop_the_others(driver, server, strain_files):
+def test_run_maps_each_sample_in_turn_and_a_failed_sample_does_not_stop_the_others(driver, server, strain_files):
     open_strains(driver, server, strain_files)
-    add_strain(driver, "bad", strain_files / "garbage.fq")
-    add_strain(driver, "child", strain_files / "reads.fq")
-    add_strain(driver, "parent", strain_files / "parent.fq")
+    add_sample(driver, "bad", "local", strain_files / "garbage.fq")
+    add_sample(driver, "child", "local", strain_files / "reads.fq")
+    add_sample(driver, "parent", "local", strain_files / "parent.fq")
 
-    driver.find_element(By.ID, "strain-run").click()
-    wait_all_settled(driver)
+    run_samples(driver)
 
     assert strain_state(driver, "bad").startswith("failed")
     assert strain_state(driver, "child") == "done"
@@ -1309,37 +1414,46 @@ def test_run_all_maps_each_strain_in_turn_and_a_failed_strain_does_not_stop_the_
     assert strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, ".strain-reads").text == "10"
 
 
-def test_run_all_without_a_reference_says_so(driver, server, strain_files):
+def test_a_failed_sample_that_is_edited_is_ready_to_run_again(driver, server, strain_files):
+    open_strains(driver, server, strain_files)
+    add_sample(driver, "x", "local", strain_files / "garbage.fq")
+    run_samples(driver)
+    assert strain_state(driver, "x").startswith("failed")
+
+    strain_rows(driver)["x"].find_element(By.CSS_SELECTOR, ".sample-files").send_keys(str(strain_files / "reads.fq"))
+    assert strain_state(driver, "x") == "waiting"
+    assert run_samples(driver)["x"].startswith("Done: 10 reads")
+
+
+def test_run_without_a_reference_says_so(driver, server, strain_files):
     open_site(driver, server)
-    driver.execute_script("document.getElementById('strain-section').hidden = false;")
-    add_strain(driver, "x", strain_files / "reads.fq")
+    add_sample(driver, "x", "local", strain_files / "reads.fq")
 
     driver.find_element(By.ID, "strain-run").click()
 
-    assert "reference" in driver.find_element(By.ID, "strain-status").text.lower()
+    assert "reference" in sample_status(driver).lower()
     assert strain_state(driver, "x") == "waiting"
 
 
-def test_cancel_stops_the_queue_and_leaves_no_strain_running(driver, server, strain_files):
+def test_cancel_stops_the_queue_and_leaves_no_sample_running(driver, server, strain_files):
     open_strains(driver, server, strain_files)
     for name in ("a", "b", "c", "d"):
-        add_strain(driver, name, strain_files / "reads.fq")
+        add_sample(driver, name, "local", strain_files / "reads.fq")
 
     driver.find_element(By.ID, "strain-run").click()
     driver.find_element(By.ID, "strain-cancel").click()
     wait_all_settled(driver)
 
-    states = {n: strain_state(driver, n).split(":")[0] for n in strain_rows(driver)}
+    states = {n: t.split(":")[0] for n, t in strain_states(driver).items()}
     assert set(states.values()) <= {"done", "cancelled"}, states
     assert "cancelled" in states.values(), states
 
 
 def run_pair(driver, server, strain_files):
     open_strains(driver, server, strain_files)
-    add_strain(driver, "parent", strain_files / "parent.fq")
-    add_strain(driver, "child", strain_files / "reads.fq")
-    driver.find_element(By.ID, "strain-run").click()
-    wait_all_settled(driver)
+    add_sample(driver, "parent", "local", strain_files / "parent.fq")
+    add_sample(driver, "child", "local", strain_files / "reads.fq")
+    run_samples(driver)
 
 
 def combine(driver, parent="parent", min_depth="0"):  # the test reads are few, so a window mean is below 1
@@ -1350,6 +1464,33 @@ def combine(driver, parent="parent", min_depth="0"):  # the test reads are few, 
     driver.find_element(By.ID, "strain-combine").click()
     WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "combine-status").text.startswith(("Done", "Error")))
     return driver.find_element(By.ID, "combine-status").text
+
+
+def test_the_results_panel_follows_the_chosen_sample(driver, server, strain_files):
+    run_pair(driver, server, strain_files)
+    options = [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#result-sample option")]
+    assert options == ["parent", "child"]  # in the order of the list
+
+    driver.find_element(By.CSS_SELECTOR, "#result-sample option[value='child']").click()
+    assert "Calls: 1." in driver.find_element(By.ID, "summary").text
+    assert "child" in driver.find_element(By.ID, "vcf-source").text
+    assert "SAMPLE=child" in download_text(driver, "download-vcf")
+    driver.find_element(By.CSS_SELECTOR, "#result-sample option[value='parent']").click()
+    assert "Calls: 0." in driver.find_element(By.ID, "summary").text
+    vcf = download_text(driver, "download-vcf")
+    assert "SAMPLE=child" not in vcf and not [l for l in vcf.splitlines() if l and not l.startswith("#")]  # the parent has no call
+
+
+def test_removing_a_sample_removes_it_from_the_choices_too(driver, server, strain_files):
+    run_pair(driver, server, strain_files)
+
+    strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+
+    assert list(strain_rows(driver)) == ["parent"]
+    assert [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#result-sample option")] == ["parent"]
+    assert [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#strain-parent option")] == ["", "parent"]
+    driver.find_element(By.ID, "strain-combine").click()
+    assert "two" in driver.find_element(By.ID, "combine-status").text.lower()
 
 
 def test_combine_shows_the_new_variant_of_the_child_against_the_parent(driver, server, strain_files):
@@ -1374,14 +1515,14 @@ def test_combine_without_a_parent_gives_a_plain_table_and_the_filter_narrows_it(
 
     assert "status" not in download_text(driver, "download-combined").splitlines()[0]
     driver.find_element(By.CSS_SELECTOR, "#combined-filter option[value='shared']").click()
-    assert len(driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")) == 0  # the SNP is in one strain only
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")) == 0  # the SNP is in one sample only
     driver.find_element(By.CSS_SELECTOR, "#combined-filter option[value='one']").click()
     assert len(driver.find_elements(By.CSS_SELECTOR, "#combined-table tbody tr")) == 1
 
 
-def test_combine_with_fewer_than_two_done_strains_says_so(driver, server, strain_files):
+def test_combine_with_fewer_than_two_finished_samples_says_so(driver, server, strain_files):
     open_strains(driver, server, strain_files)
-    add_strain(driver, "only", strain_files / "reads.fq")
+    add_sample(driver, "only", "local", strain_files / "reads.fq")
 
     driver.find_element(By.ID, "strain-combine").click()
 
@@ -1412,9 +1553,10 @@ def test_the_catalog_export_is_a_zip_with_the_catalog_the_files_and_the_combined
     assert catalog["parent"] == "parent" and [s["name"] for s in catalog["strains"]] == ["parent", "child"]
     child = catalog["strains"][1]
     assert child["status"] == "done" and child["calls"] == 1 and child["reads"] == 10 and child["files"] == ["reads.fq"]
+    assert child["source"] == "local"
     assert archive.read(child["vcf"]).decode().count("\n") > 5
     assert archive.read(child["bed"]) and archive.read(child["evidence"])
-    assert catalog["settings"]["kind"] == "short" and catalog["settings"]["min_depth"] == 0
+    assert catalog["settings"]["kind"] == "short" and catalog["settings"]["min_depth"] == 0 and catalog["settings"]["read_limit_per_file"] == 2_000_000
     assert catalog["reference"]["name"] == "ref.fa" and catalog["qmutfind_version"]
     assert archive.read("combined.tsv").decode() == download_text(driver, "download-combined")
 
@@ -1467,11 +1609,76 @@ def test_a_bad_catalog_file_is_refused_with_a_reason_and_changes_nothing(driver,
     assert strain_rows(driver) == {}
 
 
-def test_a_strain_can_be_removed_and_a_removed_strain_is_not_combined(driver, server, strain_files):
-    run_pair(driver, server, strain_files)
+# The reference panel: one question, three ways to answer it
 
-    strain_rows(driver)["child"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+def test_the_reference_panel_asks_where_the_genome_is_and_shows_only_the_matching_controls(driver, server):
+    open_site(driver, server)
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-menu").is_displayed())
 
-    assert list(strain_rows(driver)) == ["parent"]
-    driver.find_element(By.ID, "strain-combine").click()
-    assert "two" in driver.find_element(By.ID, "combine-status").text.lower()
+    options = [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#reference-source option")]
+    assert options == ["ncbi", "upload", "url"]
+    assert driver.find_element(By.ID, "reference-source").get_attribute("value") == "ncbi"
+    shown = lambda *ids: [driver.find_element(By.ID, i).is_displayed() for i in ids]
+    # NCBI list: the menu; nothing of the other two.
+    assert shown("genome-menu", "reference", "gff", "url-reference", "url-gff") == [True, False, False, False, False]
+    set_reference_mode(driver, "upload")
+    assert shown("genome-menu", "reference", "gff", "url-reference", "url-gff") == [False, True, True, False, False]
+    set_reference_mode(driver, "url")
+    assert shown("genome-menu", "reference", "gff", "url-reference", "url-gff") == [False, False, False, True, True]
+    assert driver.find_element(By.ID, "ref-url-load").is_displayed()
+
+
+def test_a_reference_address_without_a_gff_loads_the_genome_alone(driver, server, inputs, example_site):
+    _shutil.copy(inputs / "ref.fa.gz", EXAMPLE_DIR / "only.fa.gz")
+    open_web(driver, server)
+    choose(driver, "url-reference", f"{server}/dist-site/_test_example/only.fa.gz")
+
+    driver.find_element(By.ID, "ref-url-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded"), driver.find_element(By.ID, "genome-status").text
+    assert source_text(driver, "reference").startswith("From the address") and "only.fa.gz" in source_text(driver, "reference")
+    assert source_text(driver, "gff").startswith("Not set")
+
+
+def test_a_reference_address_needs_the_fasta_address(driver, server):
+    open_site(driver, server)
+    set_reference_mode(driver, "url")
+
+    driver.find_element(By.ID, "ref-url-load").click()
+
+    assert "address" in driver.find_element(By.ID, "genome-status").text.lower()
+
+
+def test_a_reference_and_gene_file_from_https_addresses_load_and_say_where_they_came_from(driver, server, inputs, example_site):
+    expected = cli_results(inputs)
+    _shutil.copy(inputs / "ref.fa.gz", EXAMPLE_DIR / "refdata")  # no .gz in the name, but gzip inside
+    open_site(driver, server)
+    choose(driver, "url-reference", f"{server}/dist-site/_test_example/refdata")
+    driver.find_element(By.ID, "url-gff").send_keys(f"{server}/dist-site/_test_example/genes.gff3")
+
+    driver.find_element(By.ID, "ref-url-load").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith(("Loaded", "Error")))
+
+    assert driver.find_element(By.ID, "genome-status").text.startswith("Loaded"), driver.find_element(By.ID, "genome-status").text
+    assert source_text(driver, "reference").startswith("From the address") and "refdata" in source_text(driver, "reference")
+    assert source_text(driver, "gff").startswith("From the address") and "genes.gff3" in source_text(driver, "gff")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    assert run_samples(driver)["s1"].startswith("Done")
+    assert download_text(driver, "download-vcf") == expected["vcf"]
+
+
+@pytest.mark.parametrize("address,fragment", [
+    ("http://example.org/ref.fa.gz", "https"),
+    ("ftp://example.org/ref.fa.gz", "https"),
+    ("https://user:secret@example.org/ref.fa.gz", "user name"),
+    ("not a url", "address"),
+])
+def test_an_unsafe_or_malformed_reference_address_is_refused_before_any_request(driver, server, address, fragment):
+    open_site(driver, server)
+    choose(driver, "url-reference", address)
+
+    driver.find_element(By.ID, "ref-url-load").click()
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Error"))
+
+    assert fragment in driver.find_element(By.ID, "genome-status").text

@@ -129,13 +129,15 @@ genomes, and two GenBank genomes, *A. fumigatus* A1163 and CEA10. CEA10 has no G
 reference only. `site/genomes/fungidb.json` lists the FungiDB organisms; FungiDB blocks
 downloads from web pages, so for those the page shows the `qmutfind fetch` command. `?genomes=PATH` uses another list,
 but only a path on the site.
-The page also has a "Several strains" section: add strains one at a time (a name and a reads file, R2 optional), run them
-in turn, combine the finished ones into one table with an optional parent strain, and export the catalog as a zip. The
-command line has the same combine: `qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] --out-prefix P`
-(`qmutfind call --evidence-out FILE` writes the evidence VCF).
-
-In "Load data from the web", a read limit box (default 2,000,000 reads per file, 0 keeps all) keeps only the first reads of
-each file and stops the download there. The first reads are not a random sample.
+The page asks two questions. (1) Where is your reference genome? Choose the NCBI list, upload a FASTA and a GFF3, or give https
+addresses for them. (2) What is your sample set? Add one row per sample with `+` and remove one with `-`. Each sample has a name
+and one or more reads files from one source: an SRA run accession, https addresses (one per line), or files from your computer.
+A read limit box (in thousands of reads per file, default 2,000 = 2 M; 0 uses all) keeps the first reads of each file and stops
+web downloads there; the first reads are not a random sample. The samples run one after the other, each in its own worker. You
+can then look at one sample (statistics, plot, gene effects, locus drawing), combine the finished samples into one table with an
+optional parent sample, and export the catalog as a zip. The command line has the same combine:
+`qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] --out-prefix P` (`qmutfind call --evidence-out FILE`
+writes the evidence VCF).
 
 ### Example data
 

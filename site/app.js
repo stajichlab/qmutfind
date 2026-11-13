@@ -31,7 +31,7 @@ function sitePath(asked, fallback) {
 window.qmutfindSitePath = sitePath;
 
 const show = (id, text) => { $(id).textContent = text; };
-const buttons = ['run', 'summarize', 'annotate', 'draw'];
+const buttons = ['summarize', 'annotate', 'draw'];
 function setBusy(value) {
   busy = value;
   for (const id of buttons) $(id).disabled = value;
@@ -47,10 +47,10 @@ function offer(id, name, text, type) {
   link.hidden = false;
 }
 
-const sampleName = () => $('sample').value || 'sample';
+const sampleName = () => (selectedSample() && selectedSample().name) || 'sample';
 
 // Files from an example. A file chosen in an input always wins over the example's file.
-const example = { reference: null, gff: null, reads: [], expectedReads: null, source: { reference: '', gff: '', reads: '' } };
+const example = { reference: null, gff: null, source: { reference: '', gff: '' } };
 
 /** Say, under each input, where its data comes from: a local file, or a download (an example, the menu or the web import). */
 function describeSources() {
@@ -65,18 +65,16 @@ function describeSources() {
       el.textContent = `From ${example.source[slot]}: ${loaded.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
       el.classList.add('from-web');
     } else {
-      el.textContent = 'Not set. Choose a file, or use an example, the genome menu or the web import.';
+      el.textContent = 'Not set. Use the NCBI list, upload files or give addresses above.';
     }
   };
   line('reference', 'reference', example.reference ? [example.reference] : []);
   line('gff', 'gff', example.gff ? [example.gff] : []);
-  line('reads', 'reads', example.reads);
 }
-for (const id of ['reference', 'gff', 'reads']) $(id).addEventListener('change', describeSources);
+for (const id of ['reference', 'gff']) $(id).addEventListener('change', describeSources);
 const hostOf = (item, base) => new URL(item.url, base).host;
 const refFile = () => $('reference').files[0] || example.reference;
 const gffFile = () => $('gff').files[0] || example.gff;
-const readFiles = () => ($('reads').files.length ? [...$('reads').files] : example.reads);
 
 /** The VCF the next step should use: a chosen file, else the annotated VCF, else the step 1 result. */
 function currentVcf() {
@@ -95,8 +93,8 @@ function describeSource() {
   let text;
   if (file) text = `Using the VCF file ${file.name}.`;
   else if (state.annotated) text = 'Using the annotated VCF from step 3.';
-  else if (state.vcf) text = 'Using the VCF from step 1.';
-  else text = 'No VCF yet. Run step 1 or choose a VCF file.';
+  else if (state.vcf) text = `Using the VCF of the sample ${sampleName()}.`;
+  else text = 'No VCF yet. Run a sample or choose a VCF file.';
   show('vcf-source', text);
 }
 
@@ -110,26 +108,15 @@ function send(step, payload, panelStatus) {
 
 function needVcf(statusId) {
   const vcf = currentVcf();
-  if (!vcf) show(statusId, 'There is no VCF yet. Run step 1, or choose a VCF file.');
+  if (!vcf) show(statusId, 'There is no VCF yet. Run a sample, or choose a VCF file.');
   return vcf;
 }
-
-// Step 1
-$('run').addEventListener('click', () => {
-  const reference = refFile();
-  const reads = readFiles();
-  if (!reference || reads.length === 0) {
-    show('status', 'Choose a reference FASTA and at least one reads file.');
-    return;
-  }
-  send('run', { reference, reads, sample: sampleName(), kind: $('kind').value }, 'status');
-});
 
 // Step 2
 $('summarize').addEventListener('click', () => {
   const vcf = currentVcf();
   const bed = currentDepth();
-  if (!vcf && !bed) { show('summarize-status', 'There is no VCF or coverage yet. Run step 1, or choose a VCF or coverage file.'); return; }
+  if (!vcf && !bed) { show('summarize-status', 'There is no VCF or coverage yet. Run a sample, or choose a VCF or coverage file.'); return; }
   send('summarize', { vcf, bed, reference: refFile() || null, order: $('order').value }, 'summarize-status');
 });
 
@@ -161,7 +148,7 @@ $('annotate').addEventListener('click', () => {
   const reference = refFile();
   const gff = gffFile();
   if (!reference || !gff) {
-    show('annotate-status', 'Choose the reference genome and the GFF3 file in "Your files".');
+    show('annotate-status', 'Choose the reference genome and the GFF3 file in section 1.');
     return;
   }
   send('annotate', { vcf, reference, gff }, 'annotate-status');
@@ -270,9 +257,8 @@ $('vcf-file').addEventListener('change', () => { state.annotated = null; describ
 
 worker.onmessage = (event) => {
   const m = event.data;
-  const panel = { run: 'status', summarize: 'summarize-status', annotate: 'annotate-status', report: 'report-status' }[m.step];
+  const panel = { summarize: 'summarize-status', annotate: 'annotate-status', report: 'report-status' }[m.step];
   if (m.type === 'status') show(panel, m.text);
-  if (m.type === 'progress') show('progress', `${m.reads.toLocaleString()} reads mapped`);
   if (m.type === 'error') {
     show(panel, `Error: ${m.message}`);
     setBusy(false);
@@ -280,20 +266,6 @@ worker.onmessage = (event) => {
   }
   if (m.type !== 'done') return;
   setBusy(false);
-  if (m.step === 'run') {
-    state.vcf = m.vcf;
-    state.depth = m.depth;
-    state.annotated = null;
-    let warning = '';
-    if (example.expectedReads && !$('reads').files.length && m.reads !== example.expectedReads) {
-      warning = ` WARNING: the example should have ${example.expectedReads.toLocaleString()} reads, so a download may be incomplete.`;
-    }
-    show('status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s.${warning}`);
-    show('summary', `Calls: ${m.vcf.split('\n').filter((l) => l && l[0] !== '#').length.toLocaleString()}. Go on to step 2 or step 3.`);
-    offer('download-vcf', `${sampleName()}.vcf`, m.vcf, 'text/plain');
-    offer('download-depth-bed', `${sampleName()}.depth.bed`, m.depth, 'text/plain');
-    describeSource();
-  }
   if (m.step === 'summarize') {
     const parts = [];
     if (m.stats) {
@@ -352,15 +324,6 @@ async function download(item, base, label, statusId = 'example-status', signal =
   let name = item.name;
   if (parts.length && parts[0].length > 1 && parts[0][0] === 0x1f && parts[0][1] === 0x8b && !name.endsWith('.gz')) name += '.gz';
   return new File(parts, name);
-}
-
-/** The number in the read-limit box: reads kept per file. 0 (or an empty box) means no limit. */
-function readLimit() {
-  const text = $('max-reads').value.trim();
-  if (text === '') return 0;
-  const n = Number(text);
-  if (!Number.isInteger(n) || n < 0) throw new Error('The read limit must be a whole number of reads per file (0 keeps all reads).');
-  return n;
 }
 
 /**
@@ -445,20 +408,23 @@ async function loadExample(manifest, base, chosen) {
   try {
     example.reference = await download(manifest.reference, base, 'the reference genome');
     example.gff = await download(manifest.gff, base, 'the gene models');
-    example.reads = [];
+    const reads = [];
     for (const [i, item] of chosen.reads.entries()) {
-      example.reads.push(await download(item, base, `reads file ${i + 1} of ${chosen.reads.length}`));
+      reads.push(await download(item, base, `reads file ${i + 1} of ${chosen.reads.length}`));
     }
-    example.expectedReads = chosen.expected_reads || null;
     const origin = (item) => `the example (${item.source ? item.source + ' at ' : ''}${hostOf(item, base)})`;
     example.source = { reference: origin(manifest.reference), gff: origin(manifest.gff), reads: origin(chosen.reads[0]) };
     describeSources();
-    if (manifest.sample) $('sample').value = manifest.sample;
     if (manifest.kind) $('kind').value = manifest.kind;
-    show('example-status', `Loaded: ${chosen.label}. Press Run in step 1.`);
+    // The example's reads become a sample of the set. An earlier example sample is replaced.
+    dropExampleSamples();
+    const blank = samples.length === 1 && isBlank(samples[0]) ? samples[0] : null;
+    const added = blank || newSample();
+    Object.assign(added, { name: manifest.sample || 'example', source: 'local', files: reads, fromExample: true, expected: chosen.expected_reads || null });
+    renderSamples();
+    show('example-status', `Loaded: ${chosen.label}. Press "Run the waiting samples" in section 2.`);
   } catch (error) {
     example.reference = example.gff = null;
-    example.reads = [];
     describeSources();
     show('example-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
   } finally {
@@ -546,9 +512,8 @@ async function loadGenome() {
     // A new genome replaces the example, whose reads belong to another genome.
     example.reference = reference;
     example.gff = gff;
-    example.reads = [];
-    example.expectedReads = null;
     show('example-status', '');
+    dropExampleSamples();
     example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: entry.gff ? `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})` : '', reads: '' };
     describeSources();
     let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so step 3 cannot annotate it unless you choose a GFF3 file.';
@@ -572,9 +537,10 @@ async function setupGenomes() {
   genomesBase = base;
   try {
     const response = await fetch(base, { cache: 'no-cache' });
-    if (!response.ok) return;
+    if (!response.ok) throw new Error(`the server answered ${response.status}`);
     genomeList = (await response.json()).genomes || [];
   } catch (error) {
+    $('genome-text').textContent = `The NCBI genome list could not be loaded (${error.message}). Upload files or give addresses instead.`;
     return;
   }
   try {
@@ -593,10 +559,52 @@ async function setupGenomes() {
   $('genome-filter').addEventListener('input', fillMenu);
   $('genome-load').addEventListener('click', loadGenome);
   $('genome-menu').addEventListener('dblclick', loadGenome);
-  $('genome-section').hidden = false;
 }
 
 setupGenomes();
+
+// The reference panel asks one question and shows the controls of the answer: the NCBI list, files, or https addresses.
+function applyReferenceMode() {
+  const mode = $('reference-source').value;
+  $('genome-section').hidden = mode !== 'ncbi';
+  $('reference-upload').hidden = mode !== 'upload';
+  $('reference-url').hidden = mode !== 'url';
+}
+$('reference-source').addEventListener('change', applyReferenceMode);
+applyReferenceMode();
+
+$('ref-url-load').addEventListener('click', async () => {
+  if (loading || busy || sampleRunning) return;
+  const fastaText = $('url-reference').value.trim();
+  const gffText = $('url-gff').value.trim();
+  if (!fastaText) { show('genome-status', 'Type the address of the reference FASTA.'); return; }
+  loading = true;
+  $('ref-url-load').disabled = true;
+  try {
+    const wanted = [['reference', 'the reference genome', fastaText], ...(gffText ? [['gff', 'the gene file', gffText]] : [])];
+    let changed = false;
+    const urls = wanted.map(([, label, text]) => { const d = directAddress(text); changed ||= d !== text; return checkUrl(d, label); }); // all checked before any download
+    const got = {};
+    for (const [i, [slot, label]] of wanted.entries()) {
+      const url = urls[i];
+      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
+      got[slot] = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'genome-status');
+      example.source[slot] = `the address ${url.host}${url.pathname}`;
+    }
+    example.reference = got.reference;
+    example.gff = got.gff || null;
+    if (!got.gff) example.source.gff = '';
+    show('example-status', '');
+    dropExampleSamples();
+    describeSources();
+    show('genome-status', `Loaded: the reference genome${got.gff ? ' and the gene file' : ''}.${changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''}`);
+  } catch (error) {
+    show('genome-status', `Error: ${error.message}`);
+  } finally {
+    loading = false;
+    $('ref-url-load').disabled = false;
+  }
+});
 
 
 // ---- The locus drawing in its iframe ------------------------------------------------------------------------------
@@ -640,13 +648,19 @@ $('report').addEventListener('load', themeReport);
 document.addEventListener('qmutfind-theme', themeReport);
 
 
-// ---- Load data from the web: an SRA run (looked up in ENA) or https addresses -----------------------------------------
-// ENA's lookup service and ENA's file server allow browser downloads (they send Access-Control-Allow-Origin: *).
+// ---- The sample set ---------------------------------------------------------------------------------------------
+// A sample is a name and one or more reads files, from one source: an SRA run (looked up in ENA), https addresses, or files from
+// this computer. The queue maps one sample at a time, each in its own worker, which is stopped afterwards, so the memory of one
+// sample is given back before the next starts. A finished sample keeps its VCF, coverage BED and evidence VCF (text).
+// `combine_tables` (WebAssembly) joins the finished samples; the catalog is exported as a zip and can be imported again.
+// ENA's lookup service and file server allow browser downloads (they send Access-Control-Allow-Origin: *).
 // ?enaapi=PATH/ uses another lookup service, but only a path on this site (the tests use that).
 const ENA_FIELDS = 'run_accession,fastq_ftp,fastq_bytes,read_count,library_layout,instrument_platform,instrument_model,scientific_name,sample_title';
 const KIND_OF_PLATFORM = { ILLUMINA: 'short', OXFORD_NANOPORE: 'long' };
-let pendingRun = null;
-let webAbort = null;
+const DEPTH_WINDOW = 1000; // bases per coverage window (the results panel and the combined table use these windows)
+const CATALOG_FORMAT = 'qmutfind-catalog';
+const CATALOG_VERSION = 1;
+const MAX_CATALOG_BYTES = 500e6; // the zip and the total of its files
 
 function enaBase() {
   const asked = new URLSearchParams(location.search).get('enaapi');
@@ -654,20 +668,19 @@ function enaBase() {
   return new URL('https://www.ebi.ac.uk/ena/portal/api/');
 }
 
-async function sraLookup() {
-  pendingRun = null;
-  $('sra-load').hidden = true;
-  const accession = $('sra-accession').value.trim().toUpperCase();
-  const say = (text) => show('sra-info', text);
+/**
+ * Look a run up in ENA. Returns { accession, platform, kind, files: [{ name, url, bytes }], count, perFile, paired, info }
+ * (`count` is in reads, each mate counted; `perFile` is the reads or pairs in one file) or throws an Error that says why not.
+ * With a read limit (`limit` above 0) a run above the download limit is allowed, because the download stops early.
+ */
+async function lookupRun(text, limit) {
+  const accession = String(text).trim().toUpperCase();
   if (/^(PRJ|SAM|SRP|SRS|SRX|ERP|ERS|ERX|DRP|DRS|DRX)/.test(accession)) {
-    say(`${accession} is a project, sample or experiment accession. Give a run accession (SRR, ERR or DRR and digits); the ENA page of the project lists its runs.`);
-    return;
+    throw new Error(`${accession} is a project, sample or experiment accession. Give a run accession (SRR, ERR or DRR and digits); the ENA page of the project lists its runs.`);
   }
   if (!/^[SED]RR\d{6,}$/.test(accession)) {
-    say(`"${$('sra-accession').value.trim()}" does not look like a run accession (SRR, ERR or DRR followed by at least 6 digits).`);
-    return;
+    throw new Error(`"${String(text).trim()}" does not look like a run accession (SRR, ERR or DRR followed by at least 6 digits).`);
   }
-  say('Looking the run up in ENA');
   let records;
   try {
     const url = new URL(`filereport?accession=${accession}&result=read_run&fields=${ENA_FIELDS}&format=json`, enaBase());
@@ -675,28 +688,18 @@ async function sraLookup() {
     if (!response.ok) throw new Error(`ENA answered ${response.status}`);
     records = await response.json();
   } catch (error) {
-    say(`The ENA lookup failed: ${error.message}. The network may be down or ENA may be busy.`);
-    return;
+    throw new Error(`The ENA lookup failed: ${error.message}. The network may be down or ENA may be busy.`);
   }
   const record = records && records[0];
-  if (!record) { say(`${accession} was not found in ENA.`); return; }
+  if (!record) throw new Error(`${accession} was not found in ENA.`);
   const addresses = (record.fastq_ftp || '').split(';').filter(Boolean);
   const sizes = (record.fastq_bytes || '').split(';').filter(Boolean).map(Number);
-  if (!addresses.length) {
-    say(`ENA has no FASTQ files for ${accession} (it may hold only BAM or SRA-format files). The page cannot use this run.`);
-    return;
-  }
+  if (!addresses.length) throw new Error(`ENA has no FASTQ files for ${accession} (it may hold only BAM or SRA-format files). The page cannot use this run.`);
   const platform = record.instrument_platform;
-  if (!KIND_OF_PLATFORM[platform]) {
-    say(`${accession} was made on ${platform || 'an unknown platform'}, which is not supported (only ILLUMINA and OXFORD_NANOPORE reads).`);
-    return;
-  }
+  if (!KIND_OF_PLATFORM[platform]) throw new Error(`${accession} was made on ${platform || 'an unknown platform'}, which is not supported (only ILLUMINA and OXFORD_NANOPORE reads).`);
   const total = sizes.reduce((a, b) => a + b, 0);
-  let limit;
-  try { limit = readLimit(); } catch (error) { say(error.message); return; }
   if (total > MAX_DOWNLOAD && !limit) {
-    say(`${accession} is too large for this page (${mb(total)}; the limit is ${mb(MAX_DOWNLOAD)}). Use the command-line tool, or set a read limit.`);
-    return;
+    throw new Error(`${accession} is too large for this page (${mb(total)}; the limit is ${mb(MAX_DOWNLOAD)}). Use the command-line tool, or set a read limit.`);
   }
   const paired = record.library_layout === 'PAIRED';
   const count = Number(record.read_count) || 0;
@@ -706,130 +709,60 @@ async function sraLookup() {
   ];
   if (paired) lines.push('The page maps each mate as a separate read (the command-line tool can map pairs).');
   if (limit) lines.push(`Only the first ${limit.toLocaleString()} reads of each file will be kept; the download stops there.`);
-  else if (total > WARN_DOWNLOAD) lines.push(`Large download: it can take minutes and the page holds all of it in memory.`);
-  say(lines.join('\n'));
-  pendingRun = {
-    accession, platform, count: paired ? count * 2 : count, reads: count, paired,
+  else if (total > WARN_DOWNLOAD) lines.push('Large download: it can take minutes and the page holds all of it in memory.');
+  return {
+    accession, platform, kind: KIND_OF_PLATFORM[platform], count: paired ? count * 2 : count, perFile: count, paired,
     files: addresses.map((a, i) => ({ name: a.split('/').pop(), url: /^https?:/.test(a) ? a : `https://${a}`, bytes: sizes[i] || 0 })),
+    info: lines.join('\n'),
   };
-  $('sra-load').hidden = false;
 }
 
-function webBusy(on) {
-  $('sra-load').disabled = $('url-load').disabled = $('sra-lookup').disabled = on;
-  $('web-cancel').hidden = !on;
+const samples = []; // { id, name, note, source, accession, urls, files, fromExample, expected, state, info, reads, calls, seconds, vcf, bed, evidence, version }
+let nextSampleId = 1;
+let sampleRunning = false;
+let sampleCancelled = false;
+let activeWorker = null;
+let activeAbort = null;
+let lastCombined = null; // { table, summary, parent, minDepth, names }
+
+function newSample(init = {}) {
+  const s = { id: nextSampleId++, name: '', note: '', source: 'local', accession: '', urls: '', files: [], state: 'waiting', ...init };
+  samples.push(s);
+  return s;
 }
-
-async function runWebDownload(task) {
-  if (loading || busy) return;
-  loading = true;
-  webBusy(true);
-  webAbort = new AbortController();
-  try {
-    await task(webAbort.signal);
-  } catch (error) {
-    show('web-status', error.name === 'AbortError' ? 'Cancelled. Nothing was loaded.' : `Error: ${error.message}`);
-  } finally {
-    loading = false;
-    webAbort = null;
-    webBusy(false);
-  }
-}
-
-$('sra-lookup').addEventListener('click', sraLookup);
-$('sra-accession').addEventListener('keydown', (e) => { if (e.key === 'Enter') sraLookup(); });
-$('web-cancel').addEventListener('click', () => { if (webAbort) webAbort.abort(); });
-
-$('sra-load').addEventListener('click', () => runWebDownload(async (signal) => {
-  const run = pendingRun;
-  if (!run) return;
-  const limit = readLimit();
-  const files = [];
-  let anyCut = false;
-  for (const [i, item] of run.files.entries()) {
-    const label = `${run.accession} file ${i + 1} of ${run.files.length}`;
-    if (limit) {
-      const result = await downloadFirstReads(item, location.href, label, 'web-status', signal, limit);
-      files.push(result.file);
-      anyCut ||= result.cut;
-    } else {
-      files.push(await download(item, location.href, label, 'web-status', signal));
-    }
-  }
-  example.reads = files;
-  // ENA's count is in reads (or pairs) per file; the page counts each mate, so the expected total is per file x files.
-  const perFile = run.paired ? run.reads : Math.round(run.reads / run.files.length);
-  example.expectedReads = limit ? run.files.length * Math.min(limit, perFile) : run.count;
-  example.source.reads = `ENA run ${run.accession} (${new URL(run.files[0].url).host})${anyCut ? ` (first ${limit.toLocaleString()} reads of each file)` : ''}`;
-  $('kind').value = KIND_OF_PLATFORM[run.platform];
-  describeSources();
-  show('web-status', `Loaded: the reads of ${run.accession} (${mb(files.reduce((a, f) => a + f.size, 0))}). Press Run in step 1.`);
-}));
-
-$('url-load').addEventListener('click', () => runWebDownload(async (signal) => {
-  const wanted = [
-    ['reference', 'the reference genome', $('url-reference').value.trim() ? [$('url-reference').value.trim()] : []],
-    ['gff', 'the gene file', $('url-gff').value.trim() ? [$('url-gff').value.trim()] : []],
-    ['reads', 'the reads', $('url-reads').value.split('\n').map((x) => x.trim()).filter(Boolean)],
-  ];
-  if (wanted.every(([, , list]) => !list.length)) throw new Error('Type at least one https address.');
-  const limit = readLimit();
-  let changed = false;
-  for (const entry of wanted) {
-    entry[2] = entry[2].map((u) => { const d = directAddress(u); changed ||= d !== u; return d; });
-  }
-  const urls = wanted.flatMap(([, label, list]) => list.map((u) => [label, checkUrl(u, label)])); // all checked before any download
-  const got = { reference: null, gff: null, reads: [] };
-  for (const [slot, label, list] of wanted) {
-    for (const text of list) {
-      const url = new URL(text);
-      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
-      let file;
-      let note = '';
-      if (slot === 'reads' && limit) {
-        const result = await downloadFirstReads({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal, limit);
-        file = result.file;
-        if (result.cut) note = ` (first ${limit.toLocaleString()} reads of each file)`;
-      } else {
-        file = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'web-status', signal);
-      }
-      if (slot === 'reads') got.reads.push(file); else got[slot] = file;
-      example.source[slot] = `the address ${url.host}${url.pathname}${note}`;
-    }
-  }
-  void urls;
-  if (got.reference) example.reference = got.reference;
-  if (got.gff) example.gff = got.gff;
-  if (got.reads.length) { example.reads = got.reads; example.expectedReads = null; }
-  describeSources();
-  show('web-status', `Loaded: ${wanted.filter(([, , l]) => l.length).map(([, label]) => label).join(', ')}.` +
-    (changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''));
-}));
-
-// ---- Several strains ------------------------------------------------------------------------------------------
-// A list of strains (a name and a reads file, R2 optional). The queue maps one strain at a time, each in its own worker, which
-// is stopped afterwards, so the memory of one strain is given back before the next starts. A finished strain keeps its VCF,
-// coverage BED and evidence VCF (text). `combine_tables` (WebAssembly) joins the finished strains. The catalog (settings and
-// files) is exported as a zip and can be imported again. Strains from an import have no reads files and cannot run again.
-const DEPTH_WINDOW = 1000; // bases per coverage window for strains (steps 1 to 3 keep 10 kb)
-const CATALOG_FORMAT = 'qmutfind-catalog';
-const CATALOG_VERSION = 1;
-const MAX_CATALOG_BYTES = 500e6; // the zip and the total of its files
-const strains = []; // { name, note, r1, r2, files, state, reads, calls, seconds, vcf, bed, evidence, version }
-let strainRunning = false;
-let strainCancelled = false;
-let activeStrainWorker = null;
-let lastCombined = null; // { table, summary, parent, minDepth }
-
-const strainByName = (name) => strains.find((s) => s.name === name);
+const sampleByName = (name) => samples.find((s) => s.name === name);
 const isFinished = (s) => Boolean(s.vcf);
+const isBlank = (s) => !s.name && !s.note && !s.accession.trim() && !s.urls.trim() && s.files.length === 0 && !isFinished(s);
+const sampleStatus = (text) => show('strain-status', text);
+
+/** The number in the read-limit box is in thousands of reads per file. Returns reads per file; 0 means no limit. */
+function readLimit() {
+  const text = $('read-limit').value.trim();
+  if (text === '') return 0;
+  const k = Number(text);
+  if (!Number.isFinite(k) || k < 0) throw new Error('The read limit must be a number of thousands of reads per file, 0 or more (0 uses all reads).');
+  return Math.round(k * 1000);
+}
+
+function describeLimit() {
+  let text;
+  try {
+    const n = readLimit();
+    text = n ? `= ${n.toLocaleString()} reads from each file` : 'All reads of each file are used.';
+  } catch (error) {
+    text = error.message;
+  }
+  show('read-limit-echo', text);
+}
+$('read-limit').addEventListener('input', describeLimit);
+describeLimit();
 
 /** Run one message in a worker of its own. The worker is stopped when the answer comes, or when the queue is cancelled. */
 function callWorker(message, onProgress) {
   return new Promise((resolve, reject) => {
     const w = new Worker('worker.js', { type: 'module' });
-    activeStrainWorker = { w, reject };
-    const finish = () => { w.terminate(); if (activeStrainWorker && activeStrainWorker.w === w) activeStrainWorker = null; };
+    activeWorker = { w, reject };
+    const finish = () => { w.terminate(); if (activeWorker && activeWorker.w === w) activeWorker = null; };
     w.onmessage = (event) => {
       const m = event.data;
       if (m.type === 'progress' && onProgress) onProgress(m);
@@ -841,106 +774,284 @@ function callWorker(message, onProgress) {
   });
 }
 
-function renderStrains() {
-  const body = $('strain-table').querySelector('tbody');
-  body.replaceChildren();
-  for (const s of strains) {
-    const row = document.createElement('tr');
-    row.dataset.name = s.name;
-    const cell = (text, cls) => { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; row.appendChild(td); return td; };
-    cell(s.name, 'strain-name-cell');
-    cell(s.files.join(', '));
-    cell(s.state, 'strain-state');
-    cell(s.reads === undefined ? '' : String(s.reads), 'strain-reads');
-    cell(s.calls === undefined ? '' : String(s.calls), 'strain-calls');
-    cell(s.seconds === undefined ? '' : s.seconds.toFixed(1), 'strain-seconds');
-    cell(s.note || '', 'strain-note-cell');
-    const last = document.createElement('td');
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'strain-remove';
-    remove.textContent = 'Remove';
-    remove.disabled = s.state === 'running';
-    remove.addEventListener('click', () => {
-      const at = strains.indexOf(s);
-      if (at >= 0 && s.state !== 'running') { strains.splice(at, 1); lastCombined = null; renderStrains(); }
-    });
-    last.appendChild(remove);
-    row.appendChild(last);
-    body.appendChild(row);
-  }
-  const select = $('strain-parent');
-  const keep = select.value;
-  select.replaceChildren(new Option('No parent', ''));
-  for (const s of strains) select.appendChild(new Option(s.name, s.name));
-  select.value = strains.some((s) => s.name === keep) ? keep : '';
+// The rows of the sample table
+function refreshChoices() {
+  const named = samples.filter((s) => s.name);
+  const parent = $('strain-parent');
+  const keepParent = parent.value;
+  parent.replaceChildren(new Option('No parent', ''));
+  for (const s of named) parent.appendChild(new Option(s.name, s.name));
+  parent.value = named.some((s) => s.name === keepParent) ? keepParent : '';
+  const result = $('result-sample');
+  const keepResult = result.value;
+  result.replaceChildren();
+  const done = samples.filter((s) => s.name && isFinished(s));
+  if (!done.length) result.appendChild(new Option('No finished sample yet', ''));
+  for (const s of done) result.appendChild(new Option(s.name, s.name));
+  result.value = done.some((s) => s.name === keepResult) ? keepResult : (done[0] ? done[0].name : '');
+  if (result.value !== keepResult) useSelectedSample();
 }
 
-const strainStatus = (text) => show('strain-status', text);
+const selectedSample = () => samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null;
+
+/** The results panel follows the chosen sample: its VCF and coverage are what the summary and the gene steps use. */
+function useSelectedSample() {
+  const s = selectedSample();
+  state.vcf = s ? s.vcf : null;
+  state.depth = s ? s.bed : null;
+  state.annotated = null;
+  for (const id of ['download-vcf', 'download-depth-bed']) $(id).hidden = true;
+  if (s) {
+    offer('download-vcf', `${s.name}.vcf`, s.vcf, 'text/plain');
+    if (s.bed) offer('download-depth-bed', `${s.name}.depth.bed`, s.bed, 'text/plain');
+    show('summary', `Calls: ${s.calls.toLocaleString()}. Go on to the summary or the gene steps.`);
+  } else {
+    show('summary', '');
+  }
+  describeSource();
+}
+$('result-sample').addEventListener('change', useSelectedSample);
+
+function renderSamples() {
+  const body = $('strain-table').querySelector('tbody');
+  body.replaceChildren();
+  for (const s of samples) body.appendChild(sampleRow(s));
+  refreshChoices();
+}
+
+function sampleRow(s) {
+  const row = document.createElement('tr');
+  row.dataset.name = s.name;
+  row.dataset.id = String(s.id);
+  const imported = s.state.startsWith('imported');
+  const locked = imported || s.state === 'running' || s.state === 'done' || s.state.startsWith('done');
+  const td = (cls) => { const c = document.createElement('td'); if (cls) c.className = cls; row.appendChild(c); return c; };
+  const edited = () => { // changing a failed or cancelled sample makes it ready to run again
+    if (s.state.startsWith('failed') || s.state === 'cancelled') { s.state = 'waiting'; row.querySelector('.strain-state').textContent = 'waiting'; }
+    lastCombined = null;
+  };
+
+  const nameCell = td();
+  const name = Object.assign(document.createElement('input'), { type: 'text', className: 'sample-name', value: s.name, disabled: locked });
+  name.setAttribute('aria-label', 'Sample name');
+  name.addEventListener('input', () => { s.name = name.value.trim(); row.dataset.name = s.name; edited(); });
+  name.addEventListener('change', () => refreshChoices());
+  nameCell.appendChild(name);
+
+  const sourceCell = td();
+  if (imported) {
+    sourceCell.textContent = 'imported';
+  } else {
+    const source = document.createElement('select');
+    source.className = 'sample-source';
+    source.setAttribute('aria-label', 'Where the reads come from');
+    source.disabled = locked;
+    for (const [value, label] of [['sra', 'SRA run'], ['url', 'Web addresses'], ['local', 'Files from this computer']]) source.appendChild(new Option(label, value));
+    source.value = s.source;
+    sourceCell.appendChild(source);
+    source.addEventListener('change', () => { s.source = source.value; edited(); showGroup(); });
+  }
+
+  const readsCell = td('sample-reads');
+  let showGroup = () => {};
+  if (imported) {
+    readsCell.textContent = s.files.join(', ');
+  } else {
+    const sra = document.createElement('div');
+    sra.className = 'group-sra';
+    const accession = Object.assign(document.createElement('input'), { type: 'text', className: 'sample-sra', placeholder: 'SRR6277229', value: s.accession, disabled: locked, autocomplete: 'off' });
+    accession.setAttribute('aria-label', 'SRA run accession');
+    const check = Object.assign(document.createElement('button'), { type: 'button', className: 'sample-check', textContent: 'Check', disabled: locked });
+    const info = Object.assign(document.createElement('div'), { className: 'sample-info readout' });
+    info.textContent = s.info || '';
+    accession.addEventListener('input', () => { s.accession = accession.value; s.info = ''; info.textContent = ''; edited(); });
+    check.addEventListener('click', async () => {
+      info.textContent = 'Looking the run up in ENA';
+      try {
+        s.info = (await lookupRun(accession.value, readLimit())).info;
+      } catch (error) {
+        s.info = error.message;
+      }
+      info.textContent = s.info;
+    });
+    sra.append(accession, check, info);
+
+    const url = document.createElement('div');
+    url.className = 'group-url';
+    const urls = Object.assign(document.createElement('textarea'), { className: 'sample-urls', rows: 2, placeholder: 'https://... one address per line (R1, R2, more)', value: s.urls, disabled: locked });
+    urls.setAttribute('aria-label', 'Reads file addresses, one per line');
+    urls.addEventListener('input', () => { s.urls = urls.value; edited(); });
+    url.appendChild(urls);
+
+    const local = document.createElement('div');
+    local.className = 'group-local';
+    const files = Object.assign(document.createElement('input'), { type: 'file', className: 'sample-files', multiple: true, disabled: locked });
+    files.setAttribute('aria-label', 'Reads files from this computer (select several if the sample has more than one)');
+    const names = Object.assign(document.createElement('div'), { className: 'sample-files-names hint' });
+    const showNames = () => { names.textContent = s.files.length ? `${s.fromExample ? 'From the example: ' : ''}${s.files.map((f) => f.name).join(', ')}` : ''; };
+    files.addEventListener('change', () => { s.files = [...files.files]; s.fromExample = false; edited(); showNames(); });
+    showNames();
+    local.append(files, names);
+
+    showGroup = () => { sra.hidden = s.source !== 'sra'; url.hidden = s.source !== 'url'; local.hidden = s.source !== 'local'; };
+    readsCell.append(sra, url, local);
+    showGroup();
+  }
+
+  const cell = (text, cls) => { const c = td(cls); c.textContent = text; };
+  cell(s.state, 'strain-state');
+  cell(s.reads === undefined ? '' : String(s.reads), 'strain-reads');
+  cell(s.calls === undefined ? '' : String(s.calls), 'strain-calls');
+  cell(s.seconds === undefined ? '' : s.seconds.toFixed(1), 'strain-seconds');
+
+  const noteCell = td();
+  const note = Object.assign(document.createElement('input'), { type: 'text', className: 'sample-note', value: s.note || '', disabled: imported });
+  note.setAttribute('aria-label', 'Note');
+  note.addEventListener('input', () => { s.note = note.value.trim(); });
+  noteCell.appendChild(note);
+
+  const last = td();
+  const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'strain-remove', textContent: '−', disabled: s.state === 'running' });
+  remove.setAttribute('aria-label', 'Remove this sample');
+  remove.addEventListener('click', () => {
+    const at = samples.indexOf(s);
+    if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); lastCombined = null; renderSamples(); }
+  });
+  last.appendChild(remove);
+  return row;
+}
 
 $('strain-add').addEventListener('click', () => {
-  const name = $('strain-name').value.trim();
-  const r1 = $('strain-r1').files[0];
-  const r2 = $('strain-r2').files[0] || null;
-  if (!name) { strainStatus('Give the strain a name.'); return; }
-  if (/[\u0000-\u001f]/.test(name)) { strainStatus('The strain name must not hold a tab or a line break.'); return; }
-  if (!r1) { strainStatus('Choose a reads file (R1) for the strain.'); return; }
-  if (strainByName(name)) { strainStatus(`A strain named "${name}" is already in the list.`); return; }
-  strains.push({ name, note: $('strain-note').value.trim(), r1, r2, files: [r1.name, ...(r2 ? [r2.name] : [])], state: 'waiting' });
-  lastCombined = null;
-  $('strain-name').value = '';
-  $('strain-note').value = '';
-  $('strain-r1').value = '';
-  $('strain-r2').value = '';
-  strainStatus(`Added ${name}. ${strains.length} strain(s) in the list.`);
-  renderStrains();
+  newSample();
+  renderSamples();
+  const names = $('strain-table').querySelectorAll('.sample-name');
+  names[names.length - 1].focus();
 });
+
+/** The example's reads become a sample; a new genome from the menu or an address drops them, because they belong to the old one. */
+function dropExampleSamples() {
+  for (let i = samples.length - 1; i >= 0; i--) if (samples[i].fromExample && !isFinished(samples[i])) samples.splice(i, 1);
+  if (!samples.length) newSample();
+  renderSamples();
+}
+
+/** Get the reads of one sample as files for the worker. Returns { files, expected, kind, anyCut, note }. */
+async function prepareReads(s, limit, signal) {
+  const status = (text) => sampleStatus(text);
+  if (s.source === 'local') return { files: s.files, expected: s.expected || null, kind: null, note: '' };
+  if (s.source === 'url') {
+    const addresses = s.urls.split('\n').map((x) => x.trim()).filter(Boolean);
+    const urls = addresses.map((a) => checkUrl(directAddress(a), `the reads of ${s.name}`)); // all checked before any download
+    const files = [];
+    let anyCut = false;
+    for (const [i, url] of urls.entries()) {
+      const item = { name: decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download'), url: url.href, bytes: 0 };
+      const label = `${s.name} file ${i + 1} of ${urls.length}`;
+      if (limit) {
+        const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit);
+        files.push(result.file);
+        anyCut ||= result.cut;
+      } else {
+        files.push(await download(item, location.href, label, 'strain-status', signal));
+      }
+    }
+    return { files, expected: null, kind: null, anyCut };
+  }
+  status(`Looking up ${s.accession.trim()} in ENA`);
+  const run = await lookupRun(s.accession, limit);
+  s.info = run.info;
+  const files = [];
+  let anyCut = false;
+  for (const [i, item] of run.files.entries()) {
+    const label = `${run.accession} file ${i + 1} of ${run.files.length}`;
+    if (limit) {
+      const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit);
+      files.push(result.file);
+      anyCut ||= result.cut;
+    } else {
+      files.push(await download(item, location.href, label, 'strain-status', signal));
+    }
+  }
+  const perFile = run.paired ? run.perFile : Math.round(run.perFile / run.files.length);
+  return { files, expected: limit ? run.files.length * Math.min(limit, perFile) : run.count, kind: run.kind, anyCut };
+}
 
 $('strain-cancel').addEventListener('click', () => {
-  strainCancelled = true;
-  if (activeStrainWorker) { activeStrainWorker.w.terminate(); activeStrainWorker.reject(new DOMException('cancelled', 'AbortError')); activeStrainWorker = null; }
+  sampleCancelled = true;
+  if (activeAbort) activeAbort.abort();
+  if (activeWorker) { activeWorker.w.terminate(); activeWorker.reject(new DOMException('cancelled', 'AbortError')); activeWorker = null; }
 });
 
+/** A reason the waiting samples cannot run, or ''. Blank rows are ignored. */
+function problemWithSamples() {
+  const todo = samples.filter((s) => !isBlank(s));
+  const seen = new Set();
+  for (const s of todo) {
+    if (!s.name) return 'Give every sample a name.';
+    if (/[\u0000-\u001f]/.test(s.name)) return `The sample name "${s.name}" must not hold a tab or a line break.`;
+    if (seen.has(s.name)) return `The sample name "${s.name}" is used more than once.`;
+    seen.add(s.name);
+  }
+  for (const s of todo.filter((x) => x.state === 'waiting' || x.state === 'cancelled')) {
+    const has = s.source === 'sra' ? s.accession.trim() : s.source === 'url' ? s.urls.trim() : s.files.length;
+    if (!has) return `The sample "${s.name}" has no reads: ${s.source === 'sra' ? 'give an SRA run accession' : s.source === 'url' ? 'give one or more https addresses' : 'choose one or more files'}.`;
+  }
+  return '';
+}
+
 $('strain-run').addEventListener('click', async () => {
-  if (strainRunning || busy || loading) { strainStatus('Something else is running. Wait until it has finished.'); return; }
+  if (sampleRunning || busy || loading) { sampleStatus('Something else is running. Wait until it has finished.'); return; }
   const reference = refFile();
-  if (!reference) { strainStatus('Choose the reference genome in "Your files" first.'); return; }
-  if (!strains.some((s) => s.state === 'waiting' || s.state === 'cancelled')) { strainStatus('No strain is waiting.'); return; }
-  strainRunning = true;
-  strainCancelled = false;
+  if (!reference) { sampleStatus('Choose the reference genome first (section 1).'); return; }
+  const problem = problemWithSamples();
+  if (problem) { sampleStatus(problem); return; }
+  if (!samples.some((s) => !isBlank(s) && (s.state === 'waiting' || s.state === 'cancelled'))) { sampleStatus('No sample is waiting.'); return; }
+  let limit;
+  try { limit = readLimit(); } catch (error) { sampleStatus(error.message); return; }
+  sampleRunning = true;
+  sampleCancelled = false;
   setBusy(true);
   $('strain-run').disabled = true;
+  $('strain-add').disabled = true;
   $('strain-cancel').hidden = false;
   try {
     for (;;) {
-      const next = strains.find((s) => s.state === 'waiting' || s.state === 'cancelled');
-      if (!next || strainCancelled) break;
+      const next = samples.find((s) => !isBlank(s) && (s.state === 'waiting' || s.state === 'cancelled'));
+      if (!next || sampleCancelled) break;
       next.state = 'running';
-      renderStrains();
-      strainStatus(`Running ${next.name}`);
+      renderSamples();
+      sampleStatus(`Running ${next.name}`);
+      activeAbort = new AbortController();
       try {
+        const prepared = await prepareReads(next, limit, activeAbort.signal);
         const m = await callWorker({
-          step: 'run', reference, reads: [next.r1, ...(next.r2 ? [next.r2] : [])], sample: next.name, kind: $('kind').value,
-          depthWindow: DEPTH_WINDOW, evidence: true,
-        }, (p) => strainStatus(`Running ${next.name}: ${p.reads.toLocaleString()} reads mapped`));
+          step: 'run', reference, reads: prepared.files, sample: next.name, kind: prepared.kind || $('kind').value,
+          depthWindow: DEPTH_WINDOW, evidence: true, maxReads: limit,
+        }, (p) => sampleStatus(`Running ${next.name}: ${p.reads.toLocaleString()} reads mapped`));
+        const anyCut = prepared.anyCut || (m.files || []).some((f) => f.cut);
+        const wrong = prepared.expected && !anyCut && m.reads !== prepared.expected;
         Object.assign(next, {
-          state: 'done', reads: m.reads, seconds: m.seconds, vcf: m.vcf, bed: m.depth, evidence: m.evidence, version: m.version,
+          state: wrong ? `done: WARNING the page counted ${m.reads.toLocaleString()} reads but ${prepared.expected.toLocaleString()} were expected, so a download may be incomplete` : 'done',
+          reads: m.reads, seconds: m.seconds, vcf: m.vcf, bed: m.depth, evidence: m.evidence, version: m.version,
           calls: m.vcf.split('\n').filter((l) => l && l[0] !== '#').length,
         });
+        if (!$('result-sample').value) refreshChoices();
       } catch (error) {
         next.state = error.name === 'AbortError' ? 'cancelled' : `failed: ${error.message}`;
       }
+      activeAbort = null;
       lastCombined = null;
-      renderStrains();
+      renderSamples();
     }
-    if (strainCancelled) for (const s of strains) if (s.state === 'waiting') s.state = 'cancelled';
-    strainStatus(strainCancelled ? 'Cancelled. Strains that were not finished can run again.' : 'Done. Combine the finished strains, or export the catalog.');
+    if (sampleCancelled) for (const s of samples) if (s.state === 'waiting') s.state = 'cancelled';
+    sampleStatus(sampleCancelled ? 'Cancelled. Samples that were not finished can run again.' : 'Done. Combine the finished samples, look at one in the results, or export the catalog.');
   } finally {
-    strainRunning = false;
+    sampleRunning = false;
     setBusy(false);
     $('strain-run').disabled = false;
+    $('strain-add').disabled = false;
     $('strain-cancel').hidden = true;
-    renderStrains();
+    renderSamples();
   }
 });
 
@@ -953,17 +1064,16 @@ function renderCombined() {
   if (!lastCombined) return;
   const lines = lastCombined.table.split('\n').filter(Boolean).map((l) => l.split('\t'));
   const header = lines[0];
-  const names = lastCombined.names;
-  const nStrains = names.length;
+  const nSamples = lastCombined.names.length;
   const firstCell = 6;
-  const hasStatus = header.length > firstCell + nStrains;
+  const hasStatus = header.length > firstCell + nSamples;
   const filter = $('combined-filter').value;
   const keep = (f) => {
-    const cells = f.slice(firstCell, firstCell + nStrains);
+    const cells = f.slice(firstCell, firstCell + nSamples);
     const called = cells.filter((c) => /^[0-9.]+:\d+$/.test(c)).length;
-    if (filter === 'shared') return called === nStrains;
+    if (filter === 'shared') return called === nSamples;
     if (filter === 'one') return called === 1;
-    if (filter === 'new') return hasStatus && f.slice(firstCell + nStrains).includes('new');
+    if (filter === 'new') return hasStatus && f.slice(firstCell + nSamples).includes('new');
     return true;
   };
   const tr = document.createElement('tr');
@@ -972,23 +1082,23 @@ function renderCombined() {
   const rows = lines.slice(1).filter(keep);
   for (const f of rows.slice(0, MAX_ROWS)) {
     const row = document.createElement('tr');
-    for (const text of f) { const td = document.createElement('td'); td.textContent = text; if (text === 'new') td.className = 'new'; row.appendChild(td); }
+    for (const text of f) { const c = document.createElement('td'); c.textContent = text; if (text === 'new') c.className = 'new'; row.appendChild(c); }
     body.appendChild(row);
   }
   if (rows.length > MAX_ROWS) {
     const row = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = header.length;
-    td.textContent = `Showing the first ${MAX_ROWS} of ${rows.length.toLocaleString()} rows. The download has all of them.`;
-    row.appendChild(td);
+    const c = document.createElement('td');
+    c.colSpan = header.length;
+    c.textContent = `Showing the first ${MAX_ROWS} of ${rows.length.toLocaleString()} rows. The download has all of them.`;
+    row.appendChild(c);
     body.appendChild(row);
   }
 }
 $('combined-filter').addEventListener('change', renderCombined);
 
 $('strain-combine').addEventListener('click', async () => {
-  const done = strains.filter(isFinished);
-  if (done.length < 2) { show('combine-status', 'Combine needs at least two finished strains.'); return; }
+  const done = samples.filter((s) => s.name && isFinished(s));
+  if (done.length < 2) { show('combine-status', 'Combine needs at least two finished samples.'); return; }
   const minDepth = Number($('combine-min-depth').value);
   if (!Number.isFinite(minDepth) || minDepth < 0) { show('combine-status', 'The minimum depth must be a number, 0 or more.'); return; }
   const parent = $('strain-parent').value;
@@ -1003,7 +1113,7 @@ $('strain-combine').addEventListener('click', async () => {
     offer('download-combined', 'combined.tsv', m.table, 'text/tab-separated-values');
     renderCombined();
     const n = m.table.split('\n').filter(Boolean).length - 1;
-    show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} strains.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
+    show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} samples.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
   } catch (error) {
     show('combine-status', `Error: ${error.message}`);
   }
@@ -1011,15 +1121,21 @@ $('strain-combine').addEventListener('click', async () => {
 
 // Export and import
 function catalogFileName(index, name, extension) {
-  const safe = name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60) || 'strain';
+  const safe = name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60) || 'sample';
   return `strains/${String(index + 1).padStart(2, '0')}_${safe}.${extension}`;
 }
 
 $('strain-export').addEventListener('click', () => {
-  if (!strains.length) { show('catalog-status', 'The list is empty. Add strains first.'); return; }
+  const listed = samples.filter((s) => s.name);
+  if (!listed.length) { show('catalog-status', 'The list is empty. Add samples first.'); return; }
   const files = {};
-  const entries = strains.map((s, i) => {
-    const entry = { name: s.name, note: s.note || '', files: s.files, status: s.state.split(':')[0] === 'imported' ? s.state.slice('imported: '.length) : s.state.split(':')[0] };
+  const entries = listed.map((s, i) => {
+    const entry = {
+      name: s.name, note: s.note || '',
+      files: s.source === 'sra' ? [s.accession.trim()] : s.source === 'url' ? s.urls.split('\n').map((x) => x.trim()).filter(Boolean) : s.files.map((f) => (typeof f === 'string' ? f : f.name)),
+      source: s.state.startsWith('imported') ? 'imported' : s.source,
+      status: s.state.startsWith('imported') ? s.state.slice('imported: '.length) : s.state.split(':')[0],
+    };
     if (s.state.startsWith('failed')) entry.error = s.state.slice('failed: '.length);
     if (isFinished(s)) {
       Object.assign(entry, { reads: s.reads, calls: s.calls, seconds: s.seconds, qmutfind_version: s.version || '' });
@@ -1031,21 +1147,23 @@ $('strain-export').addEventListener('click', () => {
     return entry;
   });
   const reference = refFile();
+  let readLimitReads = null;
+  try { readLimitReads = readLimit(); } catch (error) { /* the box holds something else; the catalog then has no limit */ }
   const catalog = {
     format: CATALOG_FORMAT, version: CATALOG_VERSION, created: new Date().toISOString(),
-    qmutfind_version: (strains.find((s) => s.version) || {}).version || '',
+    qmutfind_version: (listed.find((s) => s.version) || {}).version || '',
     reference: reference ? { name: reference.name, size: reference.size } : null,
-    settings: { kind: $('kind').value, depth_window: DEPTH_WINDOW, min_depth: lastCombined ? lastCombined.minDepth : Number($('combine-min-depth').value) },
+    settings: { kind: $('kind').value, depth_window: DEPTH_WINDOW, read_limit_per_file: readLimitReads, min_depth: lastCombined ? lastCombined.minDepth : Number($('combine-min-depth').value) },
     parent: $('strain-parent').value || '',
     strains: entries,
   };
   files['catalog.json'] = strToU8(JSON.stringify(catalog, null, 1));
   if (lastCombined) { files['combined.tsv'] = strToU8(lastCombined.table); files['summary.tsv'] = strToU8(lastCombined.summary); }
   offer('download-catalog', 'qmutfind-catalog.zip', zipSync(files), 'application/zip');
-  show('catalog-status', `Exported ${strains.length} strain(s). Use the download link.`);
+  show('catalog-status', `Exported ${listed.length} sample(s). Use the download link.`);
 });
 
-/** Check an imported catalog and return the strains to load. Throws an Error with a reason. */
+/** Check an imported catalog and return the samples to load. Throws an Error with a reason. */
 function readCatalog(archive) {
   const raw = archive['catalog.json'];
   if (!raw) throw new Error('the zip has no catalog.json, so it is not a qmutfind catalog.');
@@ -1053,15 +1171,15 @@ function readCatalog(archive) {
   try { catalog = JSON.parse(strFromU8(raw)); } catch (error) { throw new Error('catalog.json is not valid JSON (catalog unreadable).'); }
   if (!catalog || catalog.format !== CATALOG_FORMAT) throw new Error(`catalog.json has the format "${catalog && catalog.format}", not ${CATALOG_FORMAT}.`);
   if (catalog.version !== CATALOG_VERSION) throw new Error(`catalog.json has version ${catalog.version}; this page reads version ${CATALOG_VERSION}.`);
-  if (!Array.isArray(catalog.strains) || catalog.strains.length > 1000) throw new Error('catalog.json lists no strains, or too many (limit 1000).');
+  if (!Array.isArray(catalog.strains) || catalog.strains.length > 1000) throw new Error('catalog.json lists no samples, or too many (limit 1000).');
   const text = (path) => {
     if (typeof path !== 'string' || !Object.prototype.hasOwnProperty.call(archive, path)) throw new Error(`catalog.json refers to the file "${path}", which is not in the zip.`);
     return strFromU8(archive[path]);
   };
   const names = new Set();
   const loaded = catalog.strains.map((e) => {
-    if (!e || typeof e.name !== 'string' || !e.name.trim() || /[\u0000-\u001f]/.test(e.name)) throw new Error('catalog.json has a strain without a valid name.');
-    if (names.has(e.name)) throw new Error(`catalog.json lists the strain name "${e.name}" more than once.`);
+    if (!e || typeof e.name !== 'string' || !e.name.trim() || /[\u0000-\u001f]/.test(e.name)) throw new Error('catalog.json has a sample without a valid name.');
+    if (names.has(e.name)) throw new Error(`catalog.json lists the sample name "${e.name}" more than once.`);
     names.add(e.name);
     const s = { name: e.name, note: typeof e.note === 'string' ? e.note : '', files: Array.isArray(e.files) ? e.files.map(String) : [], state: `imported: ${String(e.status || 'unknown')}` };
     if (e.vcf !== undefined) {
@@ -1091,15 +1209,17 @@ $('catalog-file').addEventListener('change', async () => {
       throw new Error(error.message === 'too large' ? `the zip unpacks to more than ${mb(MAX_CATALOG_BYTES)}.` : 'the file is not a zip file that this page can read.');
     }
     const { catalog, loaded } = readCatalog(archive);
-    strains.splice(0, strains.length, ...loaded);
+    samples.splice(0, samples.length);
+    for (const s of loaded) newSample(s);
     lastCombined = null;
-    renderStrains();
+    renderSamples();
     renderCombined();
     const settings = catalog.settings || {};
     if (['short', 'long'].includes(settings.kind)) $('kind').value = settings.kind;
     if (Number.isFinite(settings.min_depth)) $('combine-min-depth').value = String(settings.min_depth);
-    if (typeof catalog.parent === 'string' && strainByName(catalog.parent)) $('strain-parent').value = catalog.parent;
-    show('catalog-status', `Loaded ${loaded.length} strain(s) from ${file.name}${catalog.reference ? ` (made with the reference ${catalog.reference.name})` : ''}. Imported strains cannot run again.`);
+    if (Number.isFinite(settings.read_limit_per_file)) { $('read-limit').value = String(settings.read_limit_per_file / 1000); describeLimit(); }
+    if (typeof catalog.parent === 'string' && sampleByName(catalog.parent)) $('strain-parent').value = catalog.parent;
+    show('catalog-status', `Loaded ${loaded.length} sample(s) from ${file.name}${catalog.reference ? ` (made with the reference ${catalog.reference.name})` : ''}. Imported samples cannot run again.`);
   } catch (error) {
     show('catalog-status', `Error: ${error.message}`);
   } finally {
@@ -1107,6 +1227,7 @@ $('catalog-file').addEventListener('change', async () => {
   }
 });
 
-renderStrains();
+newSample();
+renderSamples();
 
 describeSources();

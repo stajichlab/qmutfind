@@ -41,66 +41,13 @@
 <section class="hero panel">
   <p class="lede">qmutfind maps sequencing reads to a reference genome, finds SNPs and small insertions and deletions,
   says what each change does to the genes, and draws the result.</p>
-  <p>It runs in this page. The page does not send your files to any server. Use it for one haploid sample, such as a fungal
-  isolate or an evolved strain, compared with a reference genome.</p>
+  <p>It runs in this page. The page does not send your files to any server. Use it for haploid samples, such as fungal
+  isolates or evolved strains, compared with a reference genome.</p>
   <ol class="steps">
-    <li><b>Call.</b> Map the reads and call the variants. This gives a VCF.</li>
-    <li><b>Summarize.</b> Count the variants and plot where they are along the genome.</li>
-    <li><b>Draw.</b> Add gene effects, pick a variant from the list, and see it in its gene.</li>
+    <li><b>Reference genome.</b> Choose where it comes from: the NCBI list, files from your computer, or web addresses.</li>
+    <li><b>Sample set.</b> Add one or more samples. Each has a name and one or more reads files, from SRA, web addresses or your computer. Run them one after the other and, if you like, combine them against a parent sample.</li>
+    <li><b>Results.</b> Pick a sample, count its variants, plot where they are, add gene effects and draw a locus.</li>
   </ol>
-  <p>Each step keeps its result in this page, and the next step uses it. You can also start at step 2 or 3 with a VCF
-  file from another tool.</p>
-</section>
-
-<section class="panel" id="web-section">
-  <h2>Load data from the web</h2>
-  <p class="hint">Public data only. Your browser downloads straight from the data server, so the server must allow that (NCBI and
-  ENA do; many others do not). The page cannot use files that need a password or a key.</p>
-  <div class="form">
-    <label for="max-reads">Keep the first this many reads per file (0 keeps all). The download stops after them. It applies to SRA runs and to read addresses.</label>
-    <input id="max-reads" type="number" min="0" step="1" value="2000000">
-    <label for="sra-accession">Reads from an SRA run (the page looks the run up in ENA). Give a run accession: SRR, ERR or DRR and digits.</label>
-    <input id="sra-accession" type="text" placeholder="SRR6277229" autocomplete="off">
-    <p><button id="sra-lookup" type="button">Look up</button></p>
-    <div id="sra-info" class="readout" role="status"></div>
-    <p><button id="sra-load" type="button" class="primary" hidden>Download the reads</button></p>
-    <label for="url-reference">Or load files from https addresses. Reference genome (FASTA)</label>
-    <input id="url-reference" type="url" placeholder="https://...">
-    <label for="url-gff">Genes (GFF3)</label>
-    <input id="url-gff" type="url" placeholder="https://...">
-    <label for="url-reads">Reads (FASTQ), one address per line</label>
-    <textarea id="url-reads" rows="2" placeholder="https://..."></textarea>
-    <p><button id="url-load" type="button">Download from these addresses</button> <button id="web-cancel" type="button" hidden>Cancel</button></p>
-  </div>
-  <div id="web-status" role="status" class="readout"></div>
-  <details>
-    <summary>Limits and risks of loading from the web</summary>
-    <ul>
-      <li>Only https addresses are accepted, and addresses with a user name or password are refused.</li>
-      <li>A download is limited to 2 GB. The whole file is held in memory (and a large one takes minutes), so a big run can slow or stop your browser tab. With a read limit, the page stops downloading after that many reads per file and keeps only those reads, so a bigger file is allowed. The first reads of a file are not a random sample.</li>
-      <li>A file that unpacks to more than 1 GB is refused for the reference, genes, VCF and coverage files.</li>
-      <li>The page checks the file size, and for an SRA run the read count, against ENA's record. It does not check ENA's MD5 sums.</li>
-      <li>The accession you look up is sent to ENA, and the files come from the data server. Nothing is sent to this site.</li>
-      <li>Do not load private, patient or access-controlled data. The page works on one haploid sample and is not a clinical tool.</li>
-    </ul>
-  </details>
-</section>
-
-<section class="panel" id="genome-section" hidden>
-  <h2>Choose a reference genome</h2>
-  <p id="genome-text"></p>
-  <div class="form">
-    <label for="genome-filter">Filter the list (for example <code>Candida</code> or <code>pombe</code>)</label>
-    <input id="genome-filter" type="search" autocomplete="off">
-    <select id="genome-menu" size="8" aria-label="Reference genomes"></select>
-    <p><button id="genome-load" type="button">Load the genome and genes</button></p>
-  </div>
-  <div id="genome-status" role="status" class="readout"></div>
-  <div id="genome-fungidb" hidden>
-    <p>FungiDB does not let a web page download its files, and it needs your API key. Run this on your computer, then choose
-    the two files it writes (the FASTA and the GFF3) in "Your files".</p>
-    <pre><code id="genome-command"></code></pre>
-  </div>
 </section>
 
 <section class="panel" id="example-section" hidden>
@@ -110,45 +57,142 @@
   <div id="example-status" role="status" class="readout"></div>
 </section>
 
-<section class="panel" id="files-section">
-  <h2>Your files</h2>
+<section class="panel" id="reference-section">
+  <h2><span class="num">1</span> Reference genome</h2>
   <div class="form">
-    <p class="hint">Under each input the page says where its data comes from: a file on your computer, an example, the genome menu or the web import. A file you choose here replaces the same data from any of the others.</p>
-    <label for="reference">Reference genome (FASTA, <code>.gz</code> allowed). All three steps use it.</label>
-    <input id="reference" type="file">
-    <div class="source" id="source-reference" role="status"></div>
-    <label for="gff">Genes (GFF3, optional). Step 3 needs it.</label>
-    <input id="gff" type="file">
-    <div class="source" id="source-gff" role="status"></div>
-    <label for="vcf-file">A VCF file (optional). Choose one to skip step 1. It replaces the result of step 1.</label>
-    <input id="vcf-file" type="file">
-    <label for="depth-file">A coverage file (optional): a <code>mosdepth</code> regions BED (<code>.bed.gz</code> is fine). Step 1 makes one for you.</label>
-    <input id="depth-file" type="file">
-    <label for="sample">Sample name</label>
-    <input id="sample" type="text" value="sample">
+    <label for="reference-source">Where is your reference genome? Choose one.</label>
+    <select id="reference-source">
+      <option value="ncbi">NCBI genome list (loads in this page)</option>
+      <option value="upload">Upload a FASTA and a GFF3 from my computer</option>
+      <option value="url">Download a FASTA and a GFF3 from https addresses</option>
+    </select>
   </div>
-  <div id="vcf-source" class="readout" role="status">No VCF yet. Run step 1 or choose a VCF file.</div>
+  <div id="genome-section" class="mode">
+    <p id="genome-text"></p>
+    <div class="form">
+      <label for="genome-filter">Filter the list (for example <code>Candida</code> or <code>pombe</code>)</label>
+      <input id="genome-filter" type="search" autocomplete="off">
+      <select id="genome-menu" size="8" aria-label="Reference genomes"></select>
+      <p><button id="genome-load" type="button">Load the genome and genes</button></p>
+    </div>
+    <div id="genome-fungidb" hidden>
+      <p>FungiDB does not let a web page download its files, and it needs your API key. Run this on your computer, then choose
+      "Upload a FASTA and a GFF3" above and pick the two files it writes.</p>
+      <pre><code id="genome-command"></code></pre>
+    </div>
+  </div>
+  <div id="reference-upload" class="mode form" hidden>
+    <label for="reference">Reference genome (FASTA, <code>.gz</code> allowed)</label>
+    <input id="reference" type="file">
+    <label for="gff">Genes (GFF3, optional). The gene step needs it.</label>
+    <input id="gff" type="file">
+  </div>
+  <div id="reference-url" class="mode form" hidden>
+    <p class="hint">Public data only, over https. Your browser downloads straight from the server, so the server must allow that (NCBI and ENA do; many others do not).</p>
+    <label for="url-reference">Reference genome (FASTA)</label>
+    <input id="url-reference" type="url" placeholder="https://...">
+    <label for="url-gff">Genes (GFF3, optional)</label>
+    <input id="url-gff" type="url" placeholder="https://...">
+    <p><button id="ref-url-load" type="button">Download the genome and genes</button></p>
+  </div>
+  <div id="genome-status" role="status" class="readout"></div>
+  <div class="source" id="source-reference" role="status"></div>
+  <div class="source" id="source-gff" role="status"></div>
 </section>
 
-<section class="panel step" id="step1">
-  <h2><span class="num">1</span> Call: map the reads and call variants</h2>
+<section class="panel" id="sample-section">
+  <h2><span class="num">2</span> Sample set</h2>
+  <p class="hint">A sample is a name and one or more reads files. Use <b>+</b> to add a sample and <b>&minus;</b> to remove one. Each sample takes its
+  reads from one source: an SRA run accession, https addresses (one per line), or files from your computer (select several if
+  the sample has more than one). The page maps every file as separate reads; it does not use read pairs. The samples run one
+  after the other, each in its own worker. Files from your computer are read from disk and are not sent anywhere.</p>
   <div class="form">
-    <label for="reads">Reads (FASTQ, <code>.gz</code> allowed; select several files if you have them)</label>
-    <input id="reads" type="file" multiple>
-    <div class="source" id="source-reads" role="status"></div>
+    <label for="read-limit">Reads to use from each file, in thousands (0 uses all). Downloads stop after this many reads.</label>
+    <input id="read-limit" type="number" min="0" step="500" value="2000">
+    <div id="read-limit-echo" class="hint" role="status"></div>
     <label for="kind">Read type</label>
     <select id="kind"><option value="short">Short reads (Illumina)</option><option value="long">Long reads (Nanopore)</option></select>
-    <p><button id="run" type="button" class="primary">Run</button></p>
   </div>
-  <div id="status" role="status" class="readout"></div>
-  <div id="progress" class="readout"></div>
+  <div class="table-wrap"><table id="strain-table" class="grid">
+    <thead><tr><th>Sample name</th><th>Source</th><th>Reads</th><th>State</th><th>Reads used</th><th>Calls</th><th>Seconds</th><th>Note</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p><button id="strain-add" type="button" aria-label="Add a sample">+ Add a sample</button>
+  <button id="strain-run" type="button" class="primary">Run the waiting samples</button>
+  <button id="strain-cancel" type="button" hidden>Cancel</button></p>
+  <div id="strain-status" role="status" class="readout"></div>
+  <details>
+    <summary>Limits and risks of loading reads from the web</summary>
+    <ul>
+      <li>Only https addresses are accepted, and addresses with a user name or password are refused. A Dropbox share link is changed to its direct address.</li>
+      <li>A download is limited to 2 GB. The whole file is held in memory (and a large one takes minutes), so a big run can slow or stop your browser tab. With a read limit, the page stops downloading after that many reads per file and keeps only those reads, so a bigger file is allowed. The first reads of a file are not a random sample.</li>
+      <li>The page checks the file size, and for an SRA run the read count, against ENA's record. It does not check ENA's MD5 sums.</li>
+      <li>The accession you give is sent to ENA, and the files come from the data server. Nothing is sent to this site. Only servers that allow downloads from web pages work (NCBI and ENA do).</li>
+      <li>Do not load private, patient or access-controlled data. The page is not a clinical tool.</li>
+    </ul>
+  </details>
+</section>
+
+<section class="panel" id="strain-section">
+  <h2>Combine the samples and keep a catalog</h2>
+  <div class="form">
+    <label for="strain-parent">Parent sample (optional). The table then shows what is new in each sample.</label>
+    <select id="strain-parent"><option value="">No parent</option></select>
+    <label for="combine-min-depth">Minimum depth to call a site covered (the mean of its coverage window)</label>
+    <input id="combine-min-depth" type="number" min="0" step="1" value="5">
+    <p><button id="strain-combine" type="button">Combine the finished samples</button>
+    <button id="strain-export" type="button">Export the catalog</button>
+    <a id="download-combined" hidden>Download the table (TSV)</a>
+    <a id="download-catalog" hidden>Download the catalog (zip)</a></p>
+    <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the sample list.</label>
+    <input id="catalog-file" type="file" accept=".zip,application/zip">
+  </div>
+  <div id="catalog-status" class="readout" role="status"></div>
+  <div id="combine-status" class="readout" role="status"></div>
+  <div class="form">
+    <label for="combined-filter">Show in the combined table</label>
+    <select id="combined-filter">
+      <option value="all">All variants</option>
+      <option value="new">New in some sample (needs a parent)</option>
+      <option value="shared">Called in every finished sample</option>
+      <option value="one">Called in one sample only</option>
+    </select>
+  </div>
+  <div class="table-wrap"><table id="combined-table" class="grid"><thead></thead><tbody></tbody></table></div>
+  <details>
+    <summary>How the combined table is made, and its limits</summary>
+    <ul>
+      <li>One row per variant (same contig, position, REF and ALT). Each sample gets a cell: <code>AF:depth</code> for a call,
+      <code>weak</code> (some reads, below the calling thresholds), <code>ref</code> (covered, no such reads), <code>low</code>
+      (too little coverage), <code>unknown</code> (no coverage data) or <code>other</code> (a different ALT at that position).</li>
+      <li>With a parent, each other sample gets a status: <code>new</code>, <code>inherited</code>, <code>lost</code> or
+      <code>unknown</code>. A variant is never <code>new</code> when the parent has some reads for it, and never <code>lost</code>
+      when the sample has some. <code>lost</code> is a lead, not proof: it rests on a 1 kb window mean, not on the depth at the site.</li>
+      <li>All samples must use the same settings. The window size is 1 kb. The thresholds for "covered" and "weak" were not tuned.</li>
+      <li>An imported sample has no reads files, so it cannot run again.</li>
+      <li>The catalog is a record of this page's results. It is not saved in the browser; export it to keep it.</li>
+    </ul>
+  </details>
+</section>
+
+<section class="panel" id="results-section">
+  <h2>Results of one sample</h2>
+  <div class="form">
+    <label for="result-sample">Sample</label>
+    <select id="result-sample"><option value="">No finished sample yet</option></select>
+    <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-depth-bed" hidden>Download the coverage (BED)</a></p>
+    <label for="vcf-file">Or a VCF file from another tool (optional). It replaces the sample's result.</label>
+    <input id="vcf-file" type="file">
+    <label for="depth-file">A coverage file (optional): a <code>mosdepth</code> regions BED (<code>.bed.gz</code> is fine). The run makes one for you.</label>
+    <input id="depth-file" type="file">
+  </div>
+  <div id="vcf-source" class="readout" role="status">No VCF yet. Run a sample or choose a VCF file.</div>
   <div id="summary" class="readout"></div>
-  <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-depth-bed" hidden>Download the coverage (BED)</a></p>
 </section>
 
 <section class="panel step" id="step2">
-  <h2><span class="num">2</span> Summarize: statistics and a genome-wide plot</h2>
-  <p class="hint">Uses the VCF and the coverage from step 1, or the files you chose. If the VCF has no contig lines, it also
+  <h2><span class="num">3</span> Summarize: statistics and a genome-wide plot</h2>
+  <p class="hint">Uses the VCF and the coverage of the sample chosen above, or the files you chose. If the VCF has no contig lines, it also
   uses the reference genome. You can summarize a coverage file or a VCF file alone.</p>
   <div class="form">
     <label for="order">Order of the contigs in the plots</label>
@@ -167,7 +211,7 @@
 </section>
 
 <section class="panel step" id="step3">
-  <h2><span class="num">3</span> Draw: gene effects and loci</h2>
+  <h2><span class="num">4</span> Draw: gene effects and loci</h2>
   <p class="hint">Needs the reference genome and the GFF3 file. Annotation adds the effect of each variant on the gene
   (synonymous, missense, nonsense, frameshift, intron, UTR, intergenic and more). Then pick a variant to draw its locus.</p>
   <p><button id="annotate" type="button" class="primary">Annotate and list the variants</button></p>
@@ -187,69 +231,6 @@
   <div id="report-status" role="status" class="readout"></div>
   <p class="downloads"><a id="download-annotated" hidden>Download the annotated VCF</a></p>
   <iframe id="report" title="Gene and mutation picture"></iframe>
-</section>
-
-<section class="panel" id="strain-section">
-  <h2>Several strains: run, catalog and combine</h2>
-  <p class="hint">Add one strain at a time: a name and a reads file (R2 is optional). All strains use the reference genome and the read
-  type chosen above, and each runs in its own worker, one after the other. A finished strain keeps its VCF, coverage and
-  evidence; you can combine the finished strains into one table, with an optional parent, and export the catalog as a zip.
-  Reads from your computer are read from disk; the page does not send them anywhere.</p>
-  <div class="form">
-    <label for="strain-name">Strain name</label>
-    <input id="strain-name" type="text" autocomplete="off">
-    <label for="strain-r1">Reads R1 (FASTQ, <code>.gz</code> allowed)</label>
-    <input id="strain-r1" type="file">
-    <label for="strain-r2">Reads R2 (optional)</label>
-    <input id="strain-r2" type="file">
-    <label for="strain-note">Note (optional)</label>
-    <input id="strain-note" type="text" autocomplete="off">
-    <p><button id="strain-add" type="button">Add to the list</button></p>
-  </div>
-  <div id="strain-status" class="readout" role="status"></div>
-  <div class="table-wrap"><table id="strain-table" class="grid">
-    <thead><tr><th>Strain</th><th>Reads files</th><th>State</th><th>Reads</th><th>Calls</th><th>Seconds</th><th>Note</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table></div>
-  <p><button id="strain-run" type="button" class="primary">Run the waiting strains</button> <button id="strain-cancel" type="button" hidden>Cancel</button></p>
-  <div class="form">
-    <label for="strain-parent">Parent strain (optional). The table then shows what is new in each strain.</label>
-    <select id="strain-parent"><option value="">No parent</option></select>
-    <label for="combine-min-depth">Minimum depth to call a site covered (the mean of its coverage window)</label>
-    <input id="combine-min-depth" type="number" min="0" step="1" value="5">
-    <p><button id="strain-combine" type="button">Combine the finished strains</button>
-    <button id="strain-export" type="button">Export the catalog</button>
-    <a id="download-combined" hidden>Download the table (TSV)</a>
-    <a id="download-catalog" hidden>Download the catalog (zip)</a></p>
-    <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the list.</label>
-    <input id="catalog-file" type="file" accept=".zip,application/zip">
-  </div>
-  <div id="catalog-status" class="readout" role="status"></div>
-  <div id="combine-status" class="readout" role="status"></div>
-  <div class="form">
-    <label for="combined-filter">Show in the combined table</label>
-    <select id="combined-filter">
-      <option value="all">All variants</option>
-      <option value="new">New in some strain (needs a parent)</option>
-      <option value="shared">Called in every finished strain</option>
-      <option value="one">Called in one strain only</option>
-    </select>
-  </div>
-  <div class="table-wrap"><table id="combined-table" class="grid"><thead></thead><tbody></tbody></table></div>
-  <details>
-    <summary>How the combined table is made, and its limits</summary>
-    <ul>
-      <li>One row per variant (same contig, position, REF and ALT). Each strain gets a cell: <code>AF:depth</code> for a call,
-      <code>weak</code> (some reads, below the calling thresholds), <code>ref</code> (covered, no such reads), <code>low</code>
-      (too little coverage), <code>unknown</code> (no coverage data) or <code>other</code> (a different ALT at that position).</li>
-      <li>With a parent, each other strain gets a status: <code>new</code>, <code>inherited</code>, <code>lost</code> or
-      <code>unknown</code>. A variant is never <code>new</code> when the parent has some reads for it, and never <code>lost</code>
-      when the strain has some. <code>lost</code> is a lead, not proof: it rests on a 1 kb window mean, not on the depth at the site.</li>
-      <li>All strains must use the same settings. The window size is 1 kb. The thresholds for "covered" and "weak" were not tuned.</li>
-      <li>Strains from files are read from disk when they run. An imported strain has no reads files, so it cannot run again.</li>
-      <li>The catalog is a record of this page's results. It is not saved in the browser; export it to keep it.</li>
-    </ul>
-  </details>
 </section>
 
 <section class="panel">

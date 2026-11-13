@@ -64,24 +64,39 @@ async function vcfText(source) {
   return typeof source === 'string' ? source : new TextDecoder().decode(await readAll(source));
 }
 
-async function run({ reference, reads, sample, kind, depthWindow, evidence }) {
+async function run({ reference, reads, sample, kind, depthWindow, evidence, maxReads }) {
   const started = performance.now();
   postMessage({ step: 'run', type: 'status', text: 'Reading the reference and building the index' });
   const fasta = await bytesOf('reference', reference);
   const session = new Session(fasta, kind, sample);
   let reads_mapped, vcf, depth, evidenceVcf;
+  const fileReports = []; // per file: the reads taken and whether the read limit cut it
   try {
     let lastReport = 0;
     for (const file of reads) {
       postMessage({ step: 'run', type: 'status', text: `Mapping ${file.name}` });
+      // With a read limit, only the first `maxReads` reads of each file are mapped: four lines are one read.
+      const lineLimit = maxReads ? maxReads * 4 : 0;
+      let lines = 0;
+      let cut = false;
       for await (const chunk of chunksOf(file)) {
-        session.add_reads(chunk);
+        let bytes = chunk;
+        if (lineLimit) {
+          let seen = 0;
+          for (let i = 0; i < bytes.length; i++) {
+            if (bytes[i] === 10 && ++seen + lines === lineLimit) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
+          }
+          lines += seen;
+        }
+        session.add_reads(bytes);
         if (performance.now() - lastReport > 1000) {
           lastReport = performance.now();
           postMessage({ step: 'run', type: 'progress', reads: session.read_count() });
         }
+        if (cut) break;
       }
       session.end_file();
+      fileReports.push({ name: file.name, cut });
     }
     reads_mapped = session.read_count();
     vcf = session.vcf();
@@ -90,7 +105,7 @@ async function run({ reference, reads, sample, kind, depthWindow, evidence }) {
   } finally {
     session.free(); // also after an error: a failed run must not keep its index and counts (about 460 MB for Af293)
   }
-  postMessage({ step: 'run', type: 'done', vcf, depth, evidence: evidenceVcf, version: version(), reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
+  postMessage({ step: 'run', type: 'done', vcf, depth, evidence: evidenceVcf, version: version(), files: fileReports, reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
 }
 
 async function summarize({ vcf, bed, reference, order }) {

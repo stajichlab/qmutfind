@@ -1059,3 +1059,23 @@ Built in `site/` (`index.html` section `#strain-section`, `app.js` "Several stra
   data. Browser memory during the queue was not measured. Chrome and Safari were not tested.
 - Test note: the browser tests read the state of the table in one script call, because the page rebuilds the rows and a held
   element goes stale (this made two tests flaky before the fix; three full runs passed after it).
+
+## 12g. The page redesign: reference panel, sample set, results (2026-11-12)
+User request: ask two questions first (reference genome; sample set), with the sources as a choice and rows added and removed
+with + and -. The old step 1 (one reads input, Run) and the web-import panel were removed on the user's yes; a strain is a group
+of one or more reads files, because the page does not use read pairs.
+- Section 1, Reference genome: a dropdown (NCBI list, upload a FASTA and a GFF3, https addresses). One status line (`genome-status`)
+  and the two source lines.
+- Section 2, Sample set: read limit in THOUSANDS of reads per file (default 2000; 0 = all; a live echo says what it means), read type,
+  and a table of sample rows. Each row: name, source dropdown (SRA run, web addresses, files from this computer), the reads fields of
+  that source, a note and a minus button; `+ Add a sample` adds a row; one blank row exists at the start and blank rows are ignored.
+  SRA rows have a Check button (ENA lookup and the old refusal messages); the lookup also runs when the sample's turn comes.
+  Web downloads stop at the read limit (`downloadFirstReads`); the worker also applies the limit to every file (so local files
+  are cut too, with no repacking). The run reports per file whether the limit cut it; the read-count warning is skipped then.
+- Combine and catalog (the old strain section) and Results of one sample (a picker, plus a VCF/coverage file input for VCFs from
+  other tools), then Summarize and Draw (steps 3 and 4). The example is one button that fills the reference and adds a sample.
+- Coverage windows are 1 kb everywhere in the page now (they were 10 kb in the single-sample step).
+- Tests: the browser tests were rewritten around the rows (122 pass). The step 1 tests now go through the helper `step1`, which
+  fills one local sample 's1' and runs it. Mutation checks: no worker limit (local test fails), no duplicate-name check (fails).
+- Not done: IndexedDB; per-sample read type (SRA sets it from the platform for its own run; the others use the page setting);
+  checking the page at phone width and with a screen reader; Chrome and Safari.
