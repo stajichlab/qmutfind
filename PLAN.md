@@ -1216,3 +1216,25 @@ unannotated variants are not genic. It works with the sorting and with the "Shar
   - Simulated ART pairs (seeds 3-5, 10x and 20x): SNP sensitivity 0.966 / 0.992 paired against 0.966 / 0.991 single; false positive SNP 0 in
     both; small-indel false positives 16 / 18 paired against 15 / 17 single. No regression, and no gain.
   - Reading: the effect is small. The cause of the larger gap to bwa-mem2 is not pairing; it was not investigated further here.
+
+## 12p. Why bwa-mem2 + the built-in caller calls more SNPs than rammap (2026-11-12)
+Scripts: `bench/prjna1094460/bwa_only_snps.py` (all 13 samples), `job_diag_wt30.sh`, `diag_reads.py` (WT30 only), and the diagnostic
+`qmutfind-cli/examples/map_dump.rs` (one line per read: the rammap single-read alignment). Data in `qmutfind_data/prjna1094460/diag/`.
+- The 1,376 SNPs that bwa-mem2 calls and paired rammap does not (13 samples): in 747 (54%) rammap has no alt evidence at all (fewer than 2 alt
+  reads at mapq >= 20) although the bwa read depth is normal (median 10, AF 1.0); in 394 (29%) rammap has the alt at AF >= 0.8 but depth < 5;
+  in 234 (17%) rammap has it at AF < 0.8. So the loss is mostly reads that rammap does not map or maps with a low quality, not the thresholds.
+- WT30, 63 of these sites, 2,168 alt-carrying reads in the bwa-mem2 BAM, looked up in the rammap single-read output: 35% unmapped, 41% mapped at
+  the same place with mapq < 20 (539 of them have mapq 11), 7% mapped elsewhere, 4% with an indel in the rammap alignment, 2% clipped, 10% mapped
+  well (alt base counted). For the unmapped and mapq < 20 reads bwa-mem2 gives mapq >= 20 in about 90%, and their mate is not mapped by rammap
+  within 1.5 kb either (2-4%), so mate rescue is not the reason and pairing cannot fix it.
+- Two causes show in the examples. (1) Divergent reads: unmapped reads often have NM 9-24 over 150 bases against A1163 (CEA10-specific loci);
+  bwa-mem2 aligns them locally (mapq up to 60), rammap's short-read preset finds no chain. At the 35 sites whose alt reads have median NM >= 6,
+  32 lose at least half of the reads in rammap. (2) Repeat-like or multi-copy loci: some sites have 270-410 reads against a 15x window mean
+  (the reference has fewer copies than the sample); bwa-mem2 piles them on one place at mapq 60, rammap gives mapq about 11 or leaves them
+  unmapped. At the 28 sites with median NM < 6, 17 still lose at least half of their reads.
+- Overall mapping is close: WT30 unmapped 3.80% (rammap, single reads) against 2.93% (bwa-mem2 primary reads not mapped); mapq < 20 2.48% against 1.91%.
+  The difference sits in a small number of hard loci with many SNPs, which is where the extra bwa-mem2 calls are.
+- What this does not show: whether the extra calls are right (no truth set). 55% of them recur in three or more samples, so most are
+  CEA10-versus-A1163 background that the parent comparison removes. Sites seen in WT30 only (one sample, 63 sites) may not represent the other samples.
+- Not tested: other rammap settings (seed length, minimizer window, chaining and local-alignment limits) on the lost reads, and a lower `min-mapq` together
+  with them. A mapq 0 test earlier (WT30) did not close the gap (bwa-only calls 109 against 94).
