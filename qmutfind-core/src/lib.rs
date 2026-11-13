@@ -3,6 +3,7 @@
 
 mod annotate;
 mod caller;
+mod combine;
 mod engine;
 mod freebayes;
 mod depth_plot;
@@ -14,6 +15,7 @@ mod report;
 mod sam;
 mod stats;
 mod vcf;
+pub use combine::{combine, Cell, Combined, CombineInput, CombineOptions, Row, Status, StrainSummary};
 pub use caller::{classify, Call, Caller, CallerConfig, DepthWindow, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
 pub use engine::Engine;
