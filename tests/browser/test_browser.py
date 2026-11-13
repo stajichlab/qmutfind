@@ -958,12 +958,12 @@ def test_a_run_above_the_size_limit_is_allowed_when_a_read_limit_is_set(driver, 
 
 # The read limit: in thousands of reads per file; the page keeps the first reads of each file and downloads stop there
 
-def test_the_read_limit_box_has_a_default_in_thousands_and_says_what_it_means(driver, server):
+def test_the_read_limit_box_has_a_default_in_1000s_and_says_what_it_means(driver, server):
     open_site(driver, server)
 
     box = driver.find_element(By.ID, "read-limit")
     assert box.get_attribute("value") == "2000"
-    assert "thousands" in driver.find_element(By.CSS_SELECTOR, "label[for=read-limit]").text
+    assert "1000s" in driver.find_element(By.CSS_SELECTOR, "label[for=read-limit]").text
     assert driver.find_element(By.ID, "read-limit-echo").text == "= 2,000,000 reads from each file"
     set_read_limit_thousands(driver, 500)
     assert driver.find_element(By.ID, "read-limit-echo").text == "= 500,000 reads from each file"

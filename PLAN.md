@@ -1079,3 +1079,32 @@ of one or more reads files, because the page does not use read pairs.
   fills one local sample 's1' and runs it. Mutation checks: no worker limit (local test fails), no duplicate-name check (fails).
 - Not done: IndexedDB; per-sample read type (SRA sets it from the platform for its own run; the others use the page setting);
   checking the page at phone width and with a screen reader; Chrome and Safari.
+
+## 12h. PRJNA1094460 (high-copper evolution) against A1163 (2026-11-12)
+A real multi-sample test that is not EVOL20. Files in `bench/prjna1094460/` (sample table, download, calling job, analysis
+script; the data are in `qmutfind_data/prjna1094460/`). This is not a unit-tested script; it is a record of one analysis.
+- Design (ENA metadata): three genotypes, each with a control and evolved lines: CEA10 wild type (control `WT30`; lines A29,
+  B23, C30, D30), `dCrpA` (control CrpA23; lines B23, C10, D15) and `dAceA` (control AceA6; lines B22, C22, D22).
+- Data: the first 2,000,000 read pairs of each of the 13 runs (`fastq-dump -X`, a subsample of the first reads, not a random
+  sample; each mate has exactly 2,000,000 reads), about 13.6x to 17.7x genome median depth. Reference: A1163
+  `GCA_000150145.1` (55 scaffolds, 29.2 Mb, GenBank annotation with locus tags only).
+- Run: built-in caller on all 13 in one SLURM job, 8 at a time: 5 min 13 s in all. Each sample has about 400 to 530 calls against
+  A1163. `combine` of 13 samples with their evidence files: 6 s. The evidence files are 9 to 20 MB each.
+- POSITIVE CONTROL (coverage, 1 kb windows): the two deletion strains lack the deleted gene. crpA: coverage is about 0 over
+  DS499596.1:674-677 kb in all 4 crpA samples and normal in the other 9; the gene there is AFUB_036430, "copper resistance-associated
+  P-type ATPase" (my first guess, AFUB_069550, was another copper ATPase and is covered normally). aceA: coverage is about 0 in
+  DS499599.1:435-436 kb in all 4 aceA samples; the gene is AFUB_073740, "Copper fist DNA binding domain protein". Both mutants also
+  lack DS499595.1:664-667 kb, AFUB_019720 "Ku family DNA helicase" (akuB/KU80): the mutants are in a KU80-deleted background.
+- WT30 as the single parent does not fit the mutants (the 8 mutant samples share variants that WT30 lacks, including 4 SNPs near akuB).
+  So each genotype was compared with its own control: new variants per lineage 14 to 21 for WT, 16 to 42 for crpA, 19 to 21 for aceA.
+- THE PARENT ASSUMPTION IS NOT FULLY TRUE. Sites that are `new` in all lineages of a genotype cannot be independent events: all four WT
+  lines share AFUB_054340 G>A (missense), AFUB_055510 T>C (missense) and AFUB_035300 (in-frame deletion) against WT30; all three crpA
+  lines share the same C>T in AFUB_040930 (Ctr copper transporter family); all three aceA lines share the same frameshift in AFUB_099260.
+  The simplest reading is that the control sample differs from the stock of the lines at these sites (or the lines came from one
+  population that already had them). They are not evidence of adaptation until that is excluded. Variants private to one lineage
+  are the cleaner candidates.
+- AFUB_041460 (plasma membrane H+-ATPase Pma1) has coding changes in 8 lines of all three genotypes, at five different positions
+  within DS499596.1:2,117,255-2,118,119. That is either a repeated target of selection or a mapping problem in this region. It was NOT
+  checked (no alignment view, no second caller), and the published list of this study was not read, so no biological claim is made.
+- Limits: no truth set; the calls were not checked with a second method; subsampled reads; the evidence thresholds and the 1 kb
+  window were not tuned; the `lost` and `unknown` counts are large (9 to 51 and 125 to 213 per sample) and were not examined.

@@ -1,0 +1,14 @@
+run	name	role	label
+SRR28508736	WT30	parent	WT control (CEA10), the parent
+SRR28508735	WT_A29	evolved	CEA10 lineage A, WT A29
+SRR28508731	WT_B23	evolved	CEA10 lineage B, WT B23
+SRR28508730	WT_C30	evolved	CEA10 lineage C, WT C30
+SRR28508729	WT_D30	evolved	CEA10 lineage D, WT D30
+SRR28508724	crpA_control	control	dCrpA control (CrpA23)
+SRR28508734	crpA_B23	evolved	dCrpA lineage B, CrpA B23
+SRR28508733	crpA_C10	evolved	dCrpA lineage C, CrpA C10
+SRR28508732	crpA_D15	evolved	dCrpA lineage D, CrpA D15
+SRR28508728	aceA_control	control	dAceA control (AceA6)
+SRR28508727	aceA_B22	evolved	dAceA lineage B, AceA B22
+SRR28508726	aceA_C22	evolved	dAceA lineage C, AceA C22
+SRR28508725	aceA_D22	evolved	dAceA lineage D, AceA D22
