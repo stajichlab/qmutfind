@@ -69,22 +69,26 @@ async function run({ reference, reads, sample, kind }) {
   postMessage({ step: 'run', type: 'status', text: 'Reading the reference and building the index' });
   const fasta = await bytesOf('reference', reference);
   const session = new Session(fasta, kind, sample);
-  let lastReport = 0;
-  for (const file of reads) {
-    postMessage({ step: 'run', type: 'status', text: `Mapping ${file.name}` });
-    for await (const chunk of chunksOf(file)) {
-      session.add_reads(chunk);
-      if (performance.now() - lastReport > 1000) {
-        lastReport = performance.now();
-        postMessage({ step: 'run', type: 'progress', reads: session.read_count() });
+  let reads_mapped, vcf, depth;
+  try {
+    let lastReport = 0;
+    for (const file of reads) {
+      postMessage({ step: 'run', type: 'status', text: `Mapping ${file.name}` });
+      for await (const chunk of chunksOf(file)) {
+        session.add_reads(chunk);
+        if (performance.now() - lastReport > 1000) {
+          lastReport = performance.now();
+          postMessage({ step: 'run', type: 'progress', reads: session.read_count() });
+        }
       }
+      session.end_file();
     }
-    session.end_file();
+    reads_mapped = session.read_count();
+    vcf = session.vcf();
+    depth = session.depth_bed(10000);
+  } finally {
+    session.free(); // also after an error: a failed run must not keep its index and counts (about 460 MB for Af293)
   }
-  const reads_mapped = session.read_count();
-  const vcf = session.vcf();
-  const depth = session.depth_bed(10000);
-  session.free();
   postMessage({ step: 'run', type: 'done', vcf, depth, reads: reads_mapped, seconds: (performance.now() - started) / 1000 });
 }
 
@@ -118,7 +122,13 @@ async function reportStep({ vcf, gff, region }) {
   postMessage({ step: 'report', type: 'done', page: report(text, gffBytes, region, `Mutations in ${region}`), region });
 }
 
-const handlers = { run, summarize, annotate: annotateStep, report: reportStep };
+// The size of the WebAssembly memory, for the tests (it can grow but never shrinks).
+async function memory() {
+  const exports = await init();
+  postMessage({ step: 'memory', type: 'done', bytes: exports.memory.buffer.byteLength });
+}
+
+const handlers = { run, summarize, annotate: annotateStep, report: reportStep, memory };
 
 self.onmessage = async (event) => {
   const { step } = event.data;

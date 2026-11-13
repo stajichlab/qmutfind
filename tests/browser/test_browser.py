@@ -1121,3 +1121,78 @@ def test_the_web_section_lists_its_limits_and_risks(driver, server):
 
     for needle in ["https", "2 GB", "MD5", "access-controlled", "Nothing is sent to this site"]:
         assert needle in text, needle
+
+
+# Review fixes (2026-11-12): a failed run frees its session, same-site paths are checked by origin, VCF text is never HTML
+
+def test_failed_runs_do_not_leak_memory_in_the_worker(driver, server, inputs):
+    # Reads that end in a cut record fail at the end of the file. Before the fix each failed run kept its whole session.
+    open_site(driver, server)
+    driver.set_script_timeout(180)
+    reference = (inputs / "ref.fa").read_text()
+    bad_reads = (inputs / "reads.fq").read_text() + "@cut\nACGTACGT\n"
+    sizes = driver.execute_async_script("""
+        const [reference, reads, done] = arguments;
+        const w = new Worker('worker.js', { type: 'module' });
+        const next = (wanted) => new Promise((resolve) => {
+          const on = (e) => { if (e.data.type === wanted || e.data.type === 'error') { w.removeEventListener('message', on); resolve(e.data); } };
+          w.addEventListener('message', on);
+        });
+        (async () => {
+          const out = [];
+          for (let i = 0; i < 6; i++) {
+            const answer = next('done');
+            w.postMessage({ step: 'run', reference: new File([reference], 'ref.fa'), reads: [new File([reads], 'bad.fq')], sample: 's', kind: 'short' });
+            const r = await answer;
+            if (r.type !== 'error') { done({ failed: 'the run did not fail: ' + r.type }); return; }
+            const m = next('done');
+            w.postMessage({ step: 'memory' });
+            out.push((await m).bytes);
+          }
+          done({ sizes: out });
+        })();
+    """, reference, bad_reads)
+
+    assert "sizes" in sizes, sizes
+    sizes = sizes["sizes"]
+    assert sizes[-1] - sizes[0] <= 1_000_000, sizes  # six failed runs must not add more than 1 MB to the first one's size
+
+
+@pytest.mark.parametrize("asked,expected", [
+    ("_test_example/manifest.json", "_test_example/manifest.json"),
+    ("sub/dir/list.json?v=1", "sub/dir/list.json?v=1"),
+    ("\\\\evil.example/m.json", "FALLBACK"),
+    ("\\evil.example/m.json", "FALLBACK"),
+    ("//evil.example/m.json", "FALLBACK"),
+    ("https://evil.example/m.json", "FALLBACK"),
+    ("/etc/passwd", "FALLBACK"),
+    ("javascript:alert(1)", "FALLBACK"),
+    ("data:text/plain,x", "FALLBACK"),
+    ("\t//evil.example/m.json", "FALLBACK"),  # the URL parser removes a leading tab, leaving //evil.example
+    (" //evil.example/m.json", "FALLBACK"),
+    ("\n\\evil.example/m.json", "FALLBACK"),
+    ("", "FALLBACK"),
+])
+def test_a_page_address_option_may_only_name_a_path_on_this_site(driver, server, asked, expected):
+    driver.get(f"{server}/{SITE}")
+
+    got = driver.execute_script("return window.qmutfindSitePath(arguments[0], 'FALLBACK');", asked)
+
+    assert got == expected
+
+
+def test_effect_names_in_a_vcf_are_shown_as_text_not_as_html(driver, server, inputs):
+    hostile = "<img src=x onerror=window.__pwned=1>"
+    (inputs / "hostile.vcf").write_text(
+        "##fileformat=VCFv4.2\n##contig=<ID=chrA,length=100000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        f"chrA\t500\t.\tA\tG\t50\tPASS\tCLASS=SNP;DP=30;AO=30;AF=1.0;EFFECT={hostile}\n")
+    open_site(driver, server)
+    choose(driver, "vcf-file", inputs / "hostile.vcf")
+
+    status = press(driver, "summarize", "summarize-status")
+
+    assert status.startswith("Done"), status
+    table = driver.find_element(By.ID, "stats-table")
+    assert hostile in table.text
+    assert len(table.find_elements(By.CSS_SELECTOR, "img")) == 0
+    assert driver.execute_script("return window.__pwned === undefined;")

@@ -14,6 +14,22 @@ const LIMIT_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get
 const MAX_DOWNLOAD = Math.min(parseFloat(new URLSearchParams(location.search).get('download_limit_mb')) || 2000, 2000) * 1e6;
 const WARN_DOWNLOAD = 5e8;
 
+/**
+ * A page address option (?example=, ?genomes=, ?enaapi=) may only name a path on this site. The text is refused when it has a
+ * scheme or starts with / or \ (browsers read \ as /, so \\host/x would name another host), and the resolved address must
+ * have this page's origin. Returns the text, or `fallback`.
+ */
+function sitePath(asked, fallback) {
+  if (!asked || asked !== asked.trim() || /[\u0000-\u001f]/.test(asked)) return fallback; // the URL parser would drop these characters
+  if (/^[\\/]/.test(asked) || /^[a-z][a-z0-9+.-]*:/i.test(asked)) return fallback;
+  try {
+    return new URL(asked, location.href).origin === location.origin ? asked : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+window.qmutfindSitePath = sitePath;
+
 const show = (id, text) => { $(id).textContent = text; };
 const buttons = ['run', 'summarize', 'annotate', 'draw'];
 function setBusy(value) {
@@ -117,6 +133,8 @@ $('summarize').addEventListener('click', () => {
   send('summarize', { vcf, bed, reference: refFile() || null, order: $('order').value }, 'summarize-status');
 });
 
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 function statsTable(s) {
   const rows = [];
   const add = (name, value) => rows.push(`<tr><th scope="row">${name}</th><td>${value}</td></tr>`);
@@ -131,7 +149,7 @@ function statsTable(s) {
   add('Calls within 100 bp of another call', n(s.clustered));
   const effects = Object.entries(s.by_effect || {}).filter(([k]) => k !== 'unannotated');
   if (effects.length) {
-    add('Effects', effects.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${n(v)}`).join(', '));
+    add('Effects', effects.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${escapeHtml(k)}: ${n(v)}`).join(', '));
   }
   return `<table class="stats">${rows.join('')}</table>`;
 }
@@ -451,7 +469,7 @@ async function loadExample(manifest, base, chosen) {
 
 async function setupExamples() {
   const asked = new URLSearchParams(location.search).get('example');
-  const path = asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/') ? asked : 'example/manifest.json';
+  const path = sitePath(asked, 'example/manifest.json');
   const base = new URL(path, location.href);
   let manifest;
   try {
@@ -549,7 +567,7 @@ async function loadGenome() {
 
 async function setupGenomes() {
   const asked = new URLSearchParams(location.search).get('genomes');
-  const path = asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/') ? asked : 'genomes/genomes.json';
+  const path = sitePath(asked, 'genomes/genomes.json');
   const base = new URL(path, location.href);
   genomesBase = base;
   try {
@@ -632,7 +650,7 @@ let webAbort = null;
 
 function enaBase() {
   const asked = new URLSearchParams(location.search).get('enaapi');
-  if (asked && !/^([a-z]+:)?\/\//i.test(asked) && !asked.startsWith('/')) return new URL(asked, location.href);
+  if (sitePath(asked, '')) return new URL(asked, location.href);
   return new URL('https://www.ebi.ac.uk/ena/portal/api/');
 }
 
