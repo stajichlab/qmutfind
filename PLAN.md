@@ -1300,3 +1300,9 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   The result was saved 1.7 s after the run ("Storage used by this site: 15.9 MB"; the browser compresses it), the page offered it after a reload, and Restore took 0.6 s and
   gave the same VCF (469 lines). One sample per session only: memory across several samples was not measured.
 - Not done: Chrome and Safari (no Chrome is installed here; a download of Chrome for Testing was not allowed in this session), a real phone, a real slow network.
+- Speed against the commit before this work (5dd1387, built in a scratch copy; same machine, runs alternated; real sample SRR28508724, 4,000,000 reads, A1163):
+  - WASM in Node (`scripts/wasm-run.mjs`, zlib unpacking, so this isolates WASM): old 128.85, 128.35, 128.74 s; new 127.94, 127.63, 127.97 s (mean 128.65 against 127.85 s,
+    -0.6%); VCFs identical; peak memory 698-702 MB old, 701-710 MB new. The WASM file is 1,075,826 bytes now against 1,076,181 before.
+  - Whole page in headless Firefox, no read limit: old 146.1, 146.5, 147.1 s; new 152.0, 150.0, 152.5 s (mean 146.6 against 151.5 s, +3.3%, +4.9 s); peak memory 2.47-2.50 GB for both.
+    The extra time is the CRC-32 check of gzip files in JavaScript: fflate alone 1.31-1.43 s, with the check 1.84-2.03 s per 208 MB unpacked (+41% of unpack time).
+  - CLI single-read calls, 13 samples: 5 min 13 s with the old binary and with the new one.
