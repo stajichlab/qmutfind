@@ -84,3 +84,33 @@ fn the_default_limit_admits_a_record_of_a_few_megabases() {
     let big = format!("@big\n{}\n+\n{}\n", "A".repeat(3_000_000), "I".repeat(3_000_000));
     assert_eq!(chunker.push(big.as_bytes()).unwrap().len(), 1);
 }
+
+#[test]
+fn a_long_record_arriving_in_small_chunks_is_parsed_in_linear_time() {
+    // 6 MB in one record, in chunks of 2 KiB: 3,000 pushes. A scan from the start of the buffer on every push reads about 9 GB; a scan of
+    // the new bytes only reads 6 MB.
+    let seq = "A".repeat(3_000_000);
+    let record = format!("@long\n{seq}\n+\n{}\n", "I".repeat(3_000_000));
+    let mut chunker = FastqChunker::new();
+    let started = std::time::Instant::now();
+    let mut n = 0;
+    for chunk in record.as_bytes().chunks(2048) {
+        n += chunker.push(chunk).unwrap().len();
+    }
+    n += chunker.finish().unwrap().len();
+    assert_eq!(n, 1);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+}
+
+#[test]
+fn a_record_with_no_line_breaks_reaches_the_limit_quickly() {
+    let mut chunker = FastqChunker::with_limit(4 << 20);
+    let started = std::time::Instant::now();
+    let piece = vec![b'A'; 2048];
+    let mut failed = false;
+    for _ in 0..4000 {
+        if chunker.push(&piece).is_err() { failed = true; break; }
+    }
+    assert!(failed);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+}

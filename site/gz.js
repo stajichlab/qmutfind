@@ -55,7 +55,7 @@ export class VerifyingGunzip {
     const size = (t[4] | (t[5] << 8) | (t[6] << 16) | (t[7] << 24)) >>> 0;
     this.members++;
     if (crc !== this.crc) {
-      throw new Error(`the gzip checksum does not match in member ${this.members} (the file is damaged; CRC-32 is ${this.crc.toString(16).padStart(8, '0')}, the file says ${crc.toString(16).padStart(8, '0')})`);
+      throw new Error(`the gzip checksum does not match in member ${this.members} (the file is damaged, or has bytes after its last member such as padding; CRC-32 is ${this.crc.toString(16).padStart(8, '0')}, the file says ${crc.toString(16).padStart(8, '0')})`);
     }
     if (size !== this.length >>> 0) throw new Error(`the gzip length does not match in member ${this.members} (the file is damaged; ${this.length >>> 0} bytes unpacked, the file says ${size})`);
     this.crc = 0;
@@ -63,13 +63,18 @@ export class VerifyingGunzip {
   }
 
   push(chunk, final = false) {
-    // Keep the compressed bytes before they are given on, so that a trailer can be read when fflate reports the next member.
+    // The new chunk is joined to the last bytes before it, whole, so that a trailer anywhere in the chunk, or just before it, can be read
+    // when fflate reports the next member during this push. The window is cut to the last KEEP bytes only after the push.
     const joined = new Uint8Array(this.tail.length + chunk.length);
     joined.set(this.tail, 0);
     joined.set(chunk, this.tail.length);
     this.total += chunk.length;
-    this.tail = joined.length > KEEP ? joined.subarray(joined.length - KEEP) : joined;
+    this.tail = joined;
     this.gunzip.push(chunk, final);
-    if (final) this.check(this.total); // the last member ends the file
+    if (final) {
+      if (this.total === 0) throw new Error('the gzip file is empty');
+      this.check(this.total); // the last member ends the file
+    }
+    if (this.tail.length > KEEP) this.tail = this.tail.subarray(this.tail.length - KEEP);
   }
 }

@@ -25,17 +25,22 @@ function open() {
   });
 }
 
-/** Run `work(store)` in one transaction; resolves with its result when the transaction has completed. */
+/**
+ * Run `work(store, abort)` in one transaction; resolves with its result when the transaction has completed. `abort(error)` cancels
+ * every change of the transaction and rejects with `error`. An error thrown by `work` does the same, so a write is all or none.
+ */
 async function transaction(mode, work) {
   const db = await open();
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, mode);
       let result;
+      let reason = null;
+      const abort = (error) => { reason = error; try { tx.abort(); } catch (e) { /* already finished */ } };
       tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error || new Error('the browser store failed'));
-      tx.onabort = () => reject(tx.error || new Error('the browser store was stopped'));
-      result = work(tx.objectStore(STORE));
+      tx.onerror = () => reject(reason || tx.error || new Error('the browser store failed'));
+      tx.onabort = () => reject(reason || tx.error || new Error('the browser store was stopped'));
+      try { result = work(tx.objectStore(STORE), abort); } catch (error) { abort(error); }
     });
   } finally {
     db.close();
@@ -54,12 +59,31 @@ export async function readStore(keys) {
   return found;
 }
 
-/** Write `entries` ({ key: value }) in one transaction: all or none. A value of `null` deletes its key. */
-export async function writeStore(entries) {
-  await transaction('readwrite', (store) => {
-    for (const [key, value] of Object.entries(entries)) {
-      if (value === null) store.delete(key); else store.put(value, key);
-    }
+/**
+ * Write `entries` ({ key: value }) in one transaction: all or none. A value of `null` deletes its key. With `{ expect }` the write is
+ * made only if the `saved` time of the stored `header` is `expect` (null when no header is stored): otherwise nothing is written and the
+ * Error has `code` "CHANGED", because another tab saved in the meantime.
+ */
+export async function writeStore(entries, options = {}) {
+  await transaction('readwrite', (store, abort) => {
+    const put = () => {
+      try {
+        for (const [key, value] of Object.entries(entries)) {
+          if (value === null) store.delete(key); else store.put(value, key);
+        }
+      } catch (error) {
+        abort(error);
+      }
+    };
+    if (!('expect' in options)) { put(); return; }
+    const request = store.get('header');
+    request.onsuccess = () => {
+      const current = request.result ? request.result.saved : null;
+      if (current === options.expect) { put(); return; }
+      const error = new Error('the saved results were changed by another tab');
+      error.code = 'CHANGED';
+      abort(error);
+    };
   });
 }
 

@@ -1265,3 +1265,27 @@ The four findings of the review:
   at run time; a test now keeps it closed. A sample's files are now also counted together (a budget of the download limit for all its files; with a
   read limit, the kept packed bytes are counted). Browser test: three files that each fit and together do not.
 - Tests now: 274 Rust, 42 Node, 183 browser (Firefox only). The bench tests were not run in this step.
+
+## 12r. Fixes after the second review (2026-11-12)
+A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several medium problems. All are fixed except the two noted below.
+- gz.js (high): `VerifyingGunzip` failed on good multi-member files when a chunk was larger than the 64 KiB tail (reproduced: 256 KiB chunks and
+  a whole-file push failed). The tail is now cut to 64 KiB after the push, not before, so the whole chunk and the bytes before it are readable
+  when fflate reports a member. An empty file now says "the gzip file is empty"; the checksum error mentions bytes after the last member.
+  The reviewer's claim that exactly 64 KiB chunks fail when a member starts 0-9 bytes before a chunk edge could not be reproduced (tested
+  member ends from -24 to +24 bytes of two chunk edges); the test stays as coverage. Node tests: 15 in `tests/wasm/gz.test.mjs`.
+- Restore, import and combine while a sample runs are refused with "Wait until the samples have finished running" (before, a restore dropped the
+  running sample and a combine took over the Cancel button).
+- Two tabs: `saveNow` writes only if the stored header still has the `saved` time that this page last saw (checked inside the write transaction,
+  `writeStore(entries, { expect })`). If another tab saved first, the page goes into the "Found saved results ... not saved" state. "Save now" still replaces.
+- A restored reference or gene file now clears the file input of that slot, because `refFile()` prefers the input.
+- `FastqChunker` scans only new bytes per push (kept scan position and newline count). 6 MB in 2 KiB chunks and 4 MB with no line break were 44 s and 90 s
+  in a debug build before; both are far below 1 s now.
+- Low: a write error inside a store transaction aborts it (all or none); the saved line no longer names a reference that was not saved (over
+  the save limit); the save checks the unpacked catalog against the 500 MB limit that restore uses; the reference is written to the store only when
+  it changed (counted in a test); `site/reads.js` (`keepFirstReads`, Node-tested, 9 tests) now holds the limited download: the download is bounded by the budget,
+  the last flush is checked against `maxKept`, and a gzip file whose first chunk is one byte is still read as gzip.
+- Test knobs added (like `download_limit_mb`): `?save_limit_mb=N`, `?catalog_limit_mb=N`.
+- Not fixed: pairing can move a mate to a much worse secondary alignment and raise its mapq (pairing is off and stays unused until this is done: compare the pair
+  score with the best unpaired score, as bwa does); CLI details of `--paired` (a value after it, `--max-insert` without it, memory when one file ends
+  early). Not checked by the reviewer or by me: real browser chunk sizes, real quota pressure, Chrome and Safari.
+- Tests now: 276 Rust, 56 Node, 190 browser (Firefox only).

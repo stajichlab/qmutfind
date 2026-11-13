@@ -1698,8 +1698,14 @@ def test_the_files_of_the_page_carry_one_build_stamp(driver, server):
     app, worker = get("app.js"), get("worker.js")
     assert "__BUILD__" not in html and "__BUILD__" not in app and "__BUILD__" not in worker
     assert app.count(f"worker.js?v={stamp}") == 2  # both places that start a worker
-    assert f"./pkg-web/qmutfind_wasm.js?v={stamp}" in worker and f"./vendor/fflate.js?v={stamp}" in worker
+    assert f"./pkg-web/qmutfind_wasm.js?v={stamp}" in worker and f"./gz.js?v={stamp}" in worker and f"./reads.js?v={stamp}" in worker
     assert f"qmutfind_wasm_bg.wasm?v={stamp}" in worker
+    assert f"./persist.js?v={stamp}" in app and f"./vendor/fflate.js?v={stamp}" in app
+    for name in ("gz.js", "reads.js", "persist.js"):
+        text = get(name)
+        assert "__BUILD__" not in text, name
+        assert name != "gz.js" or f"./vendor/fflate.js?v={stamp}" in text
+        assert name != "reads.js" or (f"./vendor/fflate.js?v={stamp}" in text and f"./gz.js?v={stamp}" in text)
 
 
 def test_the_scripts_the_page_imports_are_loaded_with_the_stamp(driver, server):
@@ -2746,3 +2752,141 @@ def test_a_failing_store_does_not_break_the_page(driver, server, inputs):
     assert result.startswith("Done"), result
     assert "not available" in saved_text(driver).lower(), saved_text(driver)
     assert not keep_box(driver).is_enabled()
+
+
+# Review fixes, third round (2026-11-12): restore and combine while a sample runs, two tabs, the restored reference wins, store details
+
+def test_restore_and_combine_are_refused_while_a_sample_is_running(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "small", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    _big_reads_gz(inputs / "big.fq.gz", pairs=250_000)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "big", "local", inputs / "big.fq.gz")
+    set_read_limit_thousands(driver, 0)
+    driver.find_element(By.ID, "strain-run").click()
+    WebDriverWait(driver, 30).until(lambda d: strain_state(d, "big") == "running")
+
+    driver.execute_script("document.getElementById('saved-restore').click(); document.getElementById('strain-combine').click();")
+    status = saved_text(driver)
+    combine_status = driver.find_element(By.ID, "combine-status").text
+
+    assert "wait" in status.lower(), status
+    assert combine_status.lower().startswith("wait"), combine_status
+    assert "big" in strain_states(driver) and strain_state(driver, "big") == "running"  # the restore did not drop the running sample
+    wait_all_settled(driver, 300)
+    assert strain_state(driver, "big").startswith("done")
+
+
+def test_a_second_tab_does_not_overwrite_results_that_another_tab_saved(driver, server, inputs):
+    wipe_store(driver, server)
+    tab_a = driver.current_window_handle
+    driver.switch_to.new_window("tab")
+    tab_b = driver.current_window_handle
+    open_site(driver, server)
+    wait_saved(driver, "Nothing is saved")  # tab B starts clean, as tab A did
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "from_b", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")  # tab B saved first
+    driver.switch_to.window(tab_a)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "from_a", "local", inputs / "reads.fq")
+
+    run_samples(driver)
+    time.sleep(2.5)
+
+    assert saved_text(driver).startswith("Found") and "not saved" in saved_text(driver), saved_text(driver)
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "from_b" in strain_states(d))
+    assert "from_a" not in strain_states(driver)
+    driver.switch_to.window(tab_b)
+    driver.close()  # only the second tab: the session needs one window
+    driver.switch_to.window(tab_a)
+
+
+def test_a_restored_reference_is_used_even_when_another_reference_file_was_chosen_before(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    other = inputs / "other_name.fa"
+    other.write_text((inputs / "ref.fa").read_text())
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    choose(driver, "reference", other)
+
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "s1" in strain_states(d))
+
+    text = driver.find_element(By.ID, "source-reference").text
+    assert "this browser" in text and "ref.fa" in text and "other_name" not in text, text
+
+
+def test_a_reference_above_the_save_limit_is_not_saved_and_is_not_named_in_the_saved_line(driver, server, inputs):
+    driver.get(f"{server}/{SITE}?save_limit_mb=0.0001")  # 100 bytes: the reference is above it
+    driver.set_script_timeout(30)
+    driver.execute_async_script("const done = arguments[arguments.length - 1]; const r = indexedDB.deleteDatabase('qmutfind'); r.onsuccess = r.onerror = r.onblocked = () => done(true);")
+    driver.get(f"{server}/{SITE}?save_limit_mb=0.0001")
+    wait_saved(driver, "Nothing is saved")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+
+    text = wait_saved(driver, "Saved")
+
+    assert "reference" not in text.lower() or "not saved" in text.lower(), text
+
+
+def test_a_catalog_above_the_size_limit_is_not_saved_and_the_page_says_so(driver, server, inputs):
+    driver.get(f"{server}/{SITE}?catalog_limit_mb=0.0005")  # 500 bytes
+    driver.set_script_timeout(30)
+    driver.execute_async_script("const done = arguments[arguments.length - 1]; const r = indexedDB.deleteDatabase('qmutfind'); r.onsuccess = r.onerror = r.onblocked = () => done(true);")
+    driver.get(f"{server}/{SITE}?catalog_limit_mb=0.0005")
+    wait_saved(driver, "Nothing is saved")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+
+    WebDriverWait(driver, 30).until(lambda d: saved_text(d).startswith("Could not save"))
+
+    assert "too large" in saved_text(driver), saved_text(driver)
+
+
+def test_the_reference_is_written_to_the_store_once_not_after_every_sample(driver, server, inputs):
+    wipe_store(driver, server)
+    driver.execute_script("""
+      window.__reads = 0; const original = File.prototype.arrayBuffer;
+      File.prototype.arrayBuffer = function () { if (this.name === 'ref.fa') window.__reads++; return original.call(this); };""")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    after_first = driver.execute_script("return window.__reads;")
+    add_sample(driver, "s2", "local", inputs / "reads.fq")
+    run_samples(driver)
+    WebDriverWait(driver, 30).until(lambda d: "2 samples" in saved_text(d))
+
+    assert after_first == 1 and driver.execute_script("return window.__reads;") == 1, (after_first, driver.execute_script("return window.__reads;"))
+
+
+def test_a_failed_write_to_the_store_leaves_nothing_behind(driver, server):
+    open_site(driver, server)
+    driver.set_script_timeout(30)
+    result = driver.execute_async_script("""
+      const done = arguments[arguments.length - 1];
+      import(new URL('persist.js', location.href).href).then(async (m) => {
+        await m.clearStore();
+        let failed = false;
+        try { await m.writeStore({ first: 'kept?', second: () => {} }); } catch (e) { failed = true; }  // a function cannot be stored
+        const found = await m.readStore(['first']);
+        done({ failed, found });
+      }).catch((e) => done({ error: String(e) }));""")
+    assert result == {"failed": True, "found": {}}, result

@@ -70,6 +70,10 @@ pub struct FastqChunker {
     buffer: Vec<u8>,
     /// The most bytes of an unfinished record that are kept.
     limit: usize,
+    /// Bytes at the start of `buffer` that were already searched for line breaks, and the line breaks found in them. A push searches
+    /// only the new bytes, so a long record that arrives in many small chunks is not read again at every chunk.
+    scanned: usize,
+    newlines: usize,
 }
 
 /// The default limit for one unfinished record: 64 MiB. A Nanopore read is some kilobases to a few megabases.
@@ -89,28 +93,33 @@ impl FastqChunker {
     /// A chunker that gives an error when an unfinished record grows past `limit` bytes. Input with no line breaks, or text that is not
     /// FASTQ, would otherwise fill the memory of the tab before the end of the file shows the problem.
     pub fn with_limit(limit: usize) -> Self {
-        FastqChunker { buffer: Vec::new(), limit }
+        FastqChunker { buffer: Vec::new(), limit, scanned: 0, newlines: 0 }
     }
 
     /// Add a chunk. Returns the records that are complete now.
     pub fn push(&mut self, chunk: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
         self.buffer.extend_from_slice(chunk);
-        // A record ends at every fourth newline.
-        let mut newlines = 0;
+        // A record ends at every fourth newline. Only the bytes added since the last push are searched.
         let mut consumed = 0;
-        for (i, &b) in self.buffer.iter().enumerate() {
+        for (i, &b) in self.buffer.iter().enumerate().skip(self.scanned) {
             if b == b'\n' {
-                newlines += 1;
-                if newlines % 4 == 0 {
+                self.newlines += 1;
+                if self.newlines % 4 == 0 {
                     consumed = i + 1;
                 }
             }
         }
+        self.scanned = self.buffer.len();
         let records = FastqReader::new(&self.buffer[..consumed]).collect::<io::Result<Vec<_>>>()?;
         self.buffer.drain(..consumed);
+        // The complete records are gone; the rest holds the line breaks after the last record end (0 to 3 of them).
+        self.scanned = self.buffer.len();
+        self.newlines %= 4;
         if self.buffer.len() > self.limit {
             let limit = self.limit;
             self.buffer = Vec::new();
+            self.scanned = 0;
+            self.newlines = 0;
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("a FASTQ record is larger than {limit} bytes: the input may not be FASTQ, or has no line breaks"),
@@ -124,11 +133,15 @@ impl FastqChunker {
     pub fn finish(&mut self) -> io::Result<Vec<(String, Vec<u8>)>> {
         if self.buffer.iter().all(|b| b.is_ascii_whitespace()) {
             self.buffer.clear();
+            self.scanned = 0;
+            self.newlines = 0;
             return Ok(Vec::new());
         }
         self.buffer.push(b'\n');
         let records = FastqReader::new(&self.buffer[..]).collect::<io::Result<Vec<_>>>()?;
         self.buffer.clear();
+        self.scanned = 0;
+        self.newlines = 0;
         Ok(records)
     }
 }

@@ -6,8 +6,8 @@ import init, { Session, annotate, stats, report, genome_plot, depth_plot, combin
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
 // gz.js adds the check of the CRC-32 and the length of every member, which fflate does not make.
-import { Gzip } from './vendor/fflate.js?v=__BUILD__';
 import { VerifyingGunzip } from './gz.js?v=__BUILD__';
+import { keepFirstReads } from './reads.js?v=__BUILD__';
 
 // The wasm file is named with the build stamp too, so a cached old file cannot meet a new glue file.
 const start = () => init({ module_or_path: new URL('./pkg-web/qmutfind_wasm_bg.wasm?v=__BUILD__', import.meta.url) });
@@ -114,63 +114,22 @@ async function run({ reference, reads, sample, kind, depthWindow, evidence, maxR
 }
 
 /**
- * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download. The kept reads are
- * packed again as gzip, so the page holds the compressed reads only. A record is four lines. This runs here, not on the main
- * thread, because unpacking and packing take seconds for a million reads. A gzip file that is read to its end is checked
- * (CRC-32 and length of every member); one that is cut at the limit is not read to its end, so it is not checked.
- * Answers with { bytes, reads, cut }. `maxKept` is the most packed bytes allowed.
+ * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download (see reads.js). This runs here,
+ * not on the main thread, because unpacking and packing take seconds for a million reads. Answers with { bytes, reads, cut }.
+ * `maxKept` is the most packed bytes allowed and `maxDownload` the most bytes taken from the server.
  */
-async function fetchReads({ url, maxReads, maxKept, label }) {
+async function fetchReads({ url, maxReads, maxKept, maxDownload, label }) {
   let address;
   try { address = new URL(url); } catch (error) { throw new Error(`${label}: "${url}" is not an address.`); }
   if (address.protocol !== 'https:' && address.origin !== self.location.origin) throw new Error(`${label}: only https addresses are accepted.`);
   if (address.username || address.password) throw new Error(`${label}: addresses with a user name or password are not accepted.`);
   const response = await fetch(address);
   if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${address.host}`);
-  const reader = response.body.getReader();
-  const target = maxReads * 4; // lines
-  const packed = [];
-  let packedBytes = 0;
-  const gzip = new Gzip({ level: 3 }, (chunk) => { packed.push(chunk); packedBytes += chunk.length; });
-  let lines = 0;
-  let cut = false;
-  let downloaded = 0;
-  let lastReport = 0;
-  let gunzip = null;
-  const feed = (bytes) => {
-    if (cut) return;
-    let seen = 0;
-    for (let i = 0; i < bytes.length; i++) {
-      if (bytes[i] === 10 && ++seen + lines === target) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
-    }
-    lines += seen;
-    gzip.push(bytes, false);
-    if (packedBytes > maxKept) throw new Error(`${label}: the kept reads are too large (more than ${Math.round(maxKept / 1e6)} MB).`);
-  };
-  for (let first = true; !cut; first = false) {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (gunzip) gunzip.push(new Uint8Array(0), true); // the end of the file: the last member is checked, and a file that ends early is an error
-      break;
-    }
-    downloaded += value.length;
-    if (first && value.length > 1 && value[0] === 0x1f && value[1] === 0x8b) gunzip = new VerifyingGunzip((chunk) => feed(chunk));
-    try {
-      if (gunzip) gunzip.push(value, false); else feed(value);
-    } catch (error) {
-      if (!cut) throw error; // data after the limit may be anything, so an error there is ignored
-    }
-    if (performance.now() - lastReport > 500) {
-      lastReport = performance.now();
-      postMessage({ step: 'fetchreads', type: 'progress', downloaded, reads: Math.floor(lines / 4) });
-    }
-  }
-  if (cut) await reader.cancel();
-  gzip.push(new Uint8Array(0), true);
-  const bytes = new Uint8Array(packedBytes);
-  let offset = 0;
-  for (const part of packed) { bytes.set(part, offset); offset += part.length; }
-  postMessage({ step: 'fetchreads', type: 'done', bytes, reads: Math.floor(lines / 4), cut }, [bytes.buffer]);
+  const result = await keepFirstReads(response.body.getReader(), {
+    maxReads, maxKept, maxDownload, label,
+    onProgress: (p) => postMessage({ step: 'fetchreads', type: 'progress', ...p }),
+  });
+  postMessage({ step: 'fetchreads', type: 'done', ...result }, [result.bytes.buffer]);
 }
 
 async function summarize({ vcf, bed, reference, order }) {

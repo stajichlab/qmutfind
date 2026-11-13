@@ -514,7 +514,7 @@ async function download(item, base, label, statusId = 'example-status', signal =
  */
 async function downloadFirstReads(item, base, label, statusId, signal, maxReads, budget = { left: MAX_DOWNLOAD }) {
   const url = checkUrl(new URL(item.url, base).href, label);
-  const m = await callWorker({ step: 'fetchreads', url: url.href, maxReads, maxKept: budget.left, label },
+  const m = await callWorker({ step: 'fetchreads', url: url.href, maxReads, maxKept: budget.left, maxDownload: budget.left, label },
     (p) => show(statusId, `Reading ${label}: ${mb(p.downloaded)} downloaded, ${p.reads.toLocaleString()} reads kept`));
   budget.left -= m.bytes.length;
   return { file: new File([m.bytes], `${item.name.replace(/\.gz$/, '')}.gz`), reads: m.reads, cut: m.cut };
@@ -805,7 +805,8 @@ const KIND_OF_PLATFORM = { ILLUMINA: 'short', OXFORD_NANOPORE: 'long' };
 const DEPTH_WINDOW = 1000; // bases per coverage window (the results panel and the combined table use these windows)
 const CATALOG_FORMAT = 'qmutfind-catalog';
 const CATALOG_VERSION = 1;
-const MAX_CATALOG_BYTES = 500e6; // the zip and the total of its files
+// The zip and the total of its files. `?catalog_limit_mb=N` can lower the limit (the tests use that).
+const MAX_CATALOG_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get('catalog_limit_mb')) || 500, 500) * 1e6;
 
 function enaBase() {
   const asked = new URLSearchParams(location.search).get('enaapi');
@@ -1428,6 +1429,7 @@ function renderCombined() {
 $('combined-filter').addEventListener('change', renderCombined);
 
 $('strain-combine').addEventListener('click', async () => {
+  if (sampleRunning || busy) { show('combine-status', 'Wait until the samples have finished running, then combine.'); return; }
   const done = samples.filter((s) => s.name && isFinished(s));
   if (done.length < 2) { show('combine-status', 'Combine needs at least two finished samples.'); return; }
   const minDepth = Number($('combine-min-depth').value);
@@ -1568,6 +1570,7 @@ function applyCatalog(archive) {
 $('catalog-file').addEventListener('change', async () => {
   const file = $('catalog-file').files[0];
   if (!file) return;
+  if (sampleRunning || busy || loading) { show('catalog-status', 'Wait until the samples have finished running, then import.'); $('catalog-file').value = ''; return; }
   try {
     if (file.size > MAX_CATALOG_BYTES) throw new Error(`the file is too large (${mb(file.size)}; the limit is ${mb(MAX_CATALOG_BYTES)}).`);
     const archive = unpackCatalog(new Uint8Array(await file.arrayBuffer()));
@@ -1585,10 +1588,12 @@ $('catalog-file').addEventListener('change', async () => {
 // The finished samples, the combine and the reference are saved in the browser after each sample and each combine, and restored
 // on request. The reads are never saved. Results that were saved earlier and not restored are not overwritten by new ones.
 const KEEP_KEY = 'qmutfind-keep';
-const MAX_SAVED_FILE = 300e6; // a reference or gene file above this is not saved
+// A reference or gene file above this is not saved. `?save_limit_mb=N` can lower the limit (the tests use that).
+const MAX_SAVED_FILE = Math.min(parseFloat(new URLSearchParams(location.search).get('save_limit_mb')) || 300, 300) * 1e6;
 let savedHeader = null; // { saved, count, bytes, combined, reference, gff } of what is in the store, or null
 let saveHeld = false; // saved results exist and were not restored: new results are not saved over them
 let saveTimer = null;
+let heldFiles = { reference: null, gff: null }; // the File objects whose bytes the store holds, so each is written once
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
 function keepResults() {
@@ -1638,26 +1643,41 @@ async function saveNow(force) {
   if (!finished.length) { showSaved('There are no finished samples to save.'); return; } // an empty list never replaces saved results
   try {
     const built = buildCatalog();
+    const unpacked = Object.values(built.files).reduce((n, f) => n + f.length, 0);
+    if (unpacked > MAX_CATALOG_BYTES) throw new Error(`the results are too large to save (${mb(unpacked)}; the limit is ${mb(MAX_CATALOG_BYTES)}). Use Export`);
     const zip = zipSync(built.files);
     const entries = { results: zip };
+    const held = { reference: null, gff: null };
+    const names = { reference: '', gff: '' };
     let bytes = zip.length;
     for (const [slot, file] of [['reference', refFile()], ['gff', gffFile()]]) {
-      if (!file || file.size > MAX_SAVED_FILE) { entries[slot] = null; continue; }
-      entries[slot] = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+      if (!file || file.size > MAX_SAVED_FILE) { entries[slot] = null; continue; } // not saved, and an older copy is removed
+      names[slot] = file.name;
+      held[slot] = file;
       bytes += file.size;
+      if (heldFiles[slot] !== file) entries[slot] = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }; // written only when it changed
     }
-    const header = { saved: new Date().toISOString(), count: finished.length, bytes, combined: Boolean(lastCombined), reference: refFile() ? refFile().name : '', gff: gffFile() ? gffFile().name : '' };
+    const header = { saved: new Date().toISOString(), count: finished.length, bytes, combined: Boolean(lastCombined), reference: names.reference, gff: names.gff };
     entries.header = header;
-    await writeStore(entries);
+    // Without `force` the write is made only if no other tab saved since this page last looked at the store.
+    await writeStore(entries, force ? {} : { expect: savedHeader ? savedHeader.saved : null });
+    heldFiles = held;
     savedHeader = header;
     saveHeld = false;
     await showSaved();
   } catch (error) {
+    if (error && error.code === 'CHANGED') {
+      try { const found = await readStore(['header']); savedHeader = found.header || null; } catch (e) { /* the old header stays */ }
+      saveHeld = Boolean(savedHeader);
+      await showSaved();
+      return;
+    }
     show('saved-status', `Could not save in this browser: ${error.message || error}. The results are still in the page; use Export to keep them.`);
   }
 }
 
 async function restoreSaved() {
+  if (sampleRunning || busy || loading) { show('saved-status', 'Wait until the samples have finished running, then restore.'); return; }
   try {
     show('saved-status', 'Restoring');
     const found = await readStore(['results', 'reference', 'gff', 'header']);
@@ -1669,7 +1689,9 @@ async function restoreSaved() {
     for (const slot of ['reference', 'gff']) {
       const entry = found[slot];
       if (!entry) continue;
+      $(slot).value = ''; // a file chosen before would win over the restored one (refFile prefers the input)
       example[slot] = new File([entry.bytes], entry.name);
+      heldFiles[slot] = example[slot];
       example.source[slot] = `this browser (saved ${when})`;
     }
     if (found.reference) { example.source.reads = ''; }
@@ -1690,6 +1712,7 @@ $('saved-delete').addEventListener('click', async () => {
     await clearStore();
     savedHeader = null;
     saveHeld = false;
+    heldFiles = { reference: null, gff: null };
     await showSaved();
   } catch (error) {
     show('saved-status', `Error: could not delete: ${error.message || error}`);
