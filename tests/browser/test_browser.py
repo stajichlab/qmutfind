@@ -2016,3 +2016,56 @@ def test_a_frameshift_shows_what_the_protein_becomes_next_to_its_protein_change(
     assert cells == ["E3Dfs*4 (protein 5 of 16 aa)", "D7Ifs*?", "A2D"]
     sort_by(driver, "Protein change")
     assert column(driver, "Protein change") == ["A2D", "D7Ifs*?", "E3Dfs*4 (protein 5 of 16 aa)"]  # sorted by the change itself
+
+
+# The Show dropdown of the Draw section: always there, and a Genic choice for any variant that overlaps a gene
+
+def test_the_show_dropdown_is_visible_before_annotation_and_says_what_to_do(driver, server):
+    open_site(driver, server)
+
+    select = driver.find_element(By.ID, "effect-filter")
+
+    assert select.is_displayed() and not select.is_enabled()
+    assert [o.text for o in select.find_elements(By.TAG_NAME, "option")] == ["Annotate first to filter the variants"]
+
+
+GENIC_RECORDS = [
+    {"contig": "c1", "pos": 10, "effect": "intergenic"},
+    {"contig": "c1", "pos": 30, "effect": "missense", "gene": "G1", "aa": "A2D"},
+    {"contig": "c1", "pos": 40, "effect": "5UTR_derived", "gene": "G1"},
+    {"contig": "c1", "pos": 60, "effect": "intron_derived", "gene": "G1"},
+    {"contig": "c1", "pos": 120, "effect": "unannotated"},
+    {"contig": "c2", "pos": 15, "effect": "frameshift", "gene": "G2", "aa": "K2Nfs*?"},
+]
+
+
+def test_the_genic_choice_shows_every_variant_that_overlaps_a_gene_whatever_its_effect(driver, server):
+    load_variant_table(driver, server, GENIC_RECORDS)
+
+    select = driver.find_element(By.ID, "effect-filter")
+    assert select.is_enabled()
+    labels = [o.text for o in select.find_elements(By.TAG_NAME, "option")]
+    assert labels[0] == "All variants (6)" and labels[1] == "Genic: in a gene (4)", labels
+    driver.find_element(By.CSS_SELECTOR, "#effect-filter option[value='__genic__']").click()
+
+    assert shown_positions(driver) == ["30", "40", "60", "15"]  # missense, UTR, intron and frameshift; not intergenic or unannotated
+    assert "4 of 6" in driver.find_element(By.ID, "annotate-status").text
+    # The specific effects are still there, after the two general choices.
+    values = [o.get_attribute("value") for o in select.find_elements(By.TAG_NAME, "option")]
+    assert values[:2] == ["", "__genic__"] and {"missense", "intergenic", "frameshift"} <= set(values)
+    driver.find_element(By.CSS_SELECTOR, "#effect-filter option[value='intergenic']").click()
+    assert shown_positions(driver) == ["10"]
+
+
+def test_the_genic_choice_keeps_working_after_sorting_and_with_the_sample_sharing_filter(driver, server):
+    records = [
+        {"contig": "c1", "pos": 30, "effect": "missense", "gene": "G1", "dp": 5},
+        {"contig": "c1", "pos": 10, "effect": "intergenic", "dp": 50},
+        {"contig": "c1", "pos": 40, "effect": "missense", "gene": "G1", "dp": 30},
+    ]
+    load_variant_table(driver, server, records)
+    driver.find_element(By.CSS_SELECTOR, "#effect-filter option[value='__genic__']").click()
+    sort_by(driver, "DP")
+    sort_by(driver, "DP")  # descending
+
+    assert shown_positions(driver) == ["40", "30"]

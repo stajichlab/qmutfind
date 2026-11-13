@@ -1155,3 +1155,9 @@ Request: a frameshift should say what truncation of the protein results.
 - Tests: `tests/effects.rs` (fixtures c1, c2 and the new c6 and c7 with a stop that exists only in the 3' UTR, on both strands). Mutation
   checks: stop count, 3' UTR reading, minus-strand complement. Not handled: a frameshift near the start codon or across a splice site
   is judged on the spliced CDS only; an indel that spans a splice site is a `splice_site`, as before; only the canonical transcript.
+
+## 12l. The Show dropdown of the Draw section (2026-11-12)
+The Show dropdown (`#effect-filter`) is visible from the start (disabled, "Annotate first to filter the variants") and has two general
+choices before the specific effects: All variants, and `Genic: in a gene (N)`: any variant that overlaps a gene (it has a GENE tag),
+whatever its effect (missense, synonymous, frameshift, UTR, intron, splice site, non-coding exon, and so on). Intergenic and
+unannotated variants are not genic. It works with the sorting and with the "Shared by" filter of the all-samples view.

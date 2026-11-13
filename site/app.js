@@ -8,6 +8,7 @@ const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
 const state = { vcf: null, annotated: null, depth: null };
 // The last combine of the samples: { table, summary, vcf, parent, minDepth, names }, or null. Declared here because describeSource() runs at load.
 let lastCombined = null;
+const GENIC = '__genic__'; // the value of the "Genic" choice of the Show dropdown: any variant that overlaps a gene
 const ALL_SAMPLES = '__all__'; // the value of the "All samples together" choice of the results panel
 let busy = false;
 const MAX_ROWS = 500;
@@ -277,7 +278,9 @@ function renderTable() {
   const filter = $('effect-filter').value;
   const sharing = $('sharing-wrap').hidden ? '' : $('sharing-filter').value;
   const shared = (v) => !sharing || (sharing === 'one' && v.ns === 1) || (sharing === 'all' && v.ns === variantMeta.samples) || (sharing === 'new' && v.newIn.length > 0);
-  const shown = sortedVariants(variants.filter((v) => (!filter || v.effect === filter) && shared(v)));
+  // The Genic choice is any variant that overlaps a gene, whatever its effect; the other choices are one effect each.
+  const wanted = (v) => !filter || (filter === GENIC ? v.gene !== '' : v.effect === filter);
+  const shown = sortedVariants(variants.filter((v) => wanted(v) && shared(v)));
   const columns = activeColumns();
   const table = $('variant-table');
   table.replaceChildren();
@@ -329,7 +332,9 @@ function loadVariants(vcfText) {
   const counts = {};
   for (const v of variants) counts[v.effect] = (counts[v.effect] || 0) + 1;
   const select = $('effect-filter');
-  select.replaceChildren(new Option(`All variants (${variants.length})`, ''));
+  select.disabled = false;
+  const inGenes = variants.filter((v) => v.gene !== '').length;
+  select.replaceChildren(new Option(`All variants (${variants.length})`, ''), new Option(`Genic: in a gene (${inGenes})`, GENIC));
   for (const [effect, count] of Object.entries(counts).sort((a, b) => b[1] - a[1])) select.add(new Option(`${effect} (${count})`, effect));
   $('variant-controls').hidden = false;
   renderTable();
