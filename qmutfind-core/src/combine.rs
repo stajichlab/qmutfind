@@ -76,6 +76,8 @@ pub struct Combined {
     pub rows: Vec<Row>,
     /// Things the user should know that are not errors, such as a coverage contig that no VCF has.
     pub warnings: Vec<String>,
+    /// The contigs with a known length, in the order of the first VCF that names them.
+    pub contigs: Vec<(String, u64)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -295,7 +297,8 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
             .collect();
         rows.push(Row { contig, pos, reference, alt, class, cells, status });
     }
-    Ok(Combined { strains: inputs.iter().map(|i| i.name.to_string()).collect(), parent, rows, warnings })
+    let contigs: Vec<(String, u64)> = order.iter().filter_map(|c| lengths.get(c).map(|(len, _)| (c.clone(), *len))).collect();
+    Ok(Combined { strains: inputs.iter().map(|i| i.name.to_string()).collect(), parent, rows, warnings, contigs })
 }
 
 impl Cell {
@@ -324,7 +327,64 @@ impl Status {
     }
 }
 
+/// A sample name for an INFO value: `,` `;` `=` space `%` and control characters become %XX, so the names can be listed with commas.
+fn escape_info(name: &str) -> String {
+    // Work on bytes: only ASCII bytes are changed, so the UTF-8 sequences of other characters stay intact.
+    let mut bytes = Vec::with_capacity(name.len());
+    for b in name.bytes() {
+        if matches!(b, b',' | b';' | b'=' | b' ' | b'%') || b < 0x20 || b == 0x7f {
+            bytes.extend_from_slice(format!("%{b:02X}").as_bytes());
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8(bytes).expect("escaping ASCII bytes keeps valid UTF-8")
+}
+
 impl Combined {
+    /// One VCF record per distinct variant: the samples that call it (`NS`, `SAMPLES`), the samples where it is new compared with the
+    /// parent (`NEW`), and the mean AF and depth of the calls. The record can go through the summary, the annotation and the locus
+    /// drawing like the VCF of one sample.
+    pub fn to_vcf(&self) -> String {
+        let mut out = String::from("##fileformat=VCFv4.2\n");
+        for (name, len) in &self.contigs {
+            out.push_str(&format!("##contig=<ID={name},length={len}>\n"));
+        }
+        out.push_str("##INFO=<ID=NS,Number=1,Type=Integer,Description=\"Number of samples with a call\">\n");
+        out.push_str("##INFO=<ID=SAMPLES,Number=.,Type=String,Description=\"Samples with a call (a name has , ; = space and % written as %XX)\">\n");
+        out.push_str("##INFO=<ID=NEW,Number=.,Type=String,Description=\"Samples where the variant is new compared with the parent\">\n");
+        out.push_str("##INFO=<ID=CLASS,Number=1,Type=String,Description=\"SNP, SMALL_INDEL or LARGE_INDEL\">\n");
+        out.push_str("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Mean depth of the calls\">\n");
+        out.push_str("##INFO=<ID=AF,Number=A,Type=Float,Description=\"Mean alternate allele fraction of the calls\">\n");
+        out.push_str(&format!("##qmutfind_samples={}\n", self.strains.len()));
+        if let Some(p) = self.parent {
+            out.push_str(&format!("##qmutfind_parent={}\n", escape_info(&self.strains[p])));
+        }
+        out.push_str("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
+        for r in &self.rows {
+            let calls: Vec<(usize, f64, u64)> = r
+                .cells
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| if let Cell::Call { af, depth } = c { Some((i, *af, *depth)) } else { None })
+                .collect();
+            let names = calls.iter().map(|(i, _, _)| escape_info(&self.strains[*i])).collect::<Vec<_>>().join(",");
+            let mut info = format!("NS={};SAMPLES={names};CLASS={}", calls.len(), r.class);
+            let depth = calls.iter().map(|c| c.2 as f64).sum::<f64>() / calls.len().max(1) as f64;
+            info.push_str(&format!(";DP={}", depth.round() as u64));
+            let afs: Vec<f64> = calls.iter().map(|c| c.1).filter(|a| a.is_finite()).collect();
+            if !afs.is_empty() {
+                info.push_str(&format!(";AF={:.4}", afs.iter().sum::<f64>() / afs.len() as f64));
+            }
+            let new: Vec<String> = r.status.iter().enumerate().filter(|(_, s)| **s == Status::New).map(|(i, _)| escape_info(&self.strains[i])).collect();
+            if !new.is_empty() {
+                info.push_str(&format!(";NEW={}", new.join(",")));
+            }
+            out.push_str(&format!("{}\t{}\t.\t{}\t{}\t.\tPASS\t{info}\n", r.contig, r.pos, r.reference, r.alt));
+        }
+        out
+    }
+
     /// One line per variant. The cells come first, then (with a parent) one status column per strain.
     pub fn to_tsv(&self) -> String {
         let mut header = vec!["CHROM".to_string(), "POS".into(), "REF".into(), "ALT".into(), "CLASS".into(), "strains".into()];
@@ -682,5 +742,73 @@ mod tests {
             CombineInput { name: "child", vcf: &parent, depth_bed: Some(&b), evidence_vcf: Some(&child_evidence) },
         ];
         assert_eq!(combine(&inputs, &options(Some("parent"))).unwrap().rows[0].status[1], Status::Unknown);
+    }
+
+    #[test]
+    fn the_merged_vcf_has_one_record_per_variant_with_the_number_of_samples_and_their_names() {
+        let c = run(Some("parent"));
+
+        let vcf = c.to_vcf();
+        let lines: Vec<&str> = vcf.lines().collect();
+
+        assert_eq!(lines[0], "##fileformat=VCFv4.2");
+        assert!(lines.contains(&"##contig=<ID=chrA,length=3000>"));
+        assert!(lines.iter().any(|l| l.starts_with("##INFO=<ID=NS,")) && lines.iter().any(|l| l.starts_with("##INFO=<ID=SAMPLES,")));
+        assert!(lines.contains(&"##qmutfind_samples=2"));
+        let records: Vec<Vec<&str>> = lines.iter().filter(|l| !l.starts_with('#')).map(|l| l.split('\t').collect()).collect();
+        assert_eq!(records.len(), 3);
+        // Position 500 is called in both strains: its AF is the mean (1.00), DP the mean (29), and the status of the child is inherited.
+        assert_eq!(&records[0][..5], &["chrA", "500", ".", "A", "G"]);
+        assert!(records[0][7].contains("NS=2") && records[0][7].contains("SAMPLES=parent,evolved") && records[0][7].contains("CLASS=SNP"), "{}", records[0][7]);
+        assert!(records[0][7].contains("DP=29") && records[0][7].contains("AF=1.0000"), "{}", records[0][7]);
+        assert!(!records[0][7].contains("NEW="), "{}", records[0][7]);
+        // Position 1500 is called in one strain and is new there.
+        assert!(records[1][7].contains("NS=1") && records[1][7].contains("SAMPLES=evolved") && records[1][7].contains("NEW=evolved"), "{}", records[1][7]);
+    }
+
+    #[test]
+    fn the_merged_vcf_without_a_parent_has_no_new_tag_and_names_are_escaped() {
+        let v = vcf(CONTIGS, &[("chrA", 500, "A", "G", "SNP", 30, 1.0)]);
+        let b = bed([30.0, 30.0, 30.0]);
+        let inputs = [
+            CombineInput { name: "a,b;c=d %e", vcf: &v, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "plain", vcf: &v, depth_bed: Some(&b), evidence_vcf: None },
+        ];
+
+        let c = combine(&inputs, &options(None)).unwrap();
+        let vcf = c.to_vcf();
+
+        let record = vcf.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert!(record.contains("SAMPLES=a%2Cb%3Bc%3Dd%20%25e,plain"), "{record}");
+        assert!(!record.contains("NEW="));
+        assert!(record.contains("NS=2"));
+    }
+
+    #[test]
+    fn the_merged_vcf_keeps_a_variant_called_in_one_strain_even_when_the_others_have_weak_evidence() {
+        let parent = vcf(CONTIGS, &[]);
+        let weak = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 30, 0.2)]);
+        let child = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 25, 0.96)]);
+        let b = bed([30.0, 30.0, 30.0]);
+        let inputs = [
+            CombineInput { name: "parent", vcf: &parent, depth_bed: Some(&b), evidence_vcf: Some(&weak) },
+            CombineInput { name: "child", vcf: &child, depth_bed: Some(&b), evidence_vcf: None },
+        ];
+
+        let vcf = combine(&inputs, &options(Some("parent"))).unwrap().to_vcf();
+
+        let record = vcf.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert!(record.contains("NS=1") && record.contains("SAMPLES=child"), "{record}");
+        assert!(!record.contains("NEW="), "the parent has weak evidence, so the status is unknown and not new: {record}");
+    }
+
+    #[test]
+    fn a_name_with_non_ascii_letters_stays_readable_in_the_merged_vcf() {
+        let v = vcf(CONTIGS, &[("chrA", 500, "A", "G", "SNP", 30, 1.0)]);
+        let inputs = [CombineInput { name: "souche é1", vcf: &v, depth_bed: None, evidence_vcf: None }];
+
+        let vcf_text = combine(&inputs, &options(None)).unwrap().to_vcf();
+
+        assert!(vcf_text.contains("SAMPLES=souche%20é1"), "{vcf_text}");
     }
 }

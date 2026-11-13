@@ -6,6 +6,9 @@ const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
 
 // The state that carries from step to step.
 const state = { vcf: null, annotated: null, depth: null };
+// The last combine of the samples: { table, summary, vcf, parent, minDepth, names }, or null. Declared here because describeSource() runs at load.
+let lastCombined = null;
+const ALL_SAMPLES = '__all__'; // the value of the "All samples together" choice of the results panel
 let busy = false;
 const MAX_ROWS = 500;
 // How far a file may unpack when it is loaded whole into memory. `?limit_mb=N` can lower it (the tests use that).
@@ -47,7 +50,7 @@ function offer(id, name, text, type) {
   link.hidden = false;
 }
 
-const sampleName = () => (selectedSample() && selectedSample().name) || 'sample';
+const sampleName = () => (viewingAll() ? 'combined' : (selectedSample() && selectedSample().name) || 'sample');
 
 // Files from an example. A file chosen in an input always wins over the example's file.
 const example = { reference: null, gff: null, source: { reference: '', gff: '' } };
@@ -93,6 +96,7 @@ function describeSource() {
   let text;
   if (file) text = `Using the VCF file ${file.name}.`;
   else if (state.annotated) text = 'Using the annotated VCF from the gene step (section 4).';
+  else if (viewingAll()) text = `Using the merged VCF of all ${lastCombined.names.length} samples (one record per distinct variant).`;
   else if (state.vcf) text = `Using the VCF of the sample ${sampleName()}.`;
   else text = 'No VCF yet. Run a sample or choose a VCF file.';
   show('vcf-source', text);
@@ -122,7 +126,29 @@ $('summarize').addEventListener('click', () => {
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function statsTable(s) {
+/** The statistics of the merged VCF of all samples: the usual rows, how the variants are shared, and a table per sample. */
+function sharingTables(stats) {
+  const lines = lastCombined.vcf.split('\n').filter((l) => l && l[0] !== '#');
+  const n = lastCombined.names.length;
+  let every = 0;
+  let one = 0;
+  let isNew = 0;
+  for (const line of lines) {
+    const info = Object.fromEntries(line.split('\t')[7].split(';').map((kv) => { const i = kv.indexOf('='); return i > 0 ? [kv.slice(0, i), kv.slice(i + 1)] : [kv, '']; }));
+    const ns = Number(info.NS);
+    if (ns === n) every += 1;
+    if (ns === 1) one += 1;
+    if (info.NEW) isNew += 1;
+  }
+  const extra = [['Samples combined', String(n)], ['Called in every sample', String(every)], ['Called in one sample only', String(one)]];
+  if (lastCombined.parent) extra.push([`New compared with the parent (${lastCombined.parent})`, String(isNew)]);
+  const rows = lastCombined.summary.split('\n').filter(Boolean).map((l) => l.split('\t'));
+  const head = rows[0].map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+  const body = rows.slice(1).map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
+  return `${statsTable(stats, extra)}<table class="stats per-sample"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function statsTable(s, extra = []) {
   const rows = [];
   const add = (name, value) => rows.push(`<tr><th scope="row">${name}</th><td>${value}</td></tr>`);
   const n = (x) => Number(x).toLocaleString();
@@ -138,6 +164,7 @@ function statsTable(s) {
   if (effects.length) {
     add('Effects', effects.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${escapeHtml(k)}: ${n(v)}`).join(', '));
   }
+  for (const [name, value] of extra) add(escapeHtml(name), escapeHtml(value));
   return `<table class="stats">${rows.join('')}</table>`;
 }
 
@@ -175,6 +202,9 @@ function parseVariants(vcfText) {
     rows.push({
       contig: f[0], pos: Number(f[1]), ref: f[3], alt: f[4].split(',')[0],
       cls: info.CLASS || '', effect: (info.EFFECT || 'unannotated').split(',')[0],
+      ns: info.NS === undefined ? undefined : Number(info.NS),
+      samples: info.SAMPLES ? info.SAMPLES.split(',').map(decodeInfo) : [],
+      newIn: info.NEW ? info.NEW.split(',').map(decodeInfo) : [],
       gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '', af: info.AF || '', dp: info.DP || '',
     });
   }
@@ -186,9 +216,10 @@ const cell = (text) => { const td = document.createElement('td'); td.textContent
 
 // The columns of the variant table. A header is a button: the first click sorts up, the second sorts down, the third
 // restores the order of the file. Empty cells stay last in both directions. All variants are sorted, not only the rows shown.
-const TABLE_COLUMNS = [
-  { label: 'Position', kind: 'position' },
-  { label: 'Change', kind: 'text', value: (v) => `${v.ref} > ${v.alt}` },
+const short = (text) => (text.length > 12 ? `${text.slice(0, 12)}\u2026` : text);
+const BASE_COLUMNS = [
+  { label: 'Position', kind: 'position', text: (v) => `${v.contig}:${v.pos.toLocaleString()}` },
+  { label: 'Change', kind: 'text', value: (v) => `${v.ref} > ${v.alt}`, text: (v) => `${short(v.ref)} > ${short(v.alt)}` },
   { label: 'Class', kind: 'text', value: (v) => v.cls },
   { label: 'Effect', kind: 'text', value: (v) => v.effect },
   { label: 'Gene', kind: 'text', value: (v) => v.gene },
@@ -198,6 +229,14 @@ const TABLE_COLUMNS = [
   { label: 'AF', kind: 'number', value: (v) => v.af },
   { label: 'DP', kind: 'number', value: (v) => v.dp },
 ];
+// The merged VCF of all samples adds two columns: how many samples carry the variant, and which.
+const COMBINED_COLUMNS = [
+  { label: 'Samples', kind: 'number', value: (v) => v.ns },
+  { label: 'Called in', kind: 'text', value: (v) => v.samples.join(', ') },
+];
+const isCombinedTable = () => variants.some((v) => v.ns !== undefined);
+const activeColumns = () => (isCombinedTable() ? [...BASE_COLUMNS, ...COMBINED_COLUMNS] : BASE_COLUMNS);
+let variantMeta = { samples: 0, parent: '' }; // from the header of the merged VCF
 let sortColumn = null; // an index into TABLE_COLUMNS, or null for the order of the file
 let sortDirection = 1; // 1 up, -1 down
 let contigRank = new Map(); // the order in which the contigs first appear in the file
@@ -205,7 +244,7 @@ let contigRank = new Map(); // the order in which the contigs first appear in th
 /** The variants in the order of the chosen column. Array.prototype.sort is stable, so equal cells keep the file order. */
 function sortedVariants(list) {
   if (sortColumn === null) return list;
-  const column = TABLE_COLUMNS[sortColumn];
+  const column = activeColumns()[sortColumn];
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
   const empty = (v) => (column.kind === 'position' ? false : column.kind === 'number' ? !Number.isFinite(parseFloat(column.value(v))) : !column.value(v));
   const compare = (a, b) => {
@@ -234,11 +273,14 @@ function sortBy(index) {
 
 function renderTable() {
   const filter = $('effect-filter').value;
-  const shown = sortedVariants(variants.filter((v) => !filter || v.effect === filter));
+  const sharing = $('sharing-wrap').hidden ? '' : $('sharing-filter').value;
+  const shared = (v) => !sharing || (sharing === 'one' && v.ns === 1) || (sharing === 'all' && v.ns === variantMeta.samples) || (sharing === 'new' && v.newIn.length > 0);
+  const shown = sortedVariants(variants.filter((v) => (!filter || v.effect === filter) && shared(v)));
+  const columns = activeColumns();
   const table = $('variant-table');
   table.replaceChildren();
   const head = table.createTHead().insertRow();
-  for (const [index, column] of TABLE_COLUMNS.entries()) {
+  for (const [index, column] of columns.entries()) {
     const th = document.createElement('th');
     th.setAttribute('aria-sort', sortColumn === index ? (sortDirection === 1 ? 'ascending' : 'descending') : 'none');
     const button = document.createElement('button');
@@ -253,8 +295,7 @@ function renderTable() {
   const body = table.createTBody();
   for (const v of shown.slice(0, MAX_ROWS)) {
     const row = body.insertRow();
-    row.append(cell(`${v.contig}:${v.pos.toLocaleString()}`), cell(`${v.ref.length > 12 ? v.ref.slice(0, 12) + '…' : v.ref} > ${v.alt.length > 12 ? v.alt.slice(0, 12) + '…' : v.alt}`),
-      cell(v.cls), cell(v.effect), cell(v.gene), cell(v.geneName), cell(v.aa), cell(v.product), cell(v.af), cell(v.dp));
+    row.append(...columns.map((c) => cell(c.text ? c.text(v) : String(c.value(v) ?? ''))));
     const last = row.insertCell();
     const button = document.createElement('button');
     button.type = 'button';
@@ -270,11 +311,17 @@ function renderTable() {
 }
 
 $('effect-filter').addEventListener('change', renderTable);
+$('sharing-filter').addEventListener('change', renderTable);
 window.qmutfindLoadVariants = (vcfText) => loadVariants(vcfText); // for the tests
 
 function loadVariants(vcfText) {
   variants = parseVariants(vcfText);
   sortColumn = null; // a new set of variants starts in the order of the file
+  variantMeta = { samples: Number((/^##qmutfind_samples=(\d+)/m.exec(vcfText) || [])[1]) || 0, parent: decodeInfo(((/^##qmutfind_parent=(.*)$/m.exec(vcfText) || [])[1]) || '') };
+  const sharingSelect = $('sharing-filter');
+  sharingSelect.replaceChildren(new Option('All variants', ''), new Option('Called in one sample only', 'one'), new Option('Called in every sample', 'all'));
+  if (variantMeta.parent) sharingSelect.add(new Option(`New compared with the parent (${variantMeta.parent})`, 'new'));
+  $('sharing-wrap').hidden = !variants.some((v) => v.ns !== undefined);
   contigRank = new Map();
   for (const v of variants) if (!contigRank.has(v.contig)) contigRank.set(v.contig, contigRank.size);
   const counts = {};
@@ -329,7 +376,7 @@ worker.onmessage = (event) => {
     const parts = [];
     if (m.stats) {
       const s = JSON.parse(m.stats);
-      $('stats-table').innerHTML = statsTable(s);
+      $('stats-table').innerHTML = viewingAll() ? sharingTables(s) : statsTable(s);
       parts.push(`${Number(s.total).toLocaleString()} variants`);
       offer('download-stats', `${sampleName()}.stats.json`, m.stats, 'application/json');
     }
@@ -782,7 +829,6 @@ let sampleRunning = false;
 let sampleCancelled = false;
 let activeWorker = null;
 let activeAbort = null;
-let lastCombined = null; // { table, summary, parent, minDepth, names }
 
 function newSample(init = {}) {
   const s = { id: nextSampleId++, name: '', note: '', source: 'local', accession: '', urls: '', files: [], state: 'waiting', ...init };
@@ -846,21 +892,32 @@ function refreshChoices() {
   result.replaceChildren();
   const done = samples.filter((s) => s.name && isFinished(s));
   if (!done.length) result.appendChild(new Option('No finished sample yet', ''));
+  // After a combine, the merged VCF of all the samples can be summarized and annotated like a sample.
+  if (lastCombined && lastCombined.vcf) result.appendChild(new Option('All samples together', ALL_SAMPLES));
   for (const s of done) result.appendChild(new Option(s.name, s.name));
-  result.value = done.some((s) => s.name === keepResult) ? keepResult : (done[0] ? done[0].name : '');
+  const stillThere = done.some((s) => s.name === keepResult) || (keepResult === ALL_SAMPLES && lastCombined && lastCombined.vcf);
+  result.value = stillThere ? keepResult : (done[0] ? done[0].name : '');
   if (result.value !== keepResult) useSelectedSample();
 }
 
+function viewingAll() { // a function declaration: describeSource() calls it at load
+  return $('result-sample').value === ALL_SAMPLES && Boolean(lastCombined && lastCombined.vcf);
+}
 const selectedSample = () => samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null;
 
 /** The results panel follows the chosen sample: its VCF and coverage are what the summary and the gene steps use. */
 function useSelectedSample() {
-  const s = selectedSample();
-  state.vcf = s ? s.vcf : null;
-  state.depth = s ? s.bed : null;
+  const all = viewingAll();
+  const s = all ? null : selectedSample();
+  state.vcf = all ? lastCombined.vcf : (s ? s.vcf : null);
+  state.depth = s ? s.bed : null; // the coverage of separate samples is not merged
   state.annotated = null;
   for (const id of ['download-vcf', 'download-depth-bed']) $(id).hidden = true;
-  if (s) {
+  if (all) {
+    offer('download-vcf', 'combined.vcf', lastCombined.vcf, 'text/plain');
+    const n = lastCombined.vcf.split('\n').filter((l) => l && l[0] !== '#').length;
+    show('summary', `${n.toLocaleString()} distinct variants in ${lastCombined.names.length} samples. Go on to the summary or the gene steps.`);
+  } else if (s) {
     offer('download-vcf', `${s.name}.vcf`, s.vcf, 'text/plain');
     if (s.bed) offer('download-depth-bed', `${s.name}.depth.bed`, s.bed, 'text/plain');
     show('summary', `Calls: ${s.calls.toLocaleString()}. Go on to the summary or the gene steps.`);
@@ -888,7 +945,7 @@ function sampleRow(s) {
   const td = (cls) => { const c = document.createElement('td'); if (cls) c.className = cls; c.dataset.label = labels[row.children.length]; row.appendChild(c); return c; };
   const edited = () => { // changing a failed or cancelled sample makes it ready to run again
     if (s.state.startsWith('failed') || s.state === 'cancelled') { s.state = 'waiting'; row.querySelector('.strain-state').textContent = 'waiting'; }
-    lastCombined = null;
+    if (lastCombined) { lastCombined = null; refreshChoices(); } // the combined table is out of date
   };
 
   const nameCell = td();
@@ -1170,7 +1227,8 @@ $('strain-combine').addEventListener('click', async () => {
       step: 'combine', names: done.map((s) => s.name), vcfs: done.map((s) => s.vcf), beds: done.map((s) => s.bed || ''),
       evidence: done.map((s) => s.evidence || ''), parent: parent || undefined, minDepth,
     });
-    lastCombined = { table: m.table, summary: m.summary, parent, minDepth, names: done.map((s) => s.name) };
+    lastCombined = { table: m.table, summary: m.summary, vcf: m.vcf, parent, minDepth, names: done.map((s) => s.name) };
+    refreshChoices();
     offer('download-combined', 'combined.tsv', m.table, 'text/tab-separated-values');
     renderCombined();
     const n = m.table.split('\n').filter(Boolean).length - 1;

@@ -149,8 +149,8 @@ async function memory() {
 
 // The combined table of several strains (see `combine_tables`).
 async function combineStep({ names, vcfs, beds, evidence, parent, minDepth }) {
-  const [table, summary, warnings] = combine_tables(names, vcfs, beds, evidence, parent, minDepth);
-  postMessage({ step: 'combine', type: 'done', table, summary, warnings });
+  const [table, summary, warnings, vcf] = combine_tables(names, vcfs, beds, evidence, parent, minDepth);
+  postMessage({ step: 'combine', type: 'done', table, summary, warnings, vcf });
 }
 
 const handlers = { run, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };

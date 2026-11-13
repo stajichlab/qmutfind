@@ -28,7 +28,7 @@ function cli(parent) {
     if (parent) args.push('--parent', parent);
     const result = spawnSync(CLI, args, { cwd: dir, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
-    return [readFileSync(join(dir, 'out.combined.tsv'), 'utf8'), readFileSync(join(dir, 'out.summary.tsv'), 'utf8')];
+    return [readFileSync(join(dir, 'out.combined.tsv'), 'utf8'), readFileSync(join(dir, 'out.summary.tsv'), 'utf8'), readFileSync(join(dir, 'out.combined.vcf'), 'utf8')];
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -36,10 +36,11 @@ function cli(parent) {
 
 test('combine in WASM equals the CLI tables, with and without a parent (a missing coverage file is an empty string)', () => {
   for (const parent of [undefined, 'parent']) {
-    const [table, summary] = wasm.combine_tables(['parent', 'evolved'], [PARENT, EVOLVED], [bed(30), ''], ['', ''], parent, 10);
-    const [cliTable, cliSummary] = cli(parent);
+    const [table, summary, , vcf] = wasm.combine_tables(['parent', 'evolved'], [PARENT, EVOLVED], [bed(30), ''], ['', ''], parent, 10);
+    const [cliTable, cliSummary, cliVcf] = cli(parent);
     assert.equal(table, cliTable);
     assert.equal(summary, cliSummary);
+    assert.equal(vcf, cliVcf);
   }
 });
 

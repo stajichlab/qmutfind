@@ -349,7 +349,8 @@ fn combine_command(args: &[String]) -> Result<(), String> {
         eprintln!("qmutfind: warning: {warning}");
     }
     std::fs::write(format!("{prefix}.combined.tsv"), combined.to_tsv()).map_err(|e| format!("{prefix}.combined.tsv: {e}"))?;
-    std::fs::write(format!("{prefix}.summary.tsv"), combined.summary_tsv()).map_err(|e| format!("{prefix}.summary.tsv: {e}"))
+    std::fs::write(format!("{prefix}.summary.tsv"), combined.summary_tsv()).map_err(|e| format!("{prefix}.summary.tsv: {e}"))?;
+    std::fs::write(format!("{prefix}.combined.vcf"), combined.to_vcf()).map_err(|e| format!("{prefix}.combined.vcf: {e}"))
 }
 
 /// `qmutfind annotate`: add the effect of each variant on the canonical transcript to a VCF.

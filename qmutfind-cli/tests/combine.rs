@@ -42,6 +42,13 @@ fn combine_writes_the_table_and_the_summary_with_the_parent_statuses() {
     assert_eq!(lines[2], "chrA\t1500\tC\tT\tSNP\t1\tref\t0.96:25\tparent\tnew");
     let summary = fs::read_to_string(dir.path().join("run1.summary.tsv")).unwrap();
     assert!(summary.contains("evolved\t2\t1\t1\t0\t0"), "{summary}");
+    // The merged VCF: one record per distinct variant, with the samples that call it and where it is new.
+    let merged = fs::read_to_string(dir.path().join("run1.combined.vcf")).unwrap();
+    let records: Vec<&str> = merged.lines().filter(|l| !l.starts_with('#')).collect();
+    assert_eq!(records.len(), 2, "{merged}");
+    assert!(records[0].contains("NS=2") && records[0].contains("SAMPLES=parent,evolved"), "{}", records[0]);
+    assert!(records[1].contains("NS=1") && records[1].contains("NEW=evolved"), "{}", records[1]);
+    assert!(merged.contains("##contig=<ID=chrA,length=3000>") && merged.contains("##qmutfind_parent=parent"));
 }
 
 #[test]

@@ -180,6 +180,7 @@
   <div class="form">
     <label for="result-sample">Sample</label>
     <select id="result-sample"><option value="">No finished sample yet</option></select>
+    <p class="hint">After you combine the samples, choose <b>All samples together</b> to summarize and annotate every variant once, with the samples that carry it.</p>
     <p class="downloads"><a id="download-vcf" hidden>Download the VCF</a> <a id="download-depth-bed" hidden>Download the coverage (BED)</a></p>
     <label for="vcf-file">Or a VCF file from another tool (optional). It replaces the sample's result.</label>
     <input id="vcf-file" type="file">
@@ -219,6 +220,10 @@
   <div id="variant-controls" hidden>
     <label for="effect-filter">Show</label>
     <select id="effect-filter"></select>
+    <span id="sharing-wrap" hidden>
+      <label for="sharing-filter">Shared by</label>
+      <select id="sharing-filter"></select>
+    </span>
     <label for="window-kb">Window around the variant (kb on each side)</label>
     <input id="window-kb" type="number" min="0.1" step="0.5" value="2.5">
   </div>

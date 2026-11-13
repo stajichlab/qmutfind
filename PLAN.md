@@ -1125,3 +1125,19 @@ script; the data are in `qmutfind_data/prjna1094460/`). This is not a unit-teste
 - Build stamp: every file the page loads is named with a hash (`?v=`), because GitHub Pages lets a browser keep a file for 10 minutes and an
   old script could meet a new page. Not confirmed as the cause of the report that the reference dropdown did nothing; the deployed page
   worked in a fresh Firefox.
+
+## 12j. All samples together (2026-11-12)
+Request: summarize all variants together, to see which are shared, with the same filters as the combined table (called in one sample,
+called in all samples, new, all variants), also in the annotation table.
+- Core: `Combined::to_vcf` writes one VCF record per distinct variant: `NS` (number of samples with a call), `SAMPLES` (names, `%XX`
+  escaped for `, ; = space %`), `NEW` (samples where it is new against the parent), mean `AF` and `DP`, `CLASS`, `##contig` lines
+  and `##qmutfind_samples` / `##qmutfind_parent`. CLI: `qmutfind combine` also writes `PREFIX.combined.vcf`. WASM `combine_tables`
+  returns it as the fourth text; the Node test compares it with the CLI file.
+- Page: after a combine, the results picker has **All samples together**. The summary then shows the distinct variants, the rows
+  "Samples combined", "Called in every sample", "Called in one sample only" and (with a parent) "New compared with the parent", and a
+  table of calls, new, inherited, lost and unknown per sample. Annotation runs on the merged VCF; the variant table gets the columns
+  Samples and Called in, and a "Shared by" filter (all, one sample only, every sample, new compared with the parent) that works with
+  the effect filter and the sorting. A single sample has none of this. Editing or removing a sample makes the combine out of date and
+  removes the choice.
+- The AF of a merged record is the mean over the samples that call it; the coverage plot is not drawn for the merged view (the
+  coverage of separate samples is not merged). Not done: colouring the genome plot by the number of samples.

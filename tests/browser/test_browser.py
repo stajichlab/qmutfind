@@ -1864,3 +1864,140 @@ def test_the_sort_stays_when_the_effect_filter_changes_and_resets_when_new_varia
 
     driver.execute_script("window.qmutfindLoadVariants(arguments[0]);", variant_vcf(SORT_RECORDS))
     assert aria_sort(driver, "DP") == "none" and column(driver, "DP") == ["9", "10", "100", "25"]
+
+
+# All samples together: one merged VCF (a record per distinct variant) for the summary, the annotation and the filters
+
+def snp_reads_at(positions, count=10):
+    """`count` reads over each (1-based) position, every read with the alternate base there."""
+    fastq = ""
+    for pos in positions:
+        alt = "T" if CHR_A[pos - 1] == "G" else "G"
+        for i in range(count):
+            start = pos - 100 + i * 10  # 0-based start; the read covers pos
+            read = list(CHR_A[start : start + 150])
+            read[pos - 1 - start] = alt
+            fastq += f"@r{pos}_{i}\n{''.join(read)}\n+\n{'I' * 150}\n"
+    return fastq
+
+
+@pytest.fixture
+def shared_samples(inputs):
+    # Variants V1=50000 (A only), V2=52000 (A, B and C), V3=54000 (B only). C has V2 only, so with C as the parent
+    # V1 and V3 are new in A and B.
+    for name, positions in (("a", [50_000, 52_000]), ("b", [52_000, 54_000]), ("c", [52_000])):
+        (inputs / f"{name}.fq").write_text(snp_reads_at(positions))
+    return inputs
+
+
+def run_abc_and_combine(driver, server, inputs, parent="c"):
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    choose(driver, "gff", inputs / "genes.gff3")
+    for name in ("a", "b", "c"):
+        add_sample(driver, name, "local", inputs / f"{name}.fq")
+    run_samples(driver)
+    assert combine(driver, parent).startswith("Done")
+
+
+def choose_result(driver, value):
+    driver.find_element(By.CSS_SELECTOR, f"#result-sample option[value='{value}']").click()
+
+
+def test_all_samples_together_is_offered_only_after_a_combine_and_the_results_follow_the_merged_vcf(driver, server, shared_samples):
+    open_site(driver, server)
+    choose(driver, "reference", shared_samples / "ref.fa")
+    for name in ("a", "b", "c"):
+        add_sample(driver, name, "local", shared_samples / f"{name}.fq")
+    run_samples(driver)
+    options = lambda: [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#result-sample option")]
+    assert "__all__" not in options()
+
+    assert combine(driver, "c").startswith("Done")
+
+    assert options()[0] == "__all__" and options()[1:] == ["a", "b", "c"]
+    assert driver.find_element(By.CSS_SELECTOR, "#result-sample option[value='__all__']").text == "All samples together"
+    choose_result(driver, "__all__")
+    assert "3 samples" in driver.find_element(By.ID, "vcf-source").text
+    merged = download_text(driver, "download-vcf")
+    records = [l.split("\t") for l in merged.splitlines() if l and not l.startswith("#")]
+    assert [r[1] for r in records] == ["50000", "52000", "54000"]  # one record per distinct variant
+    assert [dict(kv.split("=", 1) for kv in r[7].split(";"))["NS"] for r in records] == ["1", "3", "1"]
+    # Removing a sample makes the combine out of date, so the option goes and the first sample is used again.
+    strain_rows(driver)["a"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+    assert "__all__" not in options()
+
+
+def test_the_summary_of_all_samples_counts_the_distinct_variants_and_how_they_are_shared(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "__all__")
+
+    assert press(driver, "summarize", "summarize-status").startswith("Done")
+
+    text = driver.find_element(By.ID, "stats-table").text
+    assert "Samples combined 3" in text.replace("\n", " "), text
+    flat = " ".join(text.split())
+    assert "Variants 3" in flat  # distinct variants, not 5 calls
+    assert "Called in every sample 1" in flat and "Called in one sample only 2" in flat
+    assert "New compared with the parent (c) 2" in flat
+    # A table of the samples, from the combine summary: calls, new, inherited, lost and unknown.
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#stats-table table.per-sample tbody tr")) == 3
+    assert "c" in [td.text for td in driver.find_elements(By.CSS_SELECTOR, "#stats-table table.per-sample tbody td:first-child")]
+
+
+def annotate_all(driver, server, inputs):
+    run_abc_and_combine(driver, server, inputs)
+    choose_result(driver, "__all__")
+    return press(driver, "annotate", "annotate-status")
+
+
+def shown_positions(driver):
+    return driver.execute_script(
+        "return Array.from(document.querySelectorAll('#variant-table tbody tr')).map(r => r.cells[0].textContent.split(':')[1].replace(/,/g, ''));")
+
+
+def test_the_variant_table_of_all_samples_has_sample_columns_and_the_sharing_filters(driver, server, shared_samples):
+    assert annotate_all(driver, server, shared_samples).startswith("3 of 3")
+
+    headers = [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#variant-table th button")]
+    assert "Samples" in headers and "Called in" in headers
+    assert shown_positions(driver) == ["50000", "52000", "54000"]
+    called_in = driver.execute_script("return Array.from(document.querySelectorAll('#variant-table tbody tr')).map(r => r.cells[arguments[0]].textContent);", headers.index("Called in"))
+    assert called_in == ["a", "a, b, c", "b"]
+    sharing = lambda value: (driver.find_element(By.CSS_SELECTOR, f"#sharing-filter option[value='{value}']").click(), shown_positions(driver))[1]
+    assert driver.find_element(By.ID, "sharing-filter").is_displayed()
+    assert sharing("one") == ["50000", "54000"]
+    assert sharing("all") == ["52000"]
+    assert sharing("new") == ["50000", "54000"]
+    assert sharing("") == ["50000", "52000", "54000"]
+
+
+def test_the_sharing_filter_works_with_the_effect_filter_and_with_sorting(driver, server, shared_samples):
+    assert annotate_all(driver, server, shared_samples).startswith("3 of 3")
+    driver.find_element(By.CSS_SELECTOR, "#sharing-filter option[value='one']").click()
+    sort_by(driver, "Samples")
+    sort_by(driver, "Position")
+    sort_by(driver, "Position")  # descending
+
+    assert shown_positions(driver) == ["54000", "50000"]
+    assert "2 of 3" in driver.find_element(By.ID, "annotate-status").text
+
+
+def test_one_sample_has_no_sharing_filter_and_no_sample_columns(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+
+    assert press(driver, "annotate", "annotate-status").startswith("2 of 2")
+
+    assert not driver.find_element(By.ID, "sharing-filter").is_displayed()
+    assert "Samples" not in [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#variant-table th button")]
+
+
+def test_a_combine_without_a_parent_has_no_new_filter_option(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples, parent="")
+    choose_result(driver, "__all__")
+    press(driver, "annotate", "annotate-status")
+
+    options = [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#sharing-filter option")]
+
+    assert options == ["", "one", "all"]

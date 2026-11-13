@@ -109,8 +109,8 @@ fn non_empty(text: &str) -> Option<&str> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-/// The combined table of several strains, its summary and the warnings (one per line, empty when there are none), as three
-/// texts [table, summary, warnings]. `names`, `vcfs` and `beds`
+/// The combined table of several strains, its summary, the warnings (one per line, empty when there are none) and the merged VCF
+/// (one record per distinct variant), as four texts [table, summary, warnings, vcf]. `names`, `vcfs` and `beds`
 /// `evidence` have one entry per strain; an empty coverage or evidence text means the strain has none. `parent` is optional.
 #[wasm_bindgen]
 pub fn combine_tables(names: Vec<String>, vcfs: Vec<String>, beds: Vec<String>, evidence: Vec<String>, parent: Option<String>, min_depth: f64) -> Result<Vec<String>, JsError> {
@@ -121,7 +121,7 @@ pub fn combine_tables(names: Vec<String>, vcfs: Vec<String>, beds: Vec<String>, 
         .map(|i| qmutfind_core::CombineInput { name: &names[i], vcf: &vcfs[i], depth_bed: non_empty(&beds[i]), evidence_vcf: non_empty(&evidence[i]) })
         .collect();
     let combined = qmutfind_core::combine(&inputs, &qmutfind_core::CombineOptions { parent: parent.as_deref(), min_depth }).map_err(|e| JsError::new(&e))?;
-    Ok(vec![combined.to_tsv(), combined.summary_tsv(), combined.warnings.join("\n")])
+    Ok(vec![combined.to_tsv(), combined.summary_tsv(), combined.warnings.join("\n"), combined.to_vcf()])
 }
 
 /// The locus-view page (HTML with an inline SVG) for one region, such as "c1:21-110".
