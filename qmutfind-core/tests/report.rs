@@ -212,3 +212,103 @@ fn the_first_and_last_axis_labels_are_anchored_inside_the_plot_so_they_are_not_c
 
     assert_eq!(anchors, vec!["start", "middle", "end"]);
 }
+
+// Direction of transcription: an arrow under each gene model and chevrons along its line.
+
+const LEFT: f64 = 60.0;
+const PLOT: f64 = 880.0;
+
+/// The points of the first element that contains `marker`, as (x, y) pairs.
+fn points(svg: &str, marker: &str) -> Vec<(f64, f64)> {
+    attr(svg, marker, "points")
+        .split_whitespace()
+        .map(|p| {
+            let (x, y) = p.split_once(',').unwrap();
+            (x.parse().unwrap(), y.parse().unwrap())
+        })
+        .collect()
+}
+
+fn tip_and_base(svg: &str) -> ((f64, f64), f64) {
+    let p = points(svg, "class=\"arrowhead\"");
+    assert_eq!(p.len(), 3, "an arrowhead is a triangle");
+    // The tip is the point on the centre line; the other two share an x (the base).
+    let tip = *p.iter().find(|q| p.iter().filter(|r| (r.0 - q.0).abs() < 0.05).count() == 1).unwrap();
+    let base = p.iter().find(|q| (q.0 - tip.0).abs() > 0.05).unwrap().0;
+    (tip, base)
+}
+
+#[test]
+fn a_plus_strand_gene_has_an_arrowhead_at_its_right_end_that_points_right() {
+    let s = svg("c1:1-200"); // gene 21-110
+    let x_end = LEFT + 110.0 / 200.0 * PLOT; // the right edge of base 110
+
+    let (tip, base) = tip_and_base(&s);
+
+    assert!((tip.0 - x_end).abs() < 0.2, "tip {} vs gene end {x_end}", tip.0);
+    assert!(base < tip.0, "the base is left of the tip, so the arrow points right");
+    assert_eq!(attr(&s, "class=\"arrowhead\"", "data-strand"), "+");
+}
+
+#[test]
+fn a_minus_strand_gene_has_an_arrowhead_at_its_left_end_that_points_left() {
+    let s = svg("c2:1-40"); // gene 11-22 on the minus strand
+    let x_start = LEFT + 10.0 / 40.0 * PLOT; // the left edge of base 11
+
+    let (tip, base) = tip_and_base(&s);
+
+    assert!((tip.0 - x_start).abs() < 0.2, "tip {} vs gene start {x_start}", tip.0);
+    assert!(base > tip.0, "the base is right of the tip, so the arrow points left");
+    assert_eq!(attr(&s, "class=\"arrowhead\"", "data-strand"), "-");
+}
+
+#[test]
+fn when_the_end_of_transcription_is_outside_the_region_the_arrow_points_out_of_the_plot_edge() {
+    let (tip, base) = tip_and_base(&svg("c1:1-60")); // the plus gene continues to 110, past the right edge
+    assert!((tip.0 - (LEFT + PLOT)).abs() < 0.2 && base < tip.0);
+
+    let (tip, base) = tip_and_base(&svg("c2:15-40")); // the minus gene starts at 11, before the left edge
+    assert!((tip.0 - LEFT).abs() < 0.2 && base > tip.0);
+}
+
+#[test]
+fn the_arrow_line_runs_along_the_visible_gene_below_the_gene_blocks() {
+    let s = svg("c1:1-200");
+
+    let x1: f64 = attr(&s, "class=\"gene-arrow\"", "x1").parse().unwrap();
+    let x2: f64 = attr(&s, "class=\"gene-arrow\"", "x2").parse().unwrap();
+    let y: f64 = attr(&s, "class=\"gene-arrow\"", "y1").parse().unwrap();
+    assert!((x1 - (LEFT + 20.0 / 200.0 * PLOT)).abs() < 0.2 && (x2 - (LEFT + 110.0 / 200.0 * PLOT)).abs() < 0.2);
+    let cds_top: f64 = attr(&s, "class=\"cds\"", "y").parse().unwrap();
+    let cds_height: f64 = attr(&s, "class=\"cds\"", "height").parse().unwrap();
+    assert!(y > cds_top + cds_height, "the arrow line {y} is below the blocks that end at {}", cds_top + cds_height);
+}
+
+#[test]
+fn chevrons_along_the_gene_point_in_the_direction_of_transcription() {
+    let plus = svg("c1:1-200");
+    let minus = svg("c2:1-40");
+
+    assert!(count(&plus, "class=\"chevron\"") >= 4, "a long gene has several chevrons");
+    assert_eq!(attr(&plus, "class=\"chevron\"", "data-strand"), "+");
+    assert_eq!(attr(&minus, "class=\"chevron\"", "data-strand"), "-");
+    // A chevron is M x0,y-3 L x1,y L x0,y+3: for plus the tip (x1) is right of the open end (x0), for minus it is left.
+    let d = |s: &str| -> (f64, f64) {
+        let d = attr(s, "class=\"chevron\"", " d"); // with the space: `data-strand="` also ends in `d="`
+        let nums: Vec<f64> = d.replace(['M', 'L', ','], " ").split_whitespace().map(|n| n.parse().unwrap()).collect();
+        (nums[0], nums[2])
+    };
+    let (open, tip) = d(&plus);
+    assert!(tip > open);
+    let (open, tip) = d(&minus);
+    assert!(tip < open);
+}
+
+#[test]
+fn one_arrow_and_one_set_of_chevrons_per_transcript() {
+    let s = svg("c1:1-200");
+
+    assert_eq!(count(&s, "class=\"arrowhead\""), 1);
+    assert_eq!(count(&s, "class=\"gene-arrow\""), 1);
+    assert_eq!(count(&s, "class=\"intron\""), 1); // the existing intron line is unchanged
+}

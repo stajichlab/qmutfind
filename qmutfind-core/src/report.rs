@@ -10,6 +10,9 @@ const LEFT: f64 = 60.0;
 const PLOT: f64 = 880.0;
 /// The width of one character of a label, in pixels at font size 10 (an estimate for the label placement).
 const LABEL_CHAR_WIDTH: f64 = 6.0;
+/// The distance between the direction chevrons on a gene, and the length of the gene arrowhead, in pixels.
+const CHEVRON_STEP: f64 = 40.0;
+const ARROWHEAD: f64 = 8.0;
 
 /// A genomic range, 1-based and inclusive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +175,19 @@ fn draw_transcript(svg: &mut String, tx: &Transcript, scale: &Scale, region: &Re
         y + 22.0,
         y + 22.0
     ));
+    // Chevrons along the transcript line show the direction of transcription. The exon blocks are drawn after them and cover them.
+    let plus = tx.strand != crate::annotate::Strand::Minus;
+    let mut cx = x1 + CHEVRON_STEP / 2.0;
+    while cx < x2 - 2.0 {
+        let (open, tip) = if plus { (cx - 2.0, cx + 2.0) } else { (cx + 2.0, cx - 2.0) };
+        svg.push_str(&format!(
+            "<path class=\"chevron\" data-strand=\"{strand}\" d=\"M{open:.1},{:.1} L{tip:.1},{:.1} L{open:.1},{:.1}\" fill=\"none\" style=\"stroke:var(--fg,#222)\" stroke-width=\"1\"/>",
+            y + 19.0,
+            y + 22.0,
+            y + 25.0
+        ));
+        cx += CHEVRON_STEP;
+    }
     let cds_span = tx.cds.first().map(|c| c.0).zip(tx.cds.last().map(|c| c.1));
     for &(s, e) in &tx.exons {
         if e < region.start || s > region.end {
@@ -214,6 +230,19 @@ fn draw_transcript(svg: &mut String, tx: &Transcript, scale: &Scale, region: &Re
             (b - a).max(1.0)
         ));
     }
+    // The gene arrow below the blocks: a line over the visible gene with an arrowhead at the end of transcription (the right
+    // end on the plus strand, the left end on the minus strand). When that end is outside the region, the head sits at the plot
+    // edge and points out of it.
+    let ay = y + 38.0;
+    svg.push_str(&format!(
+        "<line class=\"gene-arrow\" x1=\"{x1:.1}\" y1=\"{ay:.1}\" x2=\"{x2:.1}\" y2=\"{ay:.1}\" style=\"stroke:var(--fg,#222)\" stroke-width=\"1.5\"/>"
+    ));
+    let (tip, base) = if plus { (x2, x2 - ARROWHEAD) } else { (x1, x1 + ARROWHEAD) };
+    svg.push_str(&format!(
+        "<polygon class=\"arrowhead\" data-strand=\"{strand}\" points=\"{tip:.1},{ay:.1} {base:.1},{:.1} {base:.1},{:.1}\" style=\"fill:var(--fg,#222)\"/>",
+        ay - 4.0,
+        ay + 4.0
+    ));
     svg.push_str("</g>");
 }
 
