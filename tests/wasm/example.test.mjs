@@ -26,14 +26,14 @@ for (const file of ['worker.js', 'app.js']) {
 
 test('the page loads the app script and the app starts the worker, and both files exist', () => {
   const html = readFileSync(join(DIR, 'index.html'), 'utf8');
-  assert.match(html, /<script type="module" src="app\.js">/);
+  assert.match(html, /<script type="module" src="app\.js\?v=__BUILD__">/);
   assert.ok(existsSync(join(DIR, 'app.js')));
-  assert.match(readFileSync(join(DIR, 'app.js'), 'utf8'), /new Worker\('worker\.js', \{ type: 'module' \}\)/);
+  assert.match(readFileSync(join(DIR, 'app.js'), 'utf8'), /new Worker\('worker\.js\?v=__BUILD__', \{ type: 'module' \}\)/);
 });
 
 test('the worker imports the web package from the path the build writes and uses the exports of the three steps', () => {
   const worker = readFileSync(join(DIR, 'worker.js'), 'utf8');
-  assert.match(worker, /from '\.\/pkg-web\/qmutfind_wasm\.js'/);
+  assert.match(worker, /from '\.\/pkg-web\/qmutfind_wasm\.js\?v=__BUILD__'/);
   for (const name of ['Session', 'annotate', 'stats', 'report', 'genome_plot']) {
     assert.match(worker, new RegExp(`\\b${name}\\b`), `worker does not use ${name}`);
   }

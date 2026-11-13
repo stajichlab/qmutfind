@@ -1708,3 +1708,159 @@ def test_the_scripts_the_page_imports_are_loaded_with_the_stamp(driver, server):
 
     assert any("app.js?v=" in n for n in names) and any("vendor/fflate.js?v=" in n for n in names), names
     assert not any(n.endswith("vendor/fflate.js") for n in names), names
+
+
+# The variant table sorts by every column header
+
+COLUMNS = ["Position", "Change", "Class", "Effect", "Gene", "Name", "Protein change", "Product", "AF", "DP"]
+
+
+def variant_vcf(records):
+    """An annotated VCF. Each record is a dict with contig, pos, ref, alt and optional cls, effect, gene, name, product, aa, af, dp."""
+    lines = ["##fileformat=VCFv4.2", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"]
+    for r in records:
+        info = f"CLASS={r.get('cls', 'SNP')};DP={r.get('dp', 20)};AF={r.get('af', '1.0000')};EFFECT={r.get('effect', 'intergenic')}"
+        for tag, key in (("GENE", "gene"), ("GENENAME", "name"), ("PRODUCT", "product"), ("AA", "aa")):
+            if r.get(key):
+                info += f";{tag}={r[key]}"
+        lines.append(f"{r['contig']}\t{r['pos']}\t.\t{r.get('ref', 'A')}\t{r.get('alt', 'G')}\t.\tPASS\t{info}")
+    return "\n".join(lines) + "\n"
+
+
+def load_variant_table(driver, server, records):
+    open_site(driver, server)
+    driver.execute_script("window.qmutfindLoadVariants(arguments[0]);", variant_vcf(records))
+    WebDriverWait(driver, 10).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#variant-table tbody tr")) > 0)
+
+
+def column(driver, name):
+    index = COLUMNS.index(name)
+    return driver.execute_script(
+        "return Array.from(document.querySelectorAll('#variant-table tbody tr')).map(r => r.cells[arguments[0]].textContent);", index)
+
+
+def sort_by(driver, name):
+    driver.find_element(By.XPATH, f"//table[@id='variant-table']//th/button[normalize-space()='{name}']").click()
+
+
+def aria_sort(driver, name):
+    return driver.find_element(By.XPATH, f"//table[@id='variant-table']//th[button[normalize-space()='{name}']]").get_attribute("aria-sort")
+
+
+SORT_RECORDS = [
+    {"contig": "c2", "pos": 5, "dp": 9, "af": "0.5000", "effect": "missense", "gene": "G10", "name": "zeta", "product": "kinase", "aa": "A1D", "cls": "SNP", "ref": "A", "alt": "G"},
+    {"contig": "c1", "pos": 100, "dp": 10, "af": "1.0000", "effect": "Frameshift", "gene": "G2", "name": "Alpha", "product": "ATPase", "aa": "", "cls": "SMALL_INDEL", "ref": "AT", "alt": "A"},
+    {"contig": "c1", "pos": 20, "dp": 100, "af": "0.2500", "effect": "intergenic", "gene": "", "name": "", "product": "", "aa": "", "cls": "SNP", "ref": "C", "alt": "T"},
+    {"contig": "c2", "pos": 1, "dp": 25, "af": "0.7500", "effect": "missense", "gene": "G1", "name": "beta", "product": "zinc finger", "aa": "L7P", "cls": "SNP", "ref": "G", "alt": "C"},
+]
+
+
+def test_every_column_header_except_the_draw_button_is_a_sort_button(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+
+    buttons = [b.text for b in driver.find_elements(By.CSS_SELECTOR, "#variant-table th button")]
+    assert buttons == COLUMNS
+    assert all(aria_sort(driver, c) == "none" for c in COLUMNS)
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#variant-table th")) == len(COLUMNS) + 1  # and the Draw column
+
+
+def test_a_number_column_sorts_by_value_not_by_text_and_a_second_click_reverses_it_and_a_third_restores_the_order(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+    original = column(driver, "DP")
+    assert original == ["9", "10", "100", "25"]
+
+    sort_by(driver, "DP")
+    assert column(driver, "DP") == ["9", "10", "25", "100"] and aria_sort(driver, "DP") == "ascending"
+    sort_by(driver, "DP")
+    assert column(driver, "DP") == ["100", "25", "10", "9"] and aria_sort(driver, "DP") == "descending"
+    sort_by(driver, "DP")
+    assert column(driver, "DP") == original and aria_sort(driver, "DP") == "none"
+
+
+def test_af_sorts_as_a_number(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+
+    sort_by(driver, "AF")
+
+    assert column(driver, "AF") == ["0.2500", "0.5000", "0.7500", "1.0000"]
+
+
+def test_af_values_of_different_lengths_sort_by_value(driver, server):
+    # "0.9" is larger than "0.25", although a text comparison with numbers in order would put it first.
+    records = [{"contig": "c1", "pos": i + 1, "af": af} for i, af in enumerate(["0.9", "0.25", "1", "0.125"])]
+    load_variant_table(driver, server, records)
+
+    sort_by(driver, "AF")
+
+    assert column(driver, "AF") == ["0.125", "0.25", "0.9", "1"]
+
+
+def test_position_sorts_by_contig_in_file_order_and_then_by_position(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+
+    sort_by(driver, "Position")
+
+    assert column(driver, "Position") == ["c2:1", "c2:5", "c1:20", "c1:100"]  # c2 comes first in the file
+    sort_by(driver, "Position")
+    assert column(driver, "Position") == ["c1:100", "c1:20", "c2:5", "c2:1"]
+
+
+def test_text_columns_sort_ignoring_case_and_with_numbers_in_order_and_empty_cells_stay_last_both_ways(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+
+    sort_by(driver, "Gene")
+    assert column(driver, "Gene") == ["G1", "G2", "G10", ""]  # G2 before G10, empty last
+    sort_by(driver, "Gene")
+    assert column(driver, "Gene") == ["G10", "G2", "G1", ""]  # descending, empty still last
+    sort_by(driver, "Name")
+    assert column(driver, "Name") == ["Alpha", "beta", "zeta", ""]  # case-insensitive
+    sort_by(driver, "Effect")
+    assert column(driver, "Effect") == ["Frameshift", "intergenic", "missense", "missense"]
+
+
+def test_change_class_protein_change_and_product_sort_too(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+
+    sort_by(driver, "Change")
+    assert column(driver, "Change") == ["A > G", "AT > A", "C > T", "G > C"]
+    sort_by(driver, "Class")
+    assert column(driver, "Class") == ["SMALL_INDEL", "SNP", "SNP", "SNP"]
+    sort_by(driver, "Protein change")
+    assert column(driver, "Protein change") == ["A1D", "L7P", "", ""]
+    sort_by(driver, "Product")
+    assert column(driver, "Product") == ["ATPase", "kinase", "zinc finger", ""]
+
+
+def test_sorting_covers_all_variants_not_only_the_rows_shown(driver, server):
+    records = [{"contig": "c1", "pos": 1000 + i, "dp": i + 1} for i in range(600)]  # the table shows 500 rows
+    load_variant_table(driver, server, records)
+    assert len(column(driver, "DP")) == 500
+
+    sort_by(driver, "DP")
+    sort_by(driver, "DP")  # descending
+
+    assert column(driver, "DP")[:3] == ["600", "599", "598"]  # rows 598 to 600 of the file are now on top
+
+
+def test_a_sorted_row_still_draws_its_own_variant(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+    sort_by(driver, "DP")
+    sort_by(driver, "DP")  # descending: the first row is c1:20 with depth 100
+
+    driver.find_element(By.CSS_SELECTOR, "#variant-table tbody tr button.draw-row").click()
+
+    region = driver.find_element(By.ID, "region").get_attribute("value")
+    assert region.startswith("c1:") and "-" in region
+    low, high = (int(x) for x in region.split(":")[1].split("-"))
+    assert low <= 20 <= high and low == 1  # a window of 2.5 kb around c1:20, cut at 1
+
+
+def test_the_sort_stays_when_the_effect_filter_changes_and_resets_when_new_variants_are_loaded(driver, server):
+    load_variant_table(driver, server, SORT_RECORDS)
+    sort_by(driver, "DP")
+
+    driver.find_element(By.CSS_SELECTOR, "#effect-filter option[value='missense']").click()
+    assert column(driver, "DP") == ["9", "25"] and aria_sort(driver, "DP") == "ascending"
+
+    driver.execute_script("window.qmutfindLoadVariants(arguments[0]);", variant_vcf(SORT_RECORDS))
+    assert aria_sort(driver, "DP") == "none" and column(driver, "DP") == ["9", "10", "100", "25"]

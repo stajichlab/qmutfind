@@ -184,17 +184,72 @@ function parseVariants(vcfText) {
 let variants = [];
 const cell = (text) => { const td = document.createElement('td'); td.textContent = text; return td; };
 
+// The columns of the variant table. A header is a button: the first click sorts up, the second sorts down, the third
+// restores the order of the file. Empty cells stay last in both directions. All variants are sorted, not only the rows shown.
+const TABLE_COLUMNS = [
+  { label: 'Position', kind: 'position' },
+  { label: 'Change', kind: 'text', value: (v) => `${v.ref} > ${v.alt}` },
+  { label: 'Class', kind: 'text', value: (v) => v.cls },
+  { label: 'Effect', kind: 'text', value: (v) => v.effect },
+  { label: 'Gene', kind: 'text', value: (v) => v.gene },
+  { label: 'Name', kind: 'text', value: (v) => v.geneName },
+  { label: 'Protein change', kind: 'text', value: (v) => v.aa },
+  { label: 'Product', kind: 'text', value: (v) => v.product },
+  { label: 'AF', kind: 'number', value: (v) => v.af },
+  { label: 'DP', kind: 'number', value: (v) => v.dp },
+];
+let sortColumn = null; // an index into TABLE_COLUMNS, or null for the order of the file
+let sortDirection = 1; // 1 up, -1 down
+let contigRank = new Map(); // the order in which the contigs first appear in the file
+
+/** The variants in the order of the chosen column. Array.prototype.sort is stable, so equal cells keep the file order. */
+function sortedVariants(list) {
+  if (sortColumn === null) return list;
+  const column = TABLE_COLUMNS[sortColumn];
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  const empty = (v) => (column.kind === 'position' ? false : column.kind === 'number' ? !Number.isFinite(parseFloat(column.value(v))) : !column.value(v));
+  const compare = (a, b) => {
+    if (column.kind === 'position') return (contigRank.get(a.contig) - contigRank.get(b.contig)) || (a.pos - b.pos);
+    if (column.kind === 'number') return parseFloat(column.value(a)) - parseFloat(column.value(b));
+    return collator.compare(column.value(a), column.value(b));
+  };
+  return [...list].sort((a, b) => {
+    const ea = empty(a);
+    const eb = empty(b);
+    if (ea || eb) return ea === eb ? 0 : (ea ? 1 : -1); // empty cells last, whatever the direction
+    return sortDirection * compare(a, b);
+  });
+}
+
+function sortBy(index) {
+  if (sortColumn === index) {
+    if (sortDirection === 1) sortDirection = -1;
+    else sortColumn = null;
+  } else {
+    sortColumn = index;
+    sortDirection = 1;
+  }
+  renderTable();
+}
+
 function renderTable() {
   const filter = $('effect-filter').value;
-  const shown = variants.filter((v) => !filter || v.effect === filter);
+  const shown = sortedVariants(variants.filter((v) => !filter || v.effect === filter));
   const table = $('variant-table');
   table.replaceChildren();
   const head = table.createTHead().insertRow();
-  for (const name of ['Position', 'Change', 'Class', 'Effect', 'Gene', 'Name', 'Protein change', 'Product', 'AF', 'DP', '']) {
+  for (const [index, column] of TABLE_COLUMNS.entries()) {
     const th = document.createElement('th');
-    th.textContent = name;
+    th.setAttribute('aria-sort', sortColumn === index ? (sortDirection === 1 ? 'ascending' : 'descending') : 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sort';
+    button.textContent = column.label;
+    button.addEventListener('click', () => sortBy(index));
+    th.appendChild(button);
     head.appendChild(th);
   }
+  head.appendChild(document.createElement('th')); // the Draw buttons
   const body = table.createTBody();
   for (const v of shown.slice(0, MAX_ROWS)) {
     const row = body.insertRow();
@@ -215,9 +270,13 @@ function renderTable() {
 }
 
 $('effect-filter').addEventListener('change', renderTable);
+window.qmutfindLoadVariants = (vcfText) => loadVariants(vcfText); // for the tests
 
 function loadVariants(vcfText) {
   variants = parseVariants(vcfText);
+  sortColumn = null; // a new set of variants starts in the order of the file
+  contigRank = new Map();
+  for (const v of variants) if (!contigRank.has(v.contig)) contigRank.set(v.contig, contigRank.size);
   const counts = {};
   for (const v of variants) counts[v.effect] = (counts[v.effect] || 0) + 1;
   const select = $('effect-filter');

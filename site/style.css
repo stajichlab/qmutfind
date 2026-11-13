@@ -248,3 +248,8 @@ table.grid td.new { font-weight: 700; }
   #strain-table td::before { content: attr(data-label); display: block; font-size: .78rem; font-weight: 600; opacity: .85; }
   #strain-table td.strain-reads:empty, #strain-table td.strain-calls:empty, #strain-table td.strain-seconds:empty { display: none; }
 }
+
+#variant-table th button.sort { font: inherit; font-weight: 600; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left; }
+#variant-table th button.sort:hover, #variant-table th button.sort:focus-visible { text-decoration: underline; }
+#variant-table th[aria-sort="ascending"] button.sort::after { content: " \25B2"; font-size: .7em; }
+#variant-table th[aria-sort="descending"] button.sort::after { content: " \25BC"; font-size: .7em; }
