@@ -1238,3 +1238,30 @@ Scripts: `bench/prjna1094460/bwa_only_snps.py` (all 13 samples), `job_diag_wt30.
   CEA10-versus-A1163 background that the parent comparison removes. Sites seen in WT30 only (one sample, 63 sites) may not represent the other samples.
 - Not tested: other rammap settings (seed length, minimizer window, chaining and local-alignment limits) on the lost reads, and a lower `min-mapq` together
   with them. A mapq 0 test earlier (WT30) did not close the gap (bwa-only calls 109 against 94).
+
+## 12q. Saved results in the browser, and four review findings (2026-11-12)
+Saved results (IndexedDB), `site/persist.js` and the "Keep my results in this browser" panel in the combine section:
+- Saved after each finished sample, each combine, each removal of a sample and each import: the catalog zip (the same bytes as Export), the
+  reference and gene files as loaded, and a small header (time, sample count, size, whether a combine existed). The reads are never saved.
+  Keeping is on by default; the box is remembered in `localStorage` (`qmutfind-keep`). A reference or gene file above 300 MB is not saved.
+- On the next visit the page only reports what it found ("Found saved results: ...") and shows Restore and Delete. Restore replaces the sample
+  list (restored samples are "imported" and cannot run again), puts the reference and gene file back as if loaded from "this browser", and
+  makes the combine again when one existed (it is deterministic). Saved results that were not restored are never overwritten: new results are not
+  saved until the user restores, deletes, or presses "Save now (replaces the saved results)". An empty list never replaces saved results.
+- Without IndexedDB (a private window, blocked site data, or `?nostore=1`) the page says so and everything else works. Write errors (quota) are
+  shown and do not stop the page. The line shows the size of the saved data and `navigator.storage.estimate()` usage when the browser gives it.
+- Not measured: quotas in other browsers; Chrome and Safari are untested. The data is per browser profile and the browser may clear it.
+The four findings of the review:
+- Gzip checksums: `site/gz.js` (`VerifyingGunzip`, with a CRC-32 in JS) checks the CRC and the length of every member, using fflate's `onmember`
+  offset to read the trailer of the member before. Used for every gzip file that the worker reads and for the limited download. A file that is cut at
+  the read limit is not read to its end and is not checked. A file whose trailing bytes are not a gzip trailer (padding after the last member) is
+  an error now. Node tests: `tests/wasm/gz.test.mjs` (10; three of the checks fail when the comparison is removed).
+- `FastqChunker` cap: an unfinished record may hold at most 64 MiB (`FastqChunker::with_limit`, default `DEFAULT_MAX_RECORD_BYTES`); past that it is an
+  error that says the input may not be FASTQ. A 3 Mb record is fine. Browser test: 100 MB with no line break stops with "larger than".
+- Read limit off the main thread: the unpacking, counting and repacking of `downloadFirstReads` now run in the worker (`fetchreads` step in
+  `worker.js`, which needs no WebAssembly). Browser test: 300k reads from a web address; before the change the 50 ms heartbeat of the page was late by
+  4,090 ms in total (longest gap 421 ms); the test now requires a longest gap under 400 ms and total lateness under 1.5 s.
+- Total-size check: the reported bypass (look up with a limit, then set the limit to 0) was already closed, because the page looks the run up again
+  at run time; a test now keeps it closed. A sample's files are now also counted together (a budget of the download limit for all its files; with a
+  read limit, the kept packed bytes are counted). Browser test: three files that each fit and together do not.
+- Tests now: 274 Rust, 42 Node, 183 browser (Firefox only). The bench tests were not run in this step.

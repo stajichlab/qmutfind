@@ -1,5 +1,6 @@
 // The page: three steps (call, summarize, draw). The result of each step is kept here and the next step uses it.
-import { Gunzip, Gzip, zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js?v=__BUILD__';
+import { zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js?v=__BUILD__';
+import { storeAvailable, readStore, writeStore, clearStore, estimateStorage } from './persist.js?v=__BUILD__';
 
 const $ = (id) => document.getElementById(id);
 const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
@@ -478,13 +479,15 @@ describeSource();
 const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
 let loading = false;
 
-async function download(item, base, label, statusId = 'example-status', signal = undefined) {
+/** `budget` is { left }: the bytes that the downloads of one sample may still take. Its files together stay within the download limit. */
+async function download(item, base, label, statusId = 'example-status', signal = undefined, budget = { left: MAX_DOWNLOAD }) {
   const url = checkUrl(new URL(item.url, base).href, label);
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
   const announced = Number(response.headers.get('Content-Length')) || 0;
   const expected = item.bytes || announced;
-  if (expected > MAX_DOWNLOAD) throw new Error(`${label}: the download is too large (${mb(expected)}; the limit is ${mb(MAX_DOWNLOAD)}).`);
+  const tooLarge = (size, more = '') => new Error(`${label}: the download is too large${budget.left < MAX_DOWNLOAD ? ' together with the other files of this sample' : ''} (${more}${mb(size)}; the limit is ${mb(budget.left < MAX_DOWNLOAD ? budget.left : MAX_DOWNLOAD)}${budget.left < MAX_DOWNLOAD ? ' for what is left' : ''}).`);
+  if (expected > budget.left) throw tooLarge(expected);
   const reader = response.body.getReader();
   const parts = [];
   let got = 0;
@@ -493,10 +496,11 @@ async function download(item, base, label, statusId = 'example-status', signal =
     if (done) break;
     parts.push(value);
     got += value.length;
-    if (got > MAX_DOWNLOAD) { await reader.cancel(); throw new Error(`${label}: the download is too large (more than ${mb(MAX_DOWNLOAD)}).`); }
+    if (got > budget.left) { await reader.cancel(); throw tooLarge(budget.left, 'more than '); }
     show(statusId, `Downloading ${label}: ${mb(got)}${expected ? ` of ${mb(expected)}` : ''}`);
   }
   if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
+  budget.left -= got;
   // The page reads a file as gzip by its name. A download whose name has no .gz but whose content is gzip gets the name.
   let name = item.name;
   if (parts.length && parts[0].length > 1 && parts[0][0] === 0x1f && parts[0][1] === 0x8b && !name.endsWith('.gz')) name += '.gz';
@@ -504,52 +508,16 @@ async function download(item, base, label, statusId = 'example-status', signal =
 }
 
 /**
- * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download. The kept reads
- * are packed again as gzip, so the page holds the compressed reads only. A record is taken to be four lines. Returns
- * { file, reads, cut }: `cut` is true when the download stopped at the limit.
+ * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download. A worker does the
+ * unpacking and packing (see `fetchReads` in worker.js), so the page stays responsive. Returns { file, reads, cut }: `cut` is true
+ * when the download stopped at the limit. `budget` is { left }, as for `download`.
  */
-async function downloadFirstReads(item, base, label, statusId, signal, maxReads) {
+async function downloadFirstReads(item, base, label, statusId, signal, maxReads, budget = { left: MAX_DOWNLOAD }) {
   const url = checkUrl(new URL(item.url, base).href, label);
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
-  const reader = response.body.getReader();
-  const target = maxReads * 4; // lines
-  const packed = [];
-  let packedBytes = 0;
-  const gzip = new Gzip({ level: 3 }, (chunk) => { packed.push(chunk); packedBytes += chunk.length; });
-  let lines = 0;
-  let cut = false;
-  let downloaded = 0;
-  let gunzip = null;
-  const feed = (bytes) => {
-    if (cut) return;
-    let seen = 0;
-    for (let i = 0; i < bytes.length; i++) {
-      if (bytes[i] === 10 && ++seen + lines === target) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
-    }
-    lines += seen;
-    gzip.push(bytes, false);
-    if (packedBytes > MAX_DOWNLOAD) throw new Error(`${label}: the kept reads are too large (more than ${mb(MAX_DOWNLOAD)}).`);
-  };
-  for (let first = true; !cut; first = false) {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (gunzip) gunzip.push(new Uint8Array(0), true); // a gzip file that ends early stops here with an error
-      break;
-    }
-    downloaded += value.length;
-    if (first && value.length > 1 && value[0] === 0x1f && value[1] === 0x8b) gunzip = new Gunzip((chunk) => feed(chunk));
-    try {
-      if (gunzip) gunzip.push(value, false); else feed(value);
-    } catch (error) {
-      if (!cut) throw error; // data after the limit may be anything, so an error there is ignored
-    }
-    show(statusId, `Reading ${label}: ${mb(downloaded)} downloaded, ${Math.floor(lines / 4).toLocaleString()} reads kept`);
-  }
-  if (cut) await reader.cancel();
-  gzip.push(new Uint8Array(0), true);
-  const name = `${item.name.replace(/\.gz$/, '')}.gz`;
-  return { file: new File(packed, name), reads: Math.floor(lines / 4), cut };
+  const m = await callWorker({ step: 'fetchreads', url: url.href, maxReads, maxKept: budget.left, label },
+    (p) => show(statusId, `Reading ${label}: ${mb(p.downloaded)} downloaded, ${p.reads.toLocaleString()} reads kept`));
+  budget.left -= m.bytes.length;
+  return { file: new File([m.bytes], `${item.name.replace(/\.gz$/, '')}.gz`), reads: m.reads, cut: m.cut };
 }
 
 /** An address the page may download from: https (or this site), and no user name or password. */
@@ -1213,7 +1181,7 @@ function sampleRow(s) {
   remove.setAttribute('aria-label', 'Remove this sample');
   remove.addEventListener('click', () => {
     const at = samples.indexOf(s);
-    if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); invalidateCombined(); renderSamples(); }
+    if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); invalidateCombined(); renderSamples(); saveSoon(); }
   });
   nameLine.prepend(remove); // the minus button sits in front of the name
   return row;
@@ -1241,16 +1209,17 @@ async function prepareReads(s, limit, signal) {
     const addresses = s.urls.split('\n').map((x) => x.trim()).filter(Boolean);
     const urls = addresses.map((a) => checkUrl(directAddress(a), `the reads of ${s.name}`)); // all checked before any download
     const files = [];
+    const budget = { left: MAX_DOWNLOAD }; // the files of one sample together stay within the download limit
     let anyCut = false;
     for (const [i, url] of urls.entries()) {
       const item = { name: decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download'), url: url.href, bytes: 0 };
       const label = `${s.name} file ${i + 1} of ${urls.length}`;
       if (limit) {
-        const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit);
+        const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit, budget);
         files.push(result.file);
         anyCut ||= result.cut;
       } else {
-        files.push(await download(item, location.href, label, 'strain-status', signal));
+        files.push(await download(item, location.href, label, 'strain-status', signal, budget));
       }
     }
     return { files, expected: null, kind: null, anyCut };
@@ -1259,15 +1228,16 @@ async function prepareReads(s, limit, signal) {
   const run = await lookupRun(s.accession, limit);
   s.info = run.info;
   const files = [];
+  const budget = { left: MAX_DOWNLOAD };
   let anyCut = false;
   for (const [i, item] of run.files.entries()) {
     const label = `${run.accession} file ${i + 1} of ${run.files.length}`;
     if (limit) {
-      const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit);
+      const result = await downloadFirstReads(item, location.href, label, 'strain-status', signal, limit, budget);
       files.push(result.file);
       anyCut ||= result.cut;
     } else {
-      files.push(await download(item, location.href, label, 'strain-status', signal));
+      files.push(await download(item, location.href, label, 'strain-status', signal, budget));
     }
   }
   const perFile = run.paired ? run.perFile : Math.round(run.perFile / run.files.length);
@@ -1341,6 +1311,7 @@ $('strain-run').addEventListener('click', async () => {
       activeAbort = null;
       invalidateCombined();
       renderSamples();
+      saveSoon();
     }
     if (sampleCancelled) for (const s of samples) if (s.state === 'waiting') s.state = 'cancelled';
     sampleStatus(sampleCancelled ? 'Cancelled. Samples that were not finished can run again.' : 'Done. Combine the finished samples, look at one in the results, or export the catalog.');
@@ -1478,6 +1449,7 @@ $('strain-combine').addEventListener('click', async () => {
     useSelectedSample(); // a parent may now be known
     const n = m.table.split('\n').filter(Boolean).length - 1;
     show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} samples.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
+    saveSoon();
   } catch (error) {
     show('combine-status', `Error: ${error.message}`);
   }
@@ -1489,9 +1461,10 @@ function catalogFileName(index, name, extension) {
   return `strains/${String(index + 1).padStart(2, '0')}_${safe}.${extension}`;
 }
 
-$('strain-export').addEventListener('click', () => {
+/** The files of the catalog zip for the sample list as it is now: { files, count }, or null when no sample has a name. */
+function buildCatalog() {
   const listed = samples.filter((s) => s.name);
-  if (!listed.length) { show('catalog-status', 'The list is empty. Add samples first.'); return; }
+  if (!listed.length) return null;
   const files = {};
   const entries = listed.map((s, i) => {
     const entry = {
@@ -1523,8 +1496,14 @@ $('strain-export').addEventListener('click', () => {
   };
   files['catalog.json'] = strToU8(JSON.stringify(catalog, null, 1));
   if (lastCombined) { files['combined.tsv'] = strToU8(lastCombined.table); files['summary.tsv'] = strToU8(lastCombined.summary); }
-  offer('download-catalog', 'qmutfind-catalog.zip', zipSync(files), 'application/zip');
-  show('catalog-status', `Exported ${listed.length} sample(s). Use the download link.`);
+  return { files, count: listed.length };
+}
+
+$('strain-export').addEventListener('click', () => {
+  const built = buildCatalog();
+  if (!built) { show('catalog-status', 'The list is empty. Add samples first.'); return; }
+  offer('download-catalog', 'qmutfind-catalog.zip', zipSync(built.files), 'application/zip');
+  show('catalog-status', `Exported ${built.count} sample(s). Use the download link.`);
 });
 
 /** Check an imported catalog and return the samples to load. Throws an Error with a reason. */
@@ -1558,38 +1537,184 @@ function readCatalog(archive) {
   return { catalog, loaded };
 }
 
+/** Unpack a catalog zip (bytes) with the size checks of an import. Throws an Error with a reason. */
+function unpackCatalog(bytes) {
+  let total = 0;
+  try {
+    return unzipSync(bytes, {
+      filter: (f) => { total += f.originalSize; if (total > MAX_CATALOG_BYTES) throw new Error('too large'); return true; },
+    });
+  } catch (error) {
+    throw new Error(error.message === 'too large' ? `the zip unpacks to more than ${mb(MAX_CATALOG_BYTES)}.` : 'the file is not a zip file that this page can read.');
+  }
+}
+
+/** Replace the sample list and the settings with a catalog. Returns { catalog, loaded }. */
+function applyCatalog(archive) {
+  const { catalog, loaded } = readCatalog(archive);
+  samples.splice(0, samples.length);
+  for (const s of loaded) newSample(s);
+  lastCombined = null;
+  renderSamples();
+  renderCombined();
+  const settings = catalog.settings || {};
+  if (['short', 'long'].includes(settings.kind)) $('kind').value = settings.kind;
+  if (Number.isFinite(settings.min_depth)) $('combine-min-depth').value = String(settings.min_depth);
+  if (Number.isFinite(settings.read_limit_per_file)) { $('read-limit').value = String(settings.read_limit_per_file / 1000); describeLimit(); }
+  if (typeof catalog.parent === 'string' && sampleByName(catalog.parent)) $('strain-parent').value = catalog.parent;
+  return { catalog, loaded };
+}
+
 $('catalog-file').addEventListener('change', async () => {
   const file = $('catalog-file').files[0];
   if (!file) return;
   try {
     if (file.size > MAX_CATALOG_BYTES) throw new Error(`the file is too large (${mb(file.size)}; the limit is ${mb(MAX_CATALOG_BYTES)}).`);
-    let total = 0;
-    let archive;
-    try {
-      archive = unzipSync(new Uint8Array(await file.arrayBuffer()), {
-        filter: (f) => { total += f.originalSize; if (total > MAX_CATALOG_BYTES) throw new Error('too large'); return true; },
-      });
-    } catch (error) {
-      throw new Error(error.message === 'too large' ? `the zip unpacks to more than ${mb(MAX_CATALOG_BYTES)}.` : 'the file is not a zip file that this page can read.');
-    }
-    const { catalog, loaded } = readCatalog(archive);
-    samples.splice(0, samples.length);
-    for (const s of loaded) newSample(s);
-    lastCombined = null;
-    renderSamples();
-    renderCombined();
-    const settings = catalog.settings || {};
-    if (['short', 'long'].includes(settings.kind)) $('kind').value = settings.kind;
-    if (Number.isFinite(settings.min_depth)) $('combine-min-depth').value = String(settings.min_depth);
-    if (Number.isFinite(settings.read_limit_per_file)) { $('read-limit').value = String(settings.read_limit_per_file / 1000); describeLimit(); }
-    if (typeof catalog.parent === 'string' && sampleByName(catalog.parent)) $('strain-parent').value = catalog.parent;
+    const archive = unpackCatalog(new Uint8Array(await file.arrayBuffer()));
+    const { catalog, loaded } = applyCatalog(archive);
     show('catalog-status', `Loaded ${loaded.length} sample(s) from ${file.name}${catalog.reference ? ` (made with the reference ${catalog.reference.name})` : ''}. Imported samples cannot run again.`);
+    saveSoon();
   } catch (error) {
     show('catalog-status', `Error: ${error.message}`);
   } finally {
     $('catalog-file').value = '';
   }
 });
+
+// ---- Saved results (IndexedDB) ----------------------------------------------------------------------------------------
+// The finished samples, the combine and the reference are saved in the browser after each sample and each combine, and restored
+// on request. The reads are never saved. Results that were saved earlier and not restored are not overwritten by new ones.
+const KEEP_KEY = 'qmutfind-keep';
+const MAX_SAVED_FILE = 300e6; // a reference or gene file above this is not saved
+let savedHeader = null; // { saved, count, bytes, combined, reference, gff } of what is in the store, or null
+let saveHeld = false; // saved results exist and were not restored: new results are not saved over them
+let saveTimer = null;
+const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
+function keepResults() {
+  return $('keep-results').checked && storeAvailable();
+}
+
+async function storageUse() {
+  const e = await estimateStorage();
+  return e && e.quota ? ` Storage used by this site in this browser: ${mb(e.usage)} of ${mb(e.quota)}.` : '';
+}
+
+/** The line under "Keep my results in this browser" and the buttons next to it. */
+async function showSaved(note = '') {
+  if (!storeAvailable()) {
+    show('saved-status', 'Saving in the browser is not available here (the browser blocks or lacks IndexedDB). Use Export to keep the results.');
+    for (const id of ['saved-restore', 'saved-delete', 'saved-save-now']) $(id).hidden = true;
+    $('keep-results').disabled = true;
+    return;
+  }
+  const off = $('keep-results').checked ? '' : ' Keeping is off: new results are not saved.';
+  let text;
+  if (!savedHeader) {
+    text = `Nothing is saved in this browser.${off}`;
+  } else {
+    const when = new Date(savedHeader.saved).toLocaleString();
+    const what = `${plural(savedHeader.count, 'sample')}${savedHeader.combined ? ', the combined table' : ''}${savedHeader.reference ? `, the reference ${savedHeader.reference}` : ''} (${mb(savedHeader.bytes)}, saved ${when})`;
+    text = saveHeld
+      ? `Found saved results: ${what}. Restore them to continue, or delete them. New results are not saved until you restore or delete these (or press "Save now").`
+      : `Saved in this browser: ${what}.${off}${await storageUse()}`;
+  }
+  show('saved-status', note ? `${text} ${note}` : text);
+  $('saved-restore').hidden = !savedHeader;
+  $('saved-delete').hidden = !savedHeader;
+  $('saved-save-now').hidden = !(saveHeld || !$('keep-results').checked) || !samples.some(isFinished);
+}
+
+function saveSoon() {
+  if (!keepResults() || saveHeld) { if (saveHeld && samples.some(isFinished)) showSaved(); return; }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveNow(false), 800);
+}
+
+/** Write the finished samples, the combine settings and the reference to the store. */
+async function saveNow(force) {
+  if (!storeAvailable() || (!force && (!keepResults() || saveHeld))) return;
+  const finished = samples.filter(isFinished);
+  if (!finished.length) { showSaved('There are no finished samples to save.'); return; } // an empty list never replaces saved results
+  try {
+    const built = buildCatalog();
+    const zip = zipSync(built.files);
+    const entries = { results: zip };
+    let bytes = zip.length;
+    for (const [slot, file] of [['reference', refFile()], ['gff', gffFile()]]) {
+      if (!file || file.size > MAX_SAVED_FILE) { entries[slot] = null; continue; }
+      entries[slot] = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+      bytes += file.size;
+    }
+    const header = { saved: new Date().toISOString(), count: finished.length, bytes, combined: Boolean(lastCombined), reference: refFile() ? refFile().name : '', gff: gffFile() ? gffFile().name : '' };
+    entries.header = header;
+    await writeStore(entries);
+    savedHeader = header;
+    saveHeld = false;
+    await showSaved();
+  } catch (error) {
+    show('saved-status', `Could not save in this browser: ${error.message || error}. The results are still in the page; use Export to keep them.`);
+  }
+}
+
+async function restoreSaved() {
+  try {
+    show('saved-status', 'Restoring');
+    const found = await readStore(['results', 'reference', 'gff', 'header']);
+    if (!found.results) throw new Error('the saved results are missing');
+    const archive = unpackCatalog(found.results);
+    const header = found.header || savedHeader || {};
+    const { loaded } = applyCatalog(archive);
+    const when = header.saved ? new Date(header.saved).toLocaleString() : '';
+    for (const slot of ['reference', 'gff']) {
+      const entry = found[slot];
+      if (!entry) continue;
+      example[slot] = new File([entry.bytes], entry.name);
+      example.source[slot] = `this browser (saved ${when})`;
+    }
+    if (found.reference) { example.source.reads = ''; }
+    describeSources();
+    saveHeld = false;
+    show('catalog-status', `Restored ${plural(loaded.length, 'sample')} from this browser. Restored samples cannot run again.`);
+    if (header.combined && loaded.filter(isFinished).length >= 2) $('strain-combine').click();
+    await showSaved();
+  } catch (error) {
+    show('saved-status', `Error: could not restore: ${error.message || error}`);
+  }
+}
+
+$('saved-restore').addEventListener('click', restoreSaved);
+$('saved-save-now').addEventListener('click', () => saveNow(true));
+$('saved-delete').addEventListener('click', async () => {
+  try {
+    await clearStore();
+    savedHeader = null;
+    saveHeld = false;
+    await showSaved();
+  } catch (error) {
+    show('saved-status', `Error: could not delete: ${error.message || error}`);
+  }
+});
+$('keep-results').addEventListener('change', () => {
+  try { localStorage.setItem(KEEP_KEY, $('keep-results').checked ? '1' : '0'); } catch (error) { /* the choice is then not remembered */ }
+  if ($('keep-results').checked) saveSoon();
+  showSaved();
+});
+
+(async function startSaved() {
+  try { $('keep-results').checked = localStorage.getItem(KEEP_KEY) !== '0'; } catch (error) { /* keeping stays on */ }
+  if (!storeAvailable()) { await showSaved(); return; }
+  try {
+    const found = await readStore(['header']);
+    if (found.header) { savedHeader = found.header; saveHeld = true; }
+  } catch (error) {
+    show('saved-status', `Saving in the browser is not available here (${error.message || error}). Use Export to keep the results.`);
+    for (const id of ['saved-restore', 'saved-delete', 'saved-save-now']) $(id).hidden = true;
+    $('keep-results').disabled = true;
+    return;
+  }
+  await showSaved();
+})();
 
 newSample();
 renderSamples();

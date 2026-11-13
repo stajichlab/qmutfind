@@ -66,14 +66,30 @@ impl<R: BufRead> Iterator for FastqReader<R> {
 
 /// Parse FASTQ from byte chunks that can split a record anywhere. Call `push` for each
 /// chunk, then `finish` once. A truncated last record is an error.
-#[derive(Default)]
 pub struct FastqChunker {
     buffer: Vec<u8>,
+    /// The most bytes of an unfinished record that are kept.
+    limit: usize,
+}
+
+/// The default limit for one unfinished record: 64 MiB. A Nanopore read is some kilobases to a few megabases.
+pub const DEFAULT_MAX_RECORD_BYTES: usize = 64 << 20;
+
+impl Default for FastqChunker {
+    fn default() -> Self {
+        FastqChunker::with_limit(DEFAULT_MAX_RECORD_BYTES)
+    }
 }
 
 impl FastqChunker {
     pub fn new() -> Self {
         FastqChunker::default()
+    }
+
+    /// A chunker that gives an error when an unfinished record grows past `limit` bytes. Input with no line breaks, or text that is not
+    /// FASTQ, would otherwise fill the memory of the tab before the end of the file shows the problem.
+    pub fn with_limit(limit: usize) -> Self {
+        FastqChunker { buffer: Vec::new(), limit }
     }
 
     /// Add a chunk. Returns the records that are complete now.
@@ -92,6 +108,14 @@ impl FastqChunker {
         }
         let records = FastqReader::new(&self.buffer[..consumed]).collect::<io::Result<Vec<_>>>()?;
         self.buffer.drain(..consumed);
+        if self.buffer.len() > self.limit {
+            let limit = self.limit;
+            self.buffer = Vec::new();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("a FASTQ record is larger than {limit} bytes: the input may not be FASTQ, or has no line breaks"),
+            ));
+        }
         Ok(records)
     }
 

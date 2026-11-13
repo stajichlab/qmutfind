@@ -175,6 +175,13 @@
   <p id="combined-title" class="hint"></p>
   <p id="combined-empty" class="hint">No table yet. Choose a parent if you like, then press "Combine the finished samples" (it needs two finished samples).</p>
   <div class="table-wrap"><table id="combined-table" class="grid"><thead></thead><tbody></tbody></table></div>
+  <div class="form" id="saved-panel">
+    <p class="check"><label><input type="checkbox" id="keep-results" checked> Keep my results in this browser (finished samples, the combine and the reference; never the reads)</label></p>
+    <div id="saved-status" class="readout" role="status"></div>
+    <p><button id="saved-restore" type="button" hidden>Restore the saved results (replaces the sample list)</button>
+    <button id="saved-save-now" type="button" hidden>Save now (replaces the saved results)</button>
+    <button id="saved-delete" type="button" hidden>Delete the saved results</button></p>
+  </div>
   <div class="form">
     <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the sample list.</label>
     <input id="catalog-file" type="file" accept=".zip,application/zip">
@@ -190,7 +197,10 @@
       when the sample has some. <code>lost</code> is a lead, not proof: it rests on a 1 kb window mean, not on the depth at the site.</li>
       <li>All samples must use the same settings. The window size is 1 kb. The thresholds for "covered" and "weak" were not tuned.</li>
       <li>An imported sample has no reads files, so it cannot run again.</li>
-      <li>The catalog is a record of this page's results. It is not saved in the browser; export it to keep it.</li>
+      <li>The catalog is a record of this page's results. With "Keep my results in this browser" on, the finished samples, the combine and the reference
+      are also saved in this browser (IndexedDB) after each sample and each combine, and can be restored on the next visit. That copy is private to this
+      browser and this site: it is not shared, and the browser may delete it when space is short or when you clear site data, so export the catalog too.
+      Saved results that were not restored are not overwritten by new results.</li>
     </ul>
   </details>
 </section>

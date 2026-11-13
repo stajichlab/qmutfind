@@ -2460,3 +2460,289 @@ def test_the_sharing_follows_the_finished_samples(driver, server, shared_samples
     assert "Showing the sample a" in banner_text(driver) and "1 only in this sample and 1 shared" in banner_text(driver)  # c still shares 52000
     strain_rows(driver)["c"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
     assert "shared" not in banner_text(driver).lower().split("allele fraction")[0], banner_text(driver)  # a alone: nothing to share
+
+
+# Review fixes, second round (2026-11-12): gzip checksums, the cap on one record, the read limit off the main thread, the total-size check
+
+def _damaged_gzip(text):
+    """A gzip file of `text` stored without compression, with one data byte changed: the inflater cannot notice, the CRC can."""
+    raw = bytearray(gzip.compress(text.encode(), compresslevel=0))
+    raw[len(raw) // 2] ^= 0x01
+    return bytes(raw)
+
+
+@pytest.mark.parametrize("how", ["local", "url", "url-limit"])
+def test_a_damaged_gzip_reads_file_is_an_error_that_names_the_checksum(driver, server, inputs, example_site, how):
+    (EXAMPLE_DIR / "bad.fq.gz").write_bytes(_damaged_gzip(snp_reads()))
+    (inputs / "bad.fq.gz").write_bytes(_damaged_gzip(snp_reads()))
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    if how == "local":
+        add_sample(driver, "bad", "local", inputs / "bad.fq.gz")
+    else:
+        add_sample(driver, "bad", "url", f"{server}/dist-site/_test_example/bad.fq.gz")
+    if how == "url-limit":
+        set_read_limit_thousands(driver, 100)  # above the 10 reads: the whole file is read, so it is checked
+
+    result = run_samples(driver)["bad"]
+
+    assert result.startswith("Error") and "checksum" in result, result
+
+
+def test_a_record_with_no_line_breaks_stops_the_run_with_an_error_not_with_memory_growth(driver, server, inputs):
+    # 100 MB of one line. The 64 MiB cap on an unfinished record stops the run long before the end of the file.
+    big = inputs / "oneline.fq"
+    with open(big, "wb") as fh:
+        fh.write(b"@r\n")
+        fh.write(b"A" * (100 * 1000 * 1000))
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "one", "local", big)
+
+    result = run_samples(driver, wait=300)["one"]
+
+    assert result.startswith("Error") and "larger than" in result, result
+
+
+def _big_reads_gz(path, pairs=300_000):
+    """About `pairs` FASTQ records of 150 bases cut from the test genome, gzip level 1."""
+    import random
+    rng = random.Random(5)
+    with gzip.open(path, "wt", compresslevel=1) as fh:
+        for i in range(pairs):
+            start = rng.randrange(0, len(CHR_A) - 150)
+            fh.write(f"@b{i}\n{CHR_A[start:start + 150]}\n+\n{'I' * 150}\n")
+
+
+HEARTBEAT = """
+  window.__gaps = []; let last = performance.now();
+  window.__beat = setInterval(() => { const t = performance.now(); window.__gaps.push(t - last); last = t; }, 50);
+"""
+
+
+def test_reading_the_first_reads_of_a_large_download_keeps_the_page_responsive(driver, server, inputs, example_site):
+    # The first 300k reads are unpacked, counted and packed again. On the main thread that took seconds in which the page did not
+    # answer; in a worker the page keeps its 50 ms heartbeat.
+    _big_reads_gz(EXAMPLE_DIR / "big.fq.gz")
+    open_site(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    set_read_limit_thousands(driver, 300)
+    add_sample(driver, "big", "url", f"{server}/dist-site/_test_example/big.fq.gz")
+    driver.execute_script(HEARTBEAT)
+
+    result = run_samples(driver, wait=300)["big"]
+    gaps = driver.execute_script("clearInterval(window.__beat); return window.__gaps;")
+
+    assert result.startswith("Done: 300000 reads"), result
+    late = sum(g - 50 for g in gaps if g > 100)
+    assert max(gaps) < 400 and late < 1500, f"the page stalled: longest gap {max(gaps):.0f} ms, total lateness {late:.0f} ms over {len(gaps)} beats"
+
+
+def test_a_run_looked_up_with_a_read_limit_is_still_refused_when_the_limit_is_removed(driver, server, inputs, ena_site):
+    fix_host(server)
+    driver.get(f"{server}/{SITE}?enaapi=_test_ena/%3Fv%3D{time.time_ns()}&download_limit_mb=0.0001")  # a limit of 100 bytes
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "strain-table").is_displayed())
+    choose(driver, "reference", inputs / "ref.fa")
+    set_read_limit_thousands(driver, 1)
+    row = add_sample(driver, "r", "sra", "SRR9999991")
+    assert "Only the first" in sra_check(driver, "", row)  # with a limit, a run above the download limit is allowed
+    set_read_limit_thousands(driver, 0)
+
+    result = run_samples(driver)["r"]
+
+    assert result.startswith("Error") and "too large" in result, result
+
+
+def test_the_total_of_all_the_files_of_a_sample_is_checked_not_only_each_file(driver, server, inputs, example_site):
+    size = (EXAMPLE_DIR / "reads.fq.gz").stat().st_size
+    limit_mb = size * 2.5 / 1e6  # one file or two fit, three do not
+    driver.get(f"{server}/{SITE}?download_limit_mb={limit_mb}")
+    choose(driver, "reference", inputs / "ref.fa")
+    set_read_limit_thousands(driver, 0)  # no read limit: whole files are downloaded (with a limit, the kept reads are counted instead)
+    address = f"{server}/dist-site/_test_example/reads.fq.gz"
+    add_sample(driver, "three", "url", [address, address, address])
+
+    result = run_samples(driver)["three"]
+
+    assert result.startswith("Error") and "too large" in result, result
+
+
+# Saved results: finished samples, the reference and the combine are kept in the browser (IndexedDB) and restored on request
+
+def wipe_store(driver, server):
+    """Open the page and delete the saved data of this origin (the driver is shared by all tests)."""
+    open_site(driver, server)
+    driver.set_script_timeout(30)
+    driver.execute_async_script("""const done = arguments[arguments.length - 1];
+      const r = indexedDB.deleteDatabase('qmutfind'); r.onsuccess = r.onerror = r.onblocked = () => done(true);""")
+    open_site(driver, server)  # the page looks at the store as it loads
+
+
+def saved_text(driver):
+    return driver.find_element(By.ID, "saved-status").text
+
+
+def wait_saved(driver, prefix="Saved", wait=60):
+    WebDriverWait(driver, wait).until(lambda d: saved_text(d).startswith(prefix))
+    return saved_text(driver)
+
+
+def keep_box(driver):
+    return driver.find_element(By.ID, "keep-results")
+
+
+def test_the_page_says_that_nothing_is_saved_when_it_starts_clean_and_keeping_is_on_by_default(driver, server):
+    wipe_store(driver, server)
+
+    wait_saved(driver, "Nothing is saved")
+
+    assert keep_box(driver).is_selected()
+    assert not driver.find_element(By.ID, "saved-restore").is_displayed()
+    assert not driver.find_element(By.ID, "saved-delete").is_displayed()
+
+
+def test_a_finished_sample_and_the_reference_are_saved_and_come_back_after_a_reload(driver, server, inputs):
+    expected = cli_results(inputs)
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    choose(driver, "gff", inputs / "genes.gff3")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    assert run_samples(driver)["s1"].startswith("Done")
+    assert "1 sample" in wait_saved(driver)
+
+    open_site(driver, server)  # a new visit: nothing chosen, nothing run
+    found = wait_saved(driver, "Found")
+    assert "1 sample" in found and "Restore" in found, found
+    assert driver.find_element(By.ID, "saved-restore").is_displayed() and driver.find_element(By.ID, "saved-delete").is_displayed()
+    assert "s1" not in strain_states(driver)  # nothing is loaded until the user asks
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "s1" in strain_states(d))
+
+    assert strain_state(driver, "s1").startswith("imported")
+    assert "ref.fa" in driver.find_element(By.ID, "source-reference").text and "this browser" in driver.find_element(By.ID, "source-reference").text
+    assert "genes.gff3" in driver.find_element(By.ID, "source-gff").text
+    assert download_text(driver, "download-vcf") == expected["vcf"]
+    assert press(driver, "summarize", "summarize-status").startswith("Done")  # the restored reference is used
+    assert download_text(driver, "download-plot") == expected["plot"]
+    assert "variants" in press(driver, "annotate", "annotate-status")  # and the restored gene file
+    assert download_text(driver, "download-annotated") == expected["annot"]
+
+
+def test_the_combine_is_saved_and_made_again_on_restore(driver, server, shared_samples):
+    wipe_store(driver, server)
+    run_abc_and_combine(driver, server, shared_samples)
+    wait_saved(driver, "Saved")
+    before = driver.execute_script("return document.getElementById('combined-table').innerText;")
+    assert "50000" in before
+    time.sleep(1.5)  # the save follows the combine after a short delay
+
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "50000" in d.execute_script("return document.getElementById('combined-table').innerText;"))
+
+    assert driver.execute_script("return document.getElementById('combined-table').innerText;") == before
+    assert driver.find_element(By.ID, "strain-parent").get_attribute("value") == "c"
+
+
+def test_with_keeping_off_nothing_is_saved_and_the_choice_is_remembered(driver, server, inputs):
+    wipe_store(driver, server)
+    keep_box(driver).click()
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+    time.sleep(2.5)
+
+    assert saved_text(driver).startswith("Nothing is saved") and "off" in saved_text(driver).lower(), saved_text(driver)
+    open_site(driver, server)  # reload: the choice stays off, and nothing was saved
+    wait_saved(driver, "Nothing is saved")
+    assert not keep_box(driver).is_selected()
+    keep_box(driver).click()  # back on, for the other tests
+    open_site(driver, server)
+    assert keep_box(driver).is_selected()
+
+
+def test_delete_removes_the_saved_results(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+
+    driver.find_element(By.ID, "saved-delete").click()
+
+    wait_saved(driver, "Nothing is saved")
+    assert not driver.find_element(By.ID, "saved-restore").is_displayed()
+    open_site(driver, server)
+    wait_saved(driver, "Nothing is saved")
+
+
+def test_new_results_do_not_overwrite_saved_results_that_were_not_restored(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "old", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "newer", "local", inputs / "reads.fq")
+
+    assert run_samples(driver)["newer"].startswith("Done")
+    time.sleep(2.5)
+
+    assert saved_text(driver).startswith("Found") and "not saved" in saved_text(driver), saved_text(driver)
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "old" in strain_states(d))
+    assert "newer" not in strain_states(driver)  # the saved results are the old ones
+
+
+def test_saving_now_replaces_the_saved_results_on_request(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "old", "local", inputs / "reads.fq")
+    run_samples(driver)
+    wait_saved(driver, "Saved")
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "newer", "local", inputs / "reads.fq")
+    run_samples(driver)
+
+    driver.find_element(By.ID, "saved-save-now").click()
+    wait_saved(driver, "Saved")
+
+    open_site(driver, server)
+    wait_saved(driver, "Found")
+    driver.find_element(By.ID, "saved-restore").click()
+    WebDriverWait(driver, 30).until(lambda d: "newer" in strain_states(d))
+    assert "old" not in strain_states(driver)
+
+
+def test_the_saved_line_shows_the_size_and_the_browser_storage_use(driver, server, inputs):
+    wipe_store(driver, server)
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+    run_samples(driver)
+
+    text = wait_saved(driver, "Saved")
+
+    assert " MB" in text or " KB" in text, text
+
+
+def test_a_failing_store_does_not_break_the_page(driver, server, inputs):
+    # ?nostore=1 makes the page behave as in a browser without IndexedDB (a private window can block it): samples still run, and the page
+    # says that saving is not available.
+    driver.get(f"{server}/{SITE}?nostore=1")
+    choose(driver, "reference", inputs / "ref.fa")
+    add_sample(driver, "s1", "local", inputs / "reads.fq")
+
+    result = run_samples(driver)["s1"]
+
+    assert result.startswith("Done"), result
+    assert "not available" in saved_text(driver).lower(), saved_text(driver)
+    assert not keep_box(driver).is_enabled()
