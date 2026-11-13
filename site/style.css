@@ -253,3 +253,8 @@ table.grid td.new { font-weight: 700; }
 #variant-table th button.sort:hover, #variant-table th button.sort:focus-visible { text-decoration: underline; }
 #variant-table th[aria-sort="ascending"] button.sort::after { content: " \25B2"; font-size: .7em; }
 #variant-table th[aria-sort="descending"] button.sort::after { content: " \25BC"; font-size: .7em; }
+
+/* The chooser and panels 3 and 4 form one group: a coloured bar on the left, and a "Showing" line in each panel. */
+.results-group { border-left: 6px solid var(--accent); padding-left: 12px; margin: 18px 0; }
+.group-title { margin: 0 0 6px; font-weight: 700; color: var(--accent); }
+.showing { margin: 6px 0; padding: 4px 8px; border-left: 4px solid var(--accent); background: var(--field-bg); font-weight: 600; }

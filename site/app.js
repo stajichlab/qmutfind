@@ -8,6 +8,7 @@ const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
 const state = { vcf: null, annotated: null, depth: null };
 // The last combine of the samples: { table, summary, vcf, parent, minDepth, names }, or null. Declared here because describeSource() runs at load.
 let lastCombined = null;
+const samples = []; // the sample set, filled by the sample section below; declared here because describeSource() runs at load
 const GENIC = '__genic__'; // the value of the "Genic" choice of the Show dropdown: any variant that overlaps a gene
 const ALL_SAMPLES = '__all__'; // the value of the "All samples together" choice of the results panel
 let busy = false;
@@ -101,6 +102,49 @@ function describeSource() {
   else if (state.vcf) text = `Using the VCF of the sample ${sampleName()}.`;
   else text = 'No VCF yet. Run a sample or choose a VCF file.';
   show('vcf-source', text);
+  const showing = showingText();
+  show('showing-summarize', showing);
+  show('showing-draw', showing);
+  updateAfNote();
+}
+
+/** What panels 3 and 4 show: the VCF file chosen, all samples together, one sample, or nothing yet. */
+function showingText() {
+  const file = $('vcf-file').files[0];
+  if (file) return `Showing the VCF file ${file.name}. AF is the allele fraction recorded in that file.`;
+  if (viewingAll()) {
+    const n = lastCombined.vcf.split('\n').filter((l) => l && l[0] !== '#').length;
+    return `Showing all ${lastCombined.names.length} samples together: ${n.toLocaleString()} distinct variants. AF is the mean over the samples that call each variant.`;
+  }
+  const s = selectedSample();
+  if (s) return `Showing the sample ${s.name}: ${s.calls.toLocaleString()} variants. AF is the allele fraction of this sample.`;
+  return 'Nothing to show yet. Run a sample (section 2), combine them, or choose a VCF file below.';
+}
+
+/** A short name of what is shown, for titles. */
+function viewLabel() {
+  const file = $('vcf-file').files[0];
+  if (file) return `VCF file ${file.name}`;
+  if (viewingAll()) return 'All samples together';
+  const s = selectedSample();
+  return s ? `Sample ${s.name}` : 'Variants';
+}
+
+/** The note under the Show dropdown says whose allele fraction (AF) and depth (DP) the table has. */
+function updateAfNote() {
+  let text = '';
+  if ($('vcf-file').files[0]) text = 'AF is the allele fraction recorded in the VCF file.';
+  else if (viewingAll()) text = 'AF is the mean over the samples that call the variant; "Called in" lists them. DP is the mean depth in the same way.';
+  else if (selectedSample()) text = 'AF is the allele fraction of the sample shown (alternate reads divided by the depth at the site).';
+  show('af-note', text);
+}
+
+/** The tooltips of the AF and DP column headers follow the view. */
+function columnHint(label) {
+  const all = viewingAll() && !$('vcf-file').files[0];
+  if (label === 'AF') return all ? 'Mean allele fraction over the samples that call the variant' : 'Allele fraction of this sample (alternate reads divided by depth)';
+  if (label === 'DP') return all ? 'Mean depth over the samples that call the variant' : 'Read depth at the site in this sample';
+  return '';
 }
 
 function send(step, payload, panelStatus) {
@@ -292,6 +336,7 @@ function renderTable() {
     button.type = 'button';
     button.className = 'sort';
     button.textContent = column.label;
+    if (columnHint(column.label)) button.title = columnHint(column.label);
     button.addEventListener('click', () => sortBy(index));
     th.appendChild(button);
     head.appendChild(th);
@@ -347,7 +392,7 @@ function loadVariants(vcfText) {
 function draw(region) {
   const vcf = state.annotated || currentVcf();
   if (!vcf) { show('report-status', 'There is no VCF yet.'); return; }
-  send('report', { vcf, gff: gffFile() || null, region }, 'report-status');
+  send('report', { vcf, gff: gffFile() || null, region, title: `${viewLabel()}: mutations in ${region}` }, 'report-status');
 }
 
 $('variant-table').addEventListener('click', (event) => {
@@ -830,7 +875,7 @@ async function lookupRun(text, limit) {
   };
 }
 
-const samples = []; // { id, name, note, source, accession, urls, files, fromExample, expected, state, info, reads, calls, seconds, vcf, bed, evidence, version }
+// A sample: { id, name, note, source, accession, urls, files, fromExample, expected, state, info, reads, calls, seconds, vcf, bed, evidence, version }
 let nextSampleId = 1;
 let sampleRunning = false;
 let sampleCancelled = false;
@@ -843,7 +888,7 @@ function newSample(init = {}) {
   return s;
 }
 const sampleByName = (name) => samples.find((s) => s.name === name);
-const isFinished = (s) => Boolean(s.vcf);
+function isFinished(s) { return Boolean(s.vcf); }
 const isBlank = (s) => !s.name && !s.note && !s.accession.trim() && !s.urls.trim() && s.files.length === 0 && !isFinished(s);
 const sampleStatus = (text) => show('strain-status', text);
 
@@ -910,7 +955,7 @@ function refreshChoices() {
 function viewingAll() { // a function declaration: describeSource() calls it at load
   return $('result-sample').value === ALL_SAMPLES && Boolean(lastCombined && lastCombined.vcf);
 }
-const selectedSample = () => samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null;
+function selectedSample() { return samples.find((s) => s.name && s.name === $('result-sample').value && isFinished(s)) || null; }
 
 /** The results panel follows the chosen sample: its VCF and coverage are what the summary and the gene steps use. */
 function useSelectedSample() {
@@ -952,7 +997,7 @@ function sampleRow(s) {
   const td = (cls) => { const c = document.createElement('td'); if (cls) c.className = cls; c.dataset.label = labels[row.children.length]; row.appendChild(c); return c; };
   const edited = () => { // changing a failed or cancelled sample makes it ready to run again
     if (s.state.startsWith('failed') || s.state === 'cancelled') { s.state = 'waiting'; row.querySelector('.strain-state').textContent = 'waiting'; }
-    if (lastCombined) { lastCombined = null; refreshChoices(); } // the combined table is out of date
+    if (lastCombined) invalidateCombined(); // the combined table is out of date
   };
 
   const nameCell = td();
@@ -1040,7 +1085,7 @@ function sampleRow(s) {
   remove.setAttribute('aria-label', 'Remove this sample');
   remove.addEventListener('click', () => {
     const at = samples.indexOf(s);
-    if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); lastCombined = null; renderSamples(); }
+    if (at >= 0 && s.state !== 'running') { samples.splice(at, 1); invalidateCombined(); renderSamples(); }
   });
   nameLine.prepend(remove); // the minus button sits in front of the name
   return row;
@@ -1165,7 +1210,7 @@ $('strain-run').addEventListener('click', async () => {
         next.state = error.name === 'AbortError' ? 'cancelled' : `failed: ${error.message}`;
       }
       activeAbort = null;
-      lastCombined = null;
+      invalidateCombined();
       renderSamples();
     }
     if (sampleCancelled) for (const s of samples) if (s.state === 'waiting') s.state = 'cancelled';
@@ -1181,12 +1226,22 @@ $('strain-run').addEventListener('click', async () => {
 });
 
 // The combined table
+/** The combined table is out of date (a sample changed or was removed): drop it and say so. */
+function invalidateCombined() {
+  lastCombined = null;
+  refreshChoices();
+  renderCombined();
+}
+
 function renderCombined() {
   const head = $('combined-table').querySelector('thead');
   const body = $('combined-table').querySelector('tbody');
   head.replaceChildren();
   body.replaceChildren();
-  if (!lastCombined) return;
+  $('combined-empty').hidden = Boolean(lastCombined);
+  if (!lastCombined) { $('combined-title').textContent = ''; return; }
+  const total = lastCombined.table.split('\n').filter(Boolean).length - 1;
+  $('combined-title').textContent = `Combined table: ${total.toLocaleString()} variants in ${lastCombined.names.length} samples${lastCombined.parent ? ` (parent: ${lastCombined.parent})` : ''}`;
   const lines = lastCombined.table.split('\n').filter(Boolean).map((l) => l.split('\t'));
   const header = lines[0];
   const nSamples = lastCombined.names.length;
@@ -1238,6 +1293,7 @@ $('strain-combine').addEventListener('click', async () => {
     refreshChoices();
     offer('download-combined', 'combined.tsv', m.table, 'text/tab-separated-values');
     renderCombined();
+    $('combined-title').scrollIntoView({ block: 'nearest' }); // the table is near the button that made it
     const n = m.table.split('\n').filter(Boolean).length - 1;
     show('combine-status', `Done: ${n.toLocaleString()} variant(s) in ${done.length} samples.${m.warnings ? ` Warnings: ${m.warnings.split('\n').join(' ')}` : ''}`);
   } catch (error) {

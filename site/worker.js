@@ -135,10 +135,10 @@ async function annotateStep({ vcf, reference, gff }) {
   postMessage({ step: 'annotate', type: 'done', vcf: annotate(text, fasta, gffBytes) });
 }
 
-async function reportStep({ vcf, gff, region }) {
+async function reportStep({ vcf, gff, region, title }) {
   const text = await vcfText(vcf);
   const gffBytes = gff ? await bytesOf('gff', gff) : undefined;
-  postMessage({ step: 'report', type: 'done', page: report(text, gffBytes, region, `Mutations in ${region}`), region });
+  postMessage({ step: 'report', type: 'done', page: report(text, gffBytes, region, title || `Mutations in ${region}`), region });
 }
 
 // The size of the WebAssembly memory, for the tests (it can grow but never shrinks).

@@ -144,8 +144,6 @@
     <button id="strain-export" type="button">Export the catalog</button>
     <a id="download-combined" hidden>Download the table (TSV)</a>
     <a id="download-catalog" hidden>Download the catalog (zip)</a></p>
-    <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the sample list.</label>
-    <input id="catalog-file" type="file" accept=".zip,application/zip">
   </div>
   <div id="catalog-status" class="readout" role="status"></div>
   <div id="combine-status" class="readout" role="status"></div>
@@ -158,7 +156,13 @@
       <option value="one">Called in one sample only</option>
     </select>
   </div>
+  <p id="combined-title" class="hint"></p>
+  <p id="combined-empty" class="hint">No table yet. Choose a parent if you like, then press "Combine the finished samples" (it needs two finished samples).</p>
   <div class="table-wrap"><table id="combined-table" class="grid"><thead></thead><tbody></tbody></table></div>
+  <div class="form">
+    <label for="catalog-file">Import a catalog (a zip made by Export). It replaces the sample list.</label>
+    <input id="catalog-file" type="file" accept=".zip,application/zip">
+  </div>
   <details>
     <summary>How the combined table is made, and its limits</summary>
     <ul>
@@ -175,8 +179,11 @@
   </details>
 </section>
 
+<div class="results-group" role="group" aria-labelledby="results-group-title">
+<p id="results-group-title" class="group-title">Results: the choice below decides what panels 3 and 4 show</p>
+
 <section class="panel" id="results-section">
-  <h2>Results of one sample</h2>
+  <h2>Choose what panels 3 and 4 show</h2>
   <div class="form">
     <label for="result-sample">Sample</label>
     <select id="result-sample"><option value="">No finished sample yet</option></select>
@@ -195,6 +202,7 @@
   <h2><span class="num">3</span> Summarize: statistics and a genome-wide plot</h2>
   <p class="hint">Uses the VCF and the coverage of the sample chosen above, or the files you chose. If the VCF has no contig lines, it also
   uses the reference genome. You can summarize a coverage file or a VCF file alone.</p>
+  <p class="showing" id="showing-summarize" role="status"></p>
   <div class="form">
     <label for="order">Order of the contigs in the plots</label>
     <select id="order">
@@ -215,6 +223,7 @@
   <h2><span class="num">4</span> Draw: gene effects and loci</h2>
   <p class="hint">Needs the reference genome and the GFF3 file. Annotation adds the effect of each variant on the gene
   (synonymous, missense, nonsense, frameshift, intron, UTR, intergenic and more). Then pick a variant to draw its locus.</p>
+  <p class="showing" id="showing-draw" role="status"></p>
   <p><button id="annotate" type="button" class="primary">Annotate and list the variants</button></p>
   <div id="annotate-status" role="status" class="readout"></div>
   <div id="variant-controls">
@@ -227,6 +236,7 @@
     <label for="window-kb">Window around the variant (kb on each side)</label>
     <input id="window-kb" type="number" min="0.1" step="0.5" value="2.5">
   </div>
+  <p class="hint" id="af-note"></p>
   <div id="variant-table-wrap"><table id="variant-table" hidden></table></div>
   <div class="form">
     <label for="region">Or type a region to draw (for example <code>Chr1:1,000-6,000</code>)</label>
@@ -237,6 +247,8 @@
   <p class="downloads"><a id="download-annotated" hidden>Download the annotated VCF</a></p>
   <iframe id="report" title="Gene and mutation picture"></iframe>
 </section>
+
+</div>
 
 <section class="panel">
   <h2>How it works</h2>

@@ -222,7 +222,7 @@ def cli_results(tmp_path):
     run_cli("stats", "--vcf", "called.vcf", "--out-prefix", "st", cwd=tmp_path)
     run_cli("stats", "--vcf", "annot.vcf", "--out-prefix", "sta", cwd=tmp_path)
     run_cli("plot", "--vcf", "called.vcf", "--out", "plot.svg", cwd=tmp_path)
-    run_cli("report", "--vcf", "annot.vcf", "--gff", "genes.gff3", "--region", LOCUS, "--out", "report.html", cwd=tmp_path)
+    run_cli("report", "--vcf", "annot.vcf", "--gff", "genes.gff3", "--region", LOCUS, "--title", f"Sample s1: mutations in {LOCUS}", "--out", "report.html", cwd=tmp_path)
     read = lambda name: (tmp_path / name).read_text()
     return {"vcf": read("called.vcf"), "annot": read("annot.vcf"), "stats": read("st.stats.json"), "stats_annot": read("sta.stats.json"),
             "plot": read("plot.svg"), "report": read("report.html")}
@@ -2086,3 +2086,87 @@ def test_the_main_buttons_of_the_panels_are_dark_and_bold_like_the_run_button(dr
     assert style("ref-url-load") == run  # the same step in the other way of giving the genome
     # The secondary buttons stay plain.
     assert style("strain-export")[0] != run[0]
+
+
+# It is clear what the summary and the drawing show: one coloured group, a "Showing" line, what AF means, the sample in the title
+
+def banners(driver):
+    return [driver.find_element(By.ID, i).text for i in ("showing-summarize", "showing-draw")]
+
+
+def test_the_chooser_and_panels_3_and_4_are_one_coloured_group(driver, server):
+    open_site(driver, server)
+
+    ids = driver.execute_script("return Array.from(document.querySelectorAll('.results-group > section')).map(s => s.id);")
+    assert ids == ["results-section", "step2", "step3"]
+    border = driver.execute_script("const s = getComputedStyle(document.querySelector('.results-group')); return [parseFloat(s.borderLeftWidth), s.borderLeftColor];")
+    assert border[0] >= 4 and border[1] != "rgba(0, 0, 0, 0)", border
+    heading = driver.find_element(By.CSS_SELECTOR, "#results-section h2").text
+    assert "panels 3 and 4" in heading.lower(), heading  # the heading is shown in capitals
+
+
+def test_each_of_the_two_panels_says_what_it_shows_before_anything_is_run(driver, server):
+    open_site(driver, server)
+
+    assert all(b.startswith("Nothing to show yet") for b in banners(driver)), banners(driver)
+
+
+def test_the_panels_name_the_sample_or_all_samples_and_say_what_af_means(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+
+    choose_result(driver, "a")
+    for text in banners(driver):
+        assert "Showing the sample a" in text and "2 variants" in text and "allele fraction of this sample" in text, text
+    choose_result(driver, "__all__")
+    for text in banners(driver):
+        assert "Showing all 3 samples together" in text and "3 distinct variants" in text and "mean over the samples" in text, text
+    # A VCF file chosen by the user replaces both.
+    (shared_samples / "other.vcf").write_text(variant_vcf([{"contig": "chrA", "pos": 5}]))
+    choose(driver, "vcf-file", shared_samples / "other.vcf")
+    assert all("Showing the VCF file other.vcf" in b for b in banners(driver)), banners(driver)
+
+
+def test_the_af_note_and_the_af_header_say_whose_allele_fraction_it_is(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    af_button = lambda: driver.find_element(By.XPATH, "//table[@id='variant-table']//th/button[normalize-space()='AF']")
+
+    choose_result(driver, "a")
+    press(driver, "annotate", "annotate-status")
+    assert "allele fraction of the sample shown" in driver.find_element(By.ID, "af-note").text
+    assert "this sample" in af_button().get_attribute("title")
+    choose_result(driver, "__all__")
+    press(driver, "annotate", "annotate-status")
+    assert "mean over the samples that call" in driver.find_element(By.ID, "af-note").text
+    assert "mean" in af_button().get_attribute("title").lower()
+
+
+def test_the_locus_drawing_is_titled_with_the_sample_it_shows(driver, server, shared_samples):
+    run_abc_and_combine(driver, server, shared_samples)
+    choose_result(driver, "a")
+    press(driver, "annotate", "annotate-status")
+
+    driver.find_element(By.CSS_SELECTOR, "#variant-table tbody tr button.draw-row").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "report-status").text.startswith(("Drawn", "Error")))
+    assert "Sample a: mutations in chrA:" in driver.execute_script("return document.getElementById('report').srcdoc;")
+
+    choose_result(driver, "__all__")
+    press(driver, "annotate", "annotate-status")
+    driver.find_element(By.CSS_SELECTOR, "#variant-table tbody tr button.draw-row").click()
+    WebDriverWait(driver, 60).until(lambda d: "All samples together: mutations in" in d.execute_script("return document.getElementById('report').srcdoc;"))
+
+
+def test_the_combine_panel_says_there_is_no_table_yet_then_titles_it_and_keeps_the_import_below_it(driver, server, shared_samples):
+    open_site(driver, server)
+    empty = driver.find_element(By.ID, "combined-empty")
+    assert empty.is_displayed() and "Combine the finished samples" in empty.text
+
+    run_abc_and_combine(driver, server, shared_samples)
+
+    assert not driver.find_element(By.ID, "combined-empty").is_displayed()
+    assert driver.find_element(By.ID, "combined-title").text == "Combined table: 3 variants in 3 samples (parent: c)"
+    below = driver.execute_script("return Boolean(document.getElementById('combined-table').compareDocumentPosition(document.getElementById('catalog-file')) & Node.DOCUMENT_POSITION_FOLLOWING);")
+    assert below, "the import control comes after the table, so the table is near the Combine button"
+    # Removing a sample makes the table out of date: the message comes back.
+    strain_rows(driver)["a"].find_element(By.CSS_SELECTOR, "button.strain-remove").click()
+    assert driver.find_element(By.ID, "combined-empty").is_displayed()
+    assert driver.find_element(By.ID, "combined-title").text == ""
