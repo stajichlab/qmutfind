@@ -1,6 +1,7 @@
 // The page: three steps (call, summarize, draw). The result of each step is kept here and the next step uses it.
 import { zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js?v=__BUILD__';
 import { storeAvailable, readStore, writeStore, clearStore, estimateStorage } from './persist.js?v=__BUILD__';
+import { MAX_DOWNLOAD, mb, sitePath, checkUrl, directAddress, hostOf, download as downloadFile, createReferencePanel } from './reference-panel.js?v=__BUILD__';
 
 const $ = (id) => document.getElementById(id);
 const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
@@ -16,25 +17,10 @@ let busy = false;
 const MAX_ROWS = 500;
 // How far a file may unpack when it is loaded whole into memory. `?limit_mb=N` can lower it (the tests use that).
 const LIMIT_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get('limit_mb')) || 1024, 1024) * 1e6;
-// A download is limited to 2 GB. `?download_limit_mb=N` can lower the limit (the tests use that).
-const MAX_DOWNLOAD = Math.min(parseFloat(new URLSearchParams(location.search).get('download_limit_mb')) || 2000, 2000) * 1e6;
+// The download limit (2 GB) is MAX_DOWNLOAD, from reference-panel.js (`?download_limit_mb=N` can lower it; the tests use that).
 const WARN_DOWNLOAD = 5e8;
 
-/**
- * A page address option (?example=, ?genomes=, ?enaapi=) may only name a path on this site. The text is refused when it has a
- * scheme or starts with / or \ (browsers read \ as /, so \\host/x would name another host), and the resolved address must
- * have this page's origin. Returns the text, or `fallback`.
- */
-function sitePath(asked, fallback) {
-  if (!asked || asked !== asked.trim() || /[\u0000-\u001f]/.test(asked)) return fallback; // the URL parser would drop these characters
-  if (/^[\\/]/.test(asked) || /^[a-z][a-z0-9+.-]*:/i.test(asked)) return fallback;
-  try {
-    return new URL(asked, location.href).origin === location.origin ? asked : fallback;
-  } catch (error) {
-    return fallback;
-  }
-}
-window.qmutfindSitePath = sitePath;
+window.qmutfindSitePath = sitePath; // the tests call it (the function is in reference-panel.js)
 
 const show = (id, text) => { $(id).textContent = text; };
 const buttons = ['summarize', 'annotate', 'draw'];
@@ -58,27 +44,6 @@ const sampleName = () => (viewingAll() ? 'combined' : (selectedSample() && selec
 // Files from an example. A file chosen in an input always wins over the example's file.
 const example = { reference: null, gff: null, source: { reference: '', gff: '' } };
 
-/** Say, under each input, where its data comes from: a local file, or a download (an example, the menu or the web import). */
-function describeSources() {
-  const size = (f) => `${(f.size / 1e6).toFixed(f.size < 1e5 ? 3 : 1)} MB`;
-  const line = (slot, inputId, loaded) => {
-    const chosen = [...$(inputId).files];
-    const el = $(`source-${slot}`);
-    el.classList.remove('from-web');
-    if (chosen.length) {
-      el.textContent = `Local file: ${chosen.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
-    } else if (loaded.length) {
-      el.textContent = `From ${example.source[slot]}: ${loaded.map((f) => `${f.name} (${size(f)})`).join(', ')}`;
-      el.classList.add('from-web');
-    } else {
-      el.textContent = 'Not set. Use the NCBI list, upload files or give addresses above.';
-    }
-  };
-  line('reference', 'reference', example.reference ? [example.reference] : []);
-  line('gff', 'gff', example.gff ? [example.gff] : []);
-}
-for (const id of ['reference', 'gff']) $(id).addEventListener('change', describeSources);
-const hostOf = (item, base) => new URL(item.url, base).host;
 const refFile = () => $('reference').files[0] || example.reference;
 const gffFile = () => $('gff').files[0] || example.gff;
 
@@ -543,36 +508,14 @@ describeSource();
 // ---- Examples -------------------------------------------------------------------------------------------------
 // The list of examples is example/manifest.json. A page address with ?example=PATH uses another manifest, but only
 // a path on this site (no http:// or // address), so a link cannot make the page fetch a manifest from elsewhere.
-const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
 let loading = false;
 
-/** `budget` is { left }: the bytes that the downloads of one sample may still take. Its files together stay within the download limit. */
-async function download(item, base, label, statusId = 'example-status', signal = undefined, budget = { left: MAX_DOWNLOAD }) {
-  const url = checkUrl(new URL(item.url, base).href, label);
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`${label}: the server answered ${response.status} for ${url.host}`);
-  const announced = Number(response.headers.get('Content-Length')) || 0;
-  const expected = item.bytes || announced;
-  const tooLarge = (size, more = '') => new Error(`${label}: the download is too large${budget.left < MAX_DOWNLOAD ? ' together with the other files of this sample' : ''} (${more}${mb(size)}; the limit is ${mb(budget.left < MAX_DOWNLOAD ? budget.left : MAX_DOWNLOAD)}${budget.left < MAX_DOWNLOAD ? ' for what is left' : ''}).`);
-  if (expected > budget.left) throw tooLarge(expected);
-  const reader = response.body.getReader();
-  const parts = [];
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    parts.push(value);
-    got += value.length;
-    if (got > budget.left) { await reader.cancel(); throw tooLarge(budget.left, 'more than '); }
-    show(statusId, `Downloading ${label}: ${mb(got)}${expected ? ` of ${mb(expected)}` : ''}`);
-  }
-  if (item.bytes && got !== item.bytes) throw new Error(`${label}: got ${got} bytes, expected ${item.bytes}. The download is incomplete.`);
-  budget.left -= got;
-  // The page reads a file as gzip by its name. A download whose name has no .gz but whose content is gzip gets the name.
-  let name = item.name;
-  if (parts.length && parts[0].length > 1 && parts[0][0] === 0x1f && parts[0][1] === 0x8b && !name.endsWith('.gz')) name += '.gz';
-  return new File(parts, name);
-}
+/**
+ * Download a file into memory (see `download` in reference-panel.js). The status line `statusId` shows the progress; `budget` is { left }: the bytes that the
+ * downloads of one sample may still take, so that its files together stay within the download limit.
+ */
+const download = (item, base, label, statusId = 'example-status', signal = undefined, budget = undefined) =>
+  downloadFile(item, { label, base, signal, budget, onProgress: (text) => show(statusId, text) });
 
 /**
  * Download a FASTQ file (plain or gzip) and keep only its first `maxReads` reads, then stop the download. A worker does the
@@ -587,31 +530,7 @@ async function downloadFirstReads(item, base, label, statusId, signal, maxReads,
   return { file: new File([m.bytes], `${item.name.replace(/\.gz$/, '')}.gz`), reads: m.reads, cut: m.cut };
 }
 
-/** An address the page may download from: https (or this site), and no user name or password. */
-function checkUrl(text, label) {
-  let url;
-  try { url = new URL(text); } catch (error) { throw new Error(`${label}: "${text}" is not an address.`); }
-  if (url.protocol !== 'https:' && url.origin !== location.origin) throw new Error(`${label}: only https addresses are accepted, not ${url.protocol}//`);
-  if (url.username || url.password) throw new Error(`${label}: addresses with a user name or password are not accepted.`);
-  return url;
-}
-
-/**
- * A Dropbox share link (www.dropbox.com/s/... or /scl/fi/...) answers with a redirect that has no CORS header, so a browser
- * page cannot follow it. The same path on dl.dropboxusercontent.com has the header (measured 2026-11-12), so the host is
- * changed and the `dl` and `raw` options are dropped. Any other address is returned as it is.
- */
-function directAddress(text) {
-  let url;
-  try { url = new URL(text); } catch (error) { return text; }
-  const shared = /^\/(s|scl\/fi)\//.test(url.pathname);
-  if (url.protocol !== 'https:' || !['www.dropbox.com', 'dropbox.com'].includes(url.hostname) || !shared) return text;
-  url.hostname = 'dl.dropboxusercontent.com';
-  url.searchParams.delete('dl');
-  url.searchParams.delete('raw');
-  return url.href;
-}
-window.qmutfindDirectAddress = directAddress;
+window.qmutfindDirectAddress = directAddress; // the tests call it (the function is in reference-panel.js)
 
 async function loadExample(manifest, base, chosen) {
   if (loading || busy) return;
@@ -626,7 +545,7 @@ async function loadExample(manifest, base, chosen) {
     }
     const origin = (item) => `the example (${item.source ? item.source + ' at ' : ''}${hostOf(item, base)})`;
     example.source = { reference: origin(manifest.reference), gff: origin(manifest.gff), reads: origin(chosen.reads[0]) };
-    describeSources();
+    panel.describe();
     if (manifest.kind) $('kind').value = manifest.kind;
     // The example's reads become a sample of the set. An earlier example sample is replaced.
     dropExampleSamples();
@@ -637,7 +556,7 @@ async function loadExample(manifest, base, chosen) {
     show('example-status', `Loaded: ${chosen.label}. Press "Run the waiting samples" in section 2.`);
   } catch (error) {
     example.reference = example.gff = null;
-    describeSources();
+    panel.describe();
     show('example-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
   } finally {
     loading = false;
@@ -674,148 +593,17 @@ setupExamples();
 
 
 // ---- The genome menu ------------------------------------------------------------------------------------------
-// genomes/genomes.json lists NCBI genomes (RefSeq, and some GenBank without gene models) (the page downloads them: NCBI allows that). genomes/fungidb.json lists
-// FungiDB organisms. FungiDB blocks downloads from web pages and needs an API key, so for those the page only shows the
-// `qmutfind fetch` command. ?genomes=PATH uses another list, but only a path on this site.
-const LARGE_GENOME = 50e6;
-let genomeList = [];
-let genomesBase = location.href; // file addresses in the list are relative to the list
-let fungidbList = [];
-
-function fillMenu() {
-  const filter = $('genome-filter').value.trim().toLowerCase();
-  const menu = $('genome-menu');
-  menu.replaceChildren();
-  const group = (label) => { const g = document.createElement('optgroup'); g.label = label; return g; };
-  const ncbi = group('NCBI (loads in this page)');
-  for (const g of genomeList) {
-    if (filter && !`${g.label} ${g.accession}`.toLowerCase().includes(filter)) continue;
-    ncbi.appendChild(new Option(`${g.label} (${(g.genome_size / 1e6).toFixed(1)} Mb, ${g.gff && g.genes > 0 ? `${g.genes.toLocaleString()} genes` : 'no gene models'}, ${g.level}${g.source === 'GenBank' ? ', GenBank' : ''})`, `ncbi:${g.accession}`));
-  }
-  const fungidb = group('FungiDB (needs the command line and a key)');
-  for (const o of fungidbList) {
-    if (filter && !o.name.toLowerCase().includes(filter)) continue;
-    fungidb.appendChild(new Option(`${o.name} (${o.genes.toLocaleString()} genes)`, `fungidb:${o.name}`));
-  }
-  if (ncbi.children.length) menu.appendChild(ncbi);
-  if (fungidb.children.length) menu.appendChild(fungidb);
-}
-
-async function loadGenome() {
-  if (loading || busy) return;
-  const value = $('genome-menu').value;
-  if (!value) { show('genome-status', 'Choose a genome in the list.'); return; }
-  $('genome-fungidb').hidden = true;
-  if (value.startsWith('fungidb:')) {
-    const name = value.slice('fungidb:'.length);
-    show('genome-status', `${name} is in FungiDB.`);
-    $('genome-command').textContent = `qmutfind fetch --organism "${name}" --out-dir genome --eupathdb-key-file ~/.eupathdb_keys`;
-    $('genome-fungidb').hidden = false;
-    return;
-  }
-  const entry = genomeList.find((g) => `ncbi:${g.accession}` === value);
-  if (!entry) return;
-  loading = true;
-  $('genome-load').disabled = true;
-  try {
-    const base = genomesBase;
-    const reference = await download(entry.fasta, base, 'the genome', 'genome-status');
-    const gff = entry.gff ? await download(entry.gff, base, 'the gene models', 'genome-status') : null;
-    // A new genome replaces the example, whose reads belong to another genome.
-    example.reference = reference;
-    example.gff = gff;
-    show('example-status', '');
-    dropExampleSamples();
-    example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: entry.gff ? `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})` : '', reads: '' };
-    describeSources();
-    let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so the gene step (section 4) cannot annotate it unless you upload a GFF3 file.';
-    note += ' Add your samples in section 2.';
-    if (entry.genome_size > LARGE_GENOME) {
-      note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
-    }
-    show('genome-status', `Loaded: ${entry.label} (${entry.accession}).${note}`);
-  } catch (error) {
-    show('genome-status', `Error: ${error.message} The server may block downloads from web pages, or the network failed.`);
-  } finally {
-    loading = false;
-    $('genome-load').disabled = false;
-  }
-}
-
-async function setupGenomes() {
-  const asked = new URLSearchParams(location.search).get('genomes');
-  const path = sitePath(asked, 'genomes/genomes.json');
-  const base = new URL(path, location.href);
-  genomesBase = base;
-  try {
-    const response = await fetch(base, { cache: 'no-cache' });
-    if (!response.ok) throw new Error(`the server answered ${response.status}`);
-    genomeList = (await response.json()).genomes || [];
-  } catch (error) {
-    $('genome-text').textContent = `The NCBI genome list could not be loaded (${error.message}). Upload files or give addresses instead.`;
-    return;
-  }
-  try {
-    const response = await fetch(new URL('fungidb.json', base), { cache: 'no-cache' });
-    if (response.ok) {
-      const document_ = await response.json();
-      fungidbList = document_.organisms || [];
-      $('genome-text').textContent = `${genomeList.length} NCBI genomes (RefSeq, and two GenBank) download in this page. ` +
-        `${fungidbList.length} FungiDB organisms (${document_.release || 'FungiDB'}) are listed too; they need the command line.`;
-    }
-  } catch (error) {
-    // The FungiDB list is optional.
-  }
-  if (!$('genome-text').textContent) $('genome-text').textContent = `${genomeList.length} NCBI genomes download in this page.`;
-  fillMenu();
-  $('genome-filter').addEventListener('input', fillMenu);
-  $('genome-load').addEventListener('click', loadGenome);
-  $('genome-menu').addEventListener('dblclick', loadGenome);
-}
-
-setupGenomes();
-
-// The reference panel asks one question and shows the controls of the answer: the NCBI list, files, or https addresses.
-function applyReferenceMode() {
-  const mode = $('reference-source').value;
-  $('genome-section').hidden = mode !== 'ncbi';
-  $('reference-upload').hidden = mode !== 'upload';
-  $('reference-url').hidden = mode !== 'url';
-}
-$('reference-source').addEventListener('change', applyReferenceMode);
-applyReferenceMode();
-
-$('ref-url-load').addEventListener('click', async () => {
-  if (loading || busy || sampleRunning) return;
-  const fastaText = $('url-reference').value.trim();
-  const gffText = $('url-gff').value.trim();
-  if (!fastaText) { show('genome-status', 'Type the address of the reference FASTA.'); return; }
-  loading = true;
-  $('ref-url-load').disabled = true;
-  try {
-    const wanted = [['reference', 'the reference genome', fastaText], ...(gffText ? [['gff', 'the gene file', gffText]] : [])];
-    let changed = false;
-    const urls = wanted.map(([, label, text]) => { const d = directAddress(text); changed ||= d !== text; return checkUrl(d, label); }); // all checked before any download
-    const got = {};
-    for (const [i, [slot, label]] of wanted.entries()) {
-      const url = urls[i];
-      const name = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || 'download');
-      got[slot] = await download({ name, url: url.href, bytes: 0 }, location.href, label, 'genome-status');
-      example.source[slot] = `the address ${url.host}${url.pathname}`;
-    }
-    example.reference = got.reference;
-    example.gff = got.gff || null;
-    if (!got.gff) example.source.gff = '';
-    show('example-status', '');
-    dropExampleSamples();
-    describeSources();
-    show('genome-status', `Loaded: the reference genome${got.gff ? ' and the gene file' : ''}.${changed ? ' A Dropbox share link was changed to dl.dropboxusercontent.com, the address that allows downloads from web pages.' : ''}`);
-  } catch (error) {
-    show('genome-status', `Error: ${error.message}`);
-  } finally {
-    loading = false;
-    $('ref-url-load').disabled = false;
-  }
+// The reference panel (the NCBI list and the FungiDB command, files, and web addresses) is in reference-panel.js, which the allele page uses too. The panel
+// keeps what it loads in `example`, which the examples use as well; it asks this page whether it may load, and tells it when a genome has loaded.
+const panel = createReferencePanel({
+  $, show, state: example,
+  canLoad: () => !loading && !busy && !sampleRunning,
+  setLoading: (flag) => { loading = flag; },
+  onLoaded: () => { show('example-status', ''); dropExampleSamples(); }, // a new genome replaces the example, whose reads belong to another genome
+  texts: {
+    noGenes: ' NCBI has no gene models for this genome, so the gene step (section 4) cannot annotate it unless you upload a GFF3 file.',
+    next: ' Add your samples in section 2.',
+  },
 });
 
 
@@ -1762,7 +1550,7 @@ async function restoreSaved() {
       example.source[slot] = `this browser (saved ${when})`;
     }
     if (found.reference) { example.source.reads = ''; }
-    describeSources();
+    panel.describe();
     saveHeld = false;
     show('catalog-status', `Restored ${plural(loaded.length, 'sample')} from this browser. Restored samples cannot run again.`);
     if (header.combined && loaded.filter(isFinished).length >= 2) $('strain-combine').click();
@@ -1808,5 +1596,3 @@ $('keep-results').addEventListener('change', () => {
 
 newSample();
 renderSamples();
-
-describeSources();

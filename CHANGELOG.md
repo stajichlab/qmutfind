@@ -52,6 +52,7 @@ The measurements behind each entry are in [PLAN.md](PLAN.md).
 
 ### Changed
 
+- The reference panel (NCBI list, FungiDB command, files, addresses), the address checks and the download are one shared module, `site/reference-panel.js`, used by the main page and the allele page.
 - The page was redesigned (sample set, reference panel, one coloured results group). The old step 1 and the old web panel are gone.
 - The WASM build uses wasm-bindgen 0.2.130.
 - Reads that a read limit cuts are unpacked, counted and packed again in a worker, not on the main thread.

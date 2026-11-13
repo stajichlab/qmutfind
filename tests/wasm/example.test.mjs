@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 const DIR = join(process.cwd(), 'site');
 
-for (const file of ['worker.js', 'app.js']) {
+for (const file of ['worker.js', 'app.js', 'confirm.js', 'reference-panel.js']) {
   test(`${file} parses as an ES module`, () => {
     const dir = mkdtempSync(join(tmpdir(), 'qmutfind-example-'));
     try {
@@ -36,5 +36,16 @@ test('the worker imports the web package from the path the build writes and uses
   assert.match(worker, /from '\.\/pkg-web\/qmutfind_wasm\.js\?v=__BUILD__'/);
   for (const name of ['Session', 'annotate', 'stats', 'report', 'genome_plot']) {
     assert.match(worker, new RegExp(`\\b${name}\\b`), `worker does not use ${name}`);
+  }
+});
+
+test('both pages use the shared reference panel and none of them keeps its own copy of it', () => {
+  for (const file of ['app.js', 'confirm.js']) {
+    const text = readFileSync(join(DIR, file), 'utf8');
+    assert.match(text, /from '\.\/reference-panel\.js\?v=__BUILD__'/, `${file} imports the shared module`);
+    assert.match(text, /createReferencePanel\(/, `${file} makes the panel`);
+    for (const own of ['function fillMenu', 'function loadGenome', 'function setupGenomes', 'function applyReferenceMode', 'function sitePath', 'function directAddress', 'function checkUrl', "$('ref-url-load').addEventListener"]) {
+      assert.ok(!text.includes(own), `${file} still has its own "${own}"`);
+    }
   }
 });

@@ -1701,7 +1701,8 @@ def test_the_files_of_the_page_carry_one_build_stamp(driver, server):
     assert f"./pkg-web/qmutfind_wasm.js?v={stamp}" in worker and f"./gz.js?v={stamp}" in worker and f"./reads.js?v={stamp}" in worker
     assert f"qmutfind_wasm_bg.wasm?v={stamp}" in worker
     assert f"./persist.js?v={stamp}" in app and f"./vendor/fflate.js?v={stamp}" in app
-    for name in ("gz.js", "reads.js", "persist.js"):
+    assert f"./reference-panel.js?v={stamp}" in app
+    for name in ("gz.js", "reads.js", "persist.js", "reference-panel.js"):
         text = get(name)
         assert "__BUILD__" not in text, name
         assert name != "gz.js" or f"./vendor/fflate.js?v={stamp}" in text
