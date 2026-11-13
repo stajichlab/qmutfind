@@ -93,6 +93,20 @@ pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {
         .map_err(|e| JsError::new(&e))
 }
 
+/// The combined table of several strains and its summary, as two TSV texts [table, summary]. `names`, `vcfs` and `beds`
+/// have one entry per strain; an empty coverage text means the strain has no coverage file. `parent` is optional.
+#[wasm_bindgen]
+pub fn combine_tables(names: Vec<String>, vcfs: Vec<String>, beds: Vec<String>, parent: Option<String>, min_depth: f64) -> Result<Vec<String>, JsError> {
+    if names.len() != vcfs.len() || names.len() != beds.len() {
+        return Err(JsError::new("give the same number of names, VCF texts and coverage texts"));
+    }
+    let inputs: Vec<qmutfind_core::CombineInput> = (0..names.len())
+        .map(|i| qmutfind_core::CombineInput { name: &names[i], vcf: &vcfs[i], depth_bed: if beds[i].is_empty() { None } else { Some(&beds[i]) } })
+        .collect();
+    let combined = qmutfind_core::combine(&inputs, &qmutfind_core::CombineOptions { parent: parent.as_deref(), min_depth }).map_err(|e| JsError::new(&e))?;
+    Ok(vec![combined.to_tsv(), combined.summary_tsv()])
+}
+
 /// The locus-view page (HTML with an inline SVG) for one region, such as "c1:21-110".
 /// Pass `undefined` for `gff` to draw the variants without gene models.
 #[wasm_bindgen]

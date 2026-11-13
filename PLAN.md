@@ -971,3 +971,35 @@ per file). The source line says "(first N reads of each file)".
 - Live check (Firefox, headless, from the cluster): the 596 MB Dropbox R2 file with limit 100,000 loaded in 3.3 s and kept
   8.1 MB (about 160 MB expected at the default 2 M reads, extrapolated, not measured). Mapping a large kept set in the
   browser, and a limit applied to files chosen from disk, were not tested or built.
+
+## 12f. Several strains: queue, catalog, combine and parent (2026-11-12, design; core and CLI built, page not built)
+Goal: process many strains (each a reads file R1 with an optional R2) one at a time in the page, name each strain,
+keep a catalog, and combine the results, with an optional parent strain.
+
+Built and tested:
+- `qmutfind_core::combine` (`qmutfind-core/src/combine.rs`): input per strain = VCF text + optional coverage BED text.
+  Rows = distinct (contig, pos, REF, ALT). Cells: call (AF:DP), `ref`, `low`, `unknown`, `other`. With a parent, status per
+  strain: `new`, `inherited`, `lost`, `unknown`, `.`. A site where the parent has too little coverage is `unknown`, never
+  `new`. `min_depth` (default 10 in the CLI; NOT tuned) decides covered or low from the window mean depth.
+- CLI `qmutfind combine --strain NAME=VCF[,BED] ... [--parent NAME] [--min-depth N] --out-prefix P` writes
+  `P.combined.tsv` and `P.summary.tsv`. WASM `combine_tables(names, vcfs, beds, parent, min_depth)` returns the two texts;
+  a Node test checks that WASM and CLI give identical tables.
+
+Not built (page): add-strain form (name, R1, optional R2, note, parent flag), queue (one strain at a time), catalog table
+(name, files, reads, calls, time, settings, version), combined table view, export zip, import of an exported catalog,
+IndexedDB persistence.
+
+Decisions and reasons:
+- The user adds strains one at a time (no file-name pairing). Settings are shared by all strains so the table is comparable.
+- Memory: the engine drops each read after mapping (`Engine::map_records`); `Session::free()` ends the session. WASM
+  linear memory does not shrink, so the page should stop and restart the worker after each strain (not built, not measured).
+  Downloaded reads are held in `example.reads` until replaced; a batch must clear them after each strain.
+- Tracking: an export zip is the durable record; IndexedDB is per browser and can be cleared.
+
+Known limits and unknowns:
+- Coverage windows are 10 kb in the page (`depth_bed(10000)`), so "covered" at a site is a window mean. A finer window may
+  help; not measured.
+- Indels from different strains must have the same left-aligned REF/ALT to share a row. The caller left-aligns, but this was
+  not tested across strains. Overlapping or nested indels and multi-allelic sites are not merged.
+- Combine was tested with hand-made VCFs only; no end-to-end test with simulated parent and evolved strains yet.
+- Per-strain time (about 80 s for 4 M reads) is an extrapolation from 58.8 s for 2.85 M reads, not a measurement.

@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use qmutfind_core::{
-    annotate_vcf, calls_from_freebayes_vcf, depth_plot_svg, genome_plot_svg, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
+    annotate_vcf, calls_from_freebayes_vcf, combine, CombineInput, CombineOptions, depth_plot_svg, genome_plot_svg, compute_stats, report_page, left_align_calls, Annotation, Genome, read_fasta, write_vcf, Caller, CallerConfig, Engine, ReadKind,
 };
 
 const DEFAULT_LARGE_INDEL_MIN: usize = 50;
@@ -284,6 +284,50 @@ fn stats(args: &[String]) -> Result<(), String> {
     std::fs::write(format!("{prefix}.stats.tsv"), stats.to_tsv()).map_err(|e| format!("{prefix}.stats.tsv: {e}"))
 }
 
+/// `qmutfind combine`: one table for several strains, with an optional parent. `--strain NAME=VCF[,BED]` is repeated.
+fn combine_command(args: &[String]) -> Result<(), String> {
+    let mut strains: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut parent: Option<String> = None;
+    let mut prefix: Option<String> = None;
+    let mut min_depth = 10.0;
+    let mut it = args.iter();
+    while let Some(key) = it.next() {
+        let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
+        let value = it.next().ok_or_else(|| format!("missing value for --{name}"))?;
+        match name {
+            "strain" => {
+                let (strain, files) = value.split_once('=').filter(|(n, f)| !n.is_empty() && !f.is_empty()).ok_or_else(|| format!("--strain must look like NAME=VCF or NAME=VCF,BED, not {value}"))?;
+                let (vcf, bed) = match files.split_once(',') {
+                    Some((v, b)) => (v, Some(b.to_string())),
+                    None => (files, None),
+                };
+                strains.push((strain.to_string(), vcf.to_string(), bed));
+            }
+            "parent" => parent = Some(value.clone()),
+            "out-prefix" => prefix = Some(value.clone()),
+            "min-depth" => min_depth = value.parse().map_err(|_| format!("--min-depth must be a number, not {value}"))?,
+            other => return Err(format!("unknown option --{other}")),
+        }
+    }
+    if strains.is_empty() {
+        return Err("give at least one --strain NAME=VCF[,BED]".to_string());
+    }
+    let prefix = prefix.ok_or("missing required option --out-prefix")?;
+    let read = |path: &str| -> Result<String, String> {
+        let mut text = String::new();
+        open_input(path)?.read_to_string(&mut text).map_err(|e| format!("{path}: {e}"))?;
+        Ok(text)
+    };
+    let mut texts = Vec::new();
+    for (name, vcf, bed) in &strains {
+        texts.push((name.as_str(), read(vcf)?, bed.as_deref().map(read).transpose()?));
+    }
+    let inputs: Vec<CombineInput> = texts.iter().map(|(name, vcf, bed)| CombineInput { name, vcf, depth_bed: bed.as_deref() }).collect();
+    let combined = combine(&inputs, &CombineOptions { parent: parent.as_deref(), min_depth })?;
+    std::fs::write(format!("{prefix}.combined.tsv"), combined.to_tsv()).map_err(|e| format!("{prefix}.combined.tsv: {e}"))?;
+    std::fs::write(format!("{prefix}.summary.tsv"), combined.summary_tsv()).map_err(|e| format!("{prefix}.summary.tsv: {e}"))
+}
+
 /// `qmutfind annotate`: add the effect of each variant on the canonical transcript to a VCF.
 fn annotate(args: &[String]) -> Result<(), String> {
     let flags = parse_flags(args)?;
@@ -310,12 +354,13 @@ fn main() -> ExitCode {
         Some("call") => call(&args[1..]),
         Some("annotate") => annotate(&args[1..]),
         Some("stats") => stats(&args[1..]),
+        Some("combine") => combine_command(&args[1..]),
         Some("report") => report(&args[1..]),
         Some("plot") => plot(&args[1..]),
         Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
