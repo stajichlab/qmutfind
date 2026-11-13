@@ -83,7 +83,7 @@ function currentVcf() {
   return state.annotated || state.vcf;
 }
 
-/** The coverage the next step should use: a chosen file, else the BED from step 1. */
+/** The coverage the next step should use: a chosen file, else the BED of the chosen sample. */
 function currentDepth() {
   return $('depth-file').files[0] || state.depth;
 }
@@ -92,7 +92,7 @@ function describeSource() {
   const file = $('vcf-file').files[0];
   let text;
   if (file) text = `Using the VCF file ${file.name}.`;
-  else if (state.annotated) text = 'Using the annotated VCF from step 3.';
+  else if (state.annotated) text = 'Using the annotated VCF from the gene step (section 4).';
   else if (state.vcf) text = `Using the VCF of the sample ${sampleName()}.`;
   else text = 'No VCF yet. Run a sample or choose a VCF file.';
   show('vcf-source', text);
@@ -516,8 +516,8 @@ async function loadGenome() {
     dropExampleSamples();
     example.source = { reference: `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.fasta, base)})`, gff: entry.gff ? `the genome menu (${entry.accession}, ${entry.label}, at ${hostOf(entry.gff, base)})` : '', reads: '' };
     describeSources();
-    let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so step 3 cannot annotate it unless you choose a GFF3 file.';
-    note += ' Choose your reads in step 1.';
+    let note = entry.gff ? '' : ' NCBI has no gene models for this genome, so the gene step (section 4) cannot annotate it unless you upload a GFF3 file.';
+    note += ' Add your samples in section 2.';
     if (entry.genome_size > LARGE_GENOME) {
       note += ` This genome is large (${(entry.genome_size / 1e6).toFixed(0)} Mb). Genomes above 50 Mb have not been tested in a browser and may need several GB of memory.`;
     }
