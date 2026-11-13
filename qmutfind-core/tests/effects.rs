@@ -30,6 +30,17 @@ fn c2() -> Vec<u8> {
     s.into_bytes()
 }
 
+/// Contig c6 (60 bp), a plus-strand gene, exon 11-35: CDS 11-28 (ATG GCT GCT GCT GCT TAA, M A A A A *) and a 3' UTR 29-35 (CTAAGGG).
+/// A frameshift in the CDS has no stop in the rest of the CDS, but reads on into the UTR and finds one there (CTA AGG: ... AAC TAA).
+fn c6() -> Vec<u8> {
+    format!("{}ATGGCTGCTGCTGCTTAACTAAGGG{}", "T".repeat(10), "T".repeat(25)).into_bytes()
+}
+
+/// Contig c7 (60 bp), the same gene on the minus strand: exon 11-35, CDS 18-35, the 3' UTR 11-17 (reverse complement strand).
+fn c7() -> Vec<u8> {
+    format!("{}CCCTTAGTTAAGCAGCAGCAGCCAT{}", "T".repeat(10), "T".repeat(25)).into_bytes()
+}
+
 fn c5() -> Vec<u8> {
     // 1-27 filler, 28-42 CDS of Q, 43-49 filler, 50-58 CDS of P (ATGAAAAAA), 59-80 filler
     let s = format!("{}ATGGCTGAACGTAAA{}ATGAAAAAA{}", "T".repeat(27), "T".repeat(7), "T".repeat(22));
@@ -60,6 +71,14 @@ c5\tsrc\tgene\t11\t60\t.\t+\t.\tID=geneP;locus_tag=GP
 c5\tsrc\tmRNA\t11\t60\t.\t+\t.\tID=txP;Parent=geneP
 c5\tsrc\texon\t11\t60\t.\t+\t.\tParent=txP
 c5\tsrc\tCDS\t50\t58\t.\t+\t0\tParent=txP
+c6\tsrc\tgene\t11\t35\t.\t+\t.\tID=gene6;locus_tag=G6
+c6\tsrc\tmRNA\t11\t35\t.\t+\t.\tID=tx6;Parent=gene6
+c6\tsrc\texon\t11\t35\t.\t+\t.\tParent=tx6
+c6\tsrc\tCDS\t11\t28\t.\t+\t0\tParent=tx6
+c7\tsrc\tgene\t11\t35\t.\t-\t.\tID=gene7;locus_tag=G7
+c7\tsrc\tmRNA\t11\t35\t.\t-\t.\tID=tx7;Parent=gene7
+c7\tsrc\texon\t11\t35\t.\t-\t.\tParent=tx7
+c7\tsrc\tCDS\t18\t35\t.\t-\t0\tParent=tx7
 c5\tsrc\tgene\t25\t45\t.\t+\t.\tID=geneQ;locus_tag=GQ
 c5\tsrc\tmRNA\t25\t45\t.\t+\t.\tID=txQ;Parent=geneQ
 c5\tsrc\texon\t25\t45\t.\t+\t.\tParent=txQ
@@ -74,6 +93,8 @@ fn setup() -> (Annotation, Genome) {
         ("c3".to_string(), "T".repeat(60).into_bytes()),
         ("c4".to_string(), "T".repeat(60).into_bytes()),
         ("c5".to_string(), c5()),
+        ("c6".to_string(), c6()),
+        ("c7".to_string(), c7()),
     ]);
     (ann, genome)
 }
@@ -380,4 +401,83 @@ fn a_deletion_anchored_on_the_last_base_of_a_gene_but_deleting_only_intergenic_b
     assert_eq!(effect("c1", 110, "CTT", "C").0, "intergenic");
     // Delete 110-111 (anchored at 109): one deleted base is in the UTR and one is not, so it is complex.
     assert_eq!(effect("c1", 109, "CCT", "C").0, "complex");
+}
+
+// ---- what a frameshift does to the protein ----
+// The reference protein of c1 is M A E R K L D P W G K L D H E C (16 residues, then the stop). A frameshift is written as the
+// first changed residue, the residue it becomes, `fs`, and `*N`: N residues from the first changed one up to and including the
+// new stop. Besides, the protein is cut to `new length / reference length` residues.
+
+fn frameshift(contig: &str, pos: u64, reference: &str, alt: &str) -> (String, Option<String>, Option<String>) {
+    let (ann, genome) = setup();
+    let e = classify_effect(&ann, &genome, contig, pos, reference, alt);
+    (e.label, e.aa, e.truncation)
+}
+
+fn some(s: &str) -> Option<String> {
+    Some(s.to_string())
+}
+
+#[test]
+fn a_frameshift_names_the_first_changed_residue_and_the_length_up_to_the_new_stop() {
+    // Delete the A at 31. Codons from 3: GAC GTA AAT TAG: E3 becomes D, then V, N and the stop. The first changed residue (3) to
+    // the stop is 4 residues (D V N *), and the new protein has 5 residues (M A D V N).
+    assert_eq!(frameshift("c1", 30, "GA", "G"), ("frameshift".to_string(), some("E3Dfs*4"), some("5/16")));
+    // Insert a T after 30: GTA ACG TAA: E3 becomes V, then T and the stop. 3 residues from the first change; 4 residues in all.
+    assert_eq!(frameshift("c1", 30, "G", "GT"), ("frameshift".to_string(), some("E3Vfs*3"), some("4/16")));
+}
+
+#[test]
+fn a_frameshift_whose_first_changed_codon_is_a_stop_is_written_with_the_stop() {
+    // Insert a C after 27: GCC TGA: codon 3 (E) becomes a stop at once, so the protein has 2 residues.
+    assert_eq!(frameshift("c1", 27, "G", "GC"), ("frameshift".to_string(), some("E3*fs"), some("2/16")));
+}
+
+#[test]
+fn a_frameshift_that_finds_no_stop_says_so_and_gives_no_truncation() {
+    // Delete the A at 41, anchored at 40: codon 6 stays L, codon 7 (D) becomes I, and no stop follows, not even in the 3' UTR.
+    assert_eq!(frameshift("c1", 40, "TA", "T"), ("frameshift".to_string(), some("D7Ifs*?"), None));
+}
+
+#[test]
+fn a_frameshift_on_the_minus_strand_is_worked_out_on_the_coding_strand() {
+    // c2 forward 11-22 is TTAGGGTTTCAT; the coding strand is ATG AAA CCC TAA. Delete the forward T at 18 (anchored at 17):
+    // the coding strand loses an A of the second codon: ATG AAC CCT AA. K2 becomes N, and no stop is found.
+    assert_eq!(frameshift("c2", 17, "TT", "T"), ("frameshift".to_string(), some("K2Nfs*?"), None));
+}
+
+#[test]
+fn only_frameshifts_have_a_truncation() {
+    assert_eq!(frameshift("c1", 28, "C", "A").2, None); // missense
+    assert_eq!(frameshift("c1", 30, "GAAC", "G").2, None); // in-frame deletion
+    assert_eq!(frameshift("c1", 49, "G", "A").2, None); // nonsense SNP: the stop is the change itself
+}
+
+#[test]
+fn the_annotated_vcf_has_the_protein_change_and_the_truncation_of_a_frameshift_and_defines_the_tag() {
+    let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+c1\t30\t.\tGA\tG\t.\tPASS\tSAMPLE=s\n\
+c1\t28\t.\tC\tA\t.\tPASS\tSAMPLE=s\n";
+    let genome_fa = format!(">c1\n{}\n", String::from_utf8(c1()).unwrap());
+
+    let out = annotate_text(vcf, genome_fa.as_bytes(), Some(GFF.as_bytes())).unwrap();
+
+    assert!(out.contains("##INFO=<ID=TRUNC,"), "{out}");
+    let records: Vec<&str> = out.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(records[0].contains(";AA=E3Dfs*4") && records[0].contains(";TRUNC=5/16"), "{}", records[0]);
+    assert!(records[1].contains(";AA=A2D") && !records[1].contains("TRUNC"), "{}", records[1]);
+}
+
+#[test]
+fn a_frameshift_reads_on_into_the_3_prime_utr_when_the_cds_has_no_new_stop() {
+    // c6: delete the C at 15, anchored at 14. The reference protein is M A A A A (*); the new frame is ATG CTG CTG CTG CTT AAC | TAA,
+    // M V L L L N, and the stop is in the UTR: from the first change (V2) to the stop is 6 residues; the protein has 6 residues,
+    // one more than the reference, so this is an extension.
+    assert_eq!(frameshift("c6", 14, "GC", "G"), ("frameshift".to_string(), some("A2Vfs*6"), some("6/5")));
+}
+
+#[test]
+fn the_3_prime_utr_of_a_minus_strand_gene_is_read_on_the_coding_strand() {
+    // c7 is c6 on the other strand: delete the forward G at 31 (the C of the coding strand), anchored at 30.
+    assert_eq!(frameshift("c7", 30, "AG", "A"), ("frameshift".to_string(), some("A2Vfs*6"), some("6/5")));
 }

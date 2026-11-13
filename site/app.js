@@ -205,7 +205,9 @@ function parseVariants(vcfText) {
       ns: info.NS === undefined ? undefined : Number(info.NS),
       samples: info.SAMPLES ? info.SAMPLES.split(',').map(decodeInfo) : [],
       newIn: info.NEW ? info.NEW.split(',').map(decodeInfo) : [],
-      gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '', af: info.AF || '', dp: info.DP || '',
+      gene: info.GENE || '', geneName: decodeInfo(info.GENENAME), product: decodeInfo(info.PRODUCT), aa: info.AA && info.AA !== '.' ? info.AA : '',
+      // trunc is for a frameshift with a new stop: the new and the reference number of residues
+      trunc: info.TRUNC && info.TRUNC !== '.' ? info.TRUNC.split(',')[0] : '', af: info.AF || '', dp: info.DP || '',
     });
   }
   return rows;
@@ -224,7 +226,7 @@ const BASE_COLUMNS = [
   { label: 'Effect', kind: 'text', value: (v) => v.effect },
   { label: 'Gene', kind: 'text', value: (v) => v.gene },
   { label: 'Name', kind: 'text', value: (v) => v.geneName },
-  { label: 'Protein change', kind: 'text', value: (v) => v.aa },
+  { label: 'Protein change', kind: 'text', value: (v) => v.aa, text: (v) => (v.trunc && v.aa ? `${v.aa} (protein ${v.trunc.replace('/', ' of ')} aa)` : v.aa) },
   { label: 'Product', kind: 'text', value: (v) => v.product },
   { label: 'AF', kind: 'number', value: (v) => v.af },
   { label: 'DP', kind: 'number', value: (v) => v.dp },

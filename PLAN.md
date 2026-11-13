@@ -1141,3 +1141,17 @@ called in all samples, new, all variants), also in the annotation table.
   removes the choice.
 - The AF of a merged record is the mean over the samples that call it; the coverage plot is not drawn for the merged view (the
   coverage of separate samples is not merged). Not done: colouring the genome plot by the number of samples.
+
+## 12k. What a frameshift does to the protein (2026-11-12)
+Request: a frameshift should say what truncation of the protein results.
+- `annotate` (core `frameshift_protein`): the coding sequence is changed by the indel, extended with the exon bases of the 3' UTR (spliced,
+  on the coding strand), and translated. The protein change is written like this: the first residue that differs from the reference, the
+  residue it becomes, `fs`, and `*N` for the residues from the first changed one up to and including the new stop: `E3Dfs*4`.
+  `E3Dfs*?` means no stop was found, not even in the 3' UTR. A first changed codon that is already a stop is `E3*fs`.
+- New INFO tag `TRUNC=new/reference`: residues in the new protein over residues in the reference protein (without the stop), only when a
+  stop is found. A value above 1 is an extension (the stop of the reference was lost in the shift).
+- The page shows it next to the protein change: `E3Dfs*4 (protein 5 of 16 aa)`; the column still sorts by the change itself.
+  The locus drawing uses the AA tag, so a frameshift is now labelled `E3Dfs*4` instead of `frameshift`.
+- Tests: `tests/effects.rs` (fixtures c1, c2 and the new c6 and c7 with a stop that exists only in the 3' UTR, on both strands). Mutation
+  checks: stop count, 3' UTR reading, minus-strand complement. Not handled: a frameshift near the start codon or across a splice site
+  is judged on the spliced CDS only; an indel that spans a splice site is a `splice_site`, as before; only the canonical transcript.

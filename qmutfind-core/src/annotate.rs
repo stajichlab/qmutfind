@@ -297,6 +297,8 @@ pub struct Effect {
     pub gene: Option<String>,
     pub transcript: Option<String>,
     pub aa: Option<String>,
+    /// For a frameshift with a new stop: the length of the new protein and of the reference protein, as `new/reference` residues.
+    pub truncation: Option<String>,
     pub n_transcripts: usize,
     pub gene_name: Option<String>,
     pub product: Option<String>,
@@ -341,6 +343,7 @@ fn effect_of(label: &str, tx: Option<&Transcript>, aa: Option<String>, ann: &Ann
         gene: tx.map(|t| t.gene.clone()),
         transcript: tx.map(|t| t.id.clone()),
         aa,
+        truncation: None,
         n_transcripts: tx.map(|t| ann.transcripts_per_gene.get(&t.gene).copied().unwrap_or(1)).unwrap_or(0),
         gene_name: tx.and_then(|t| t.gene_name.clone()),
         product: tx.and_then(|t| t.product.clone()),
@@ -482,7 +485,15 @@ fn indel_effect(ann: &Annotation, genome: &Genome, tx: &Transcript, pos: u64, re
     } else if regions.iter().all(|&r| r == regions[0]) {
         match regions[0] {
             Region::Cds if symbolic => "large_indel_in_cds",
-            Region::Cds if net % 3 != 0 => "frameshift",
+            Region::Cds if net % 3 != 0 => {
+                // The protein change and the truncation of a frameshift come from translating the shifted frame.
+                let mut e = effect_of("frameshift", Some(tx), None, ann);
+                if let Some((aa, truncation)) = frameshift_protein(genome, tx, pos, reference, alt) {
+                    e.aa = Some(aa);
+                    e.truncation = truncation;
+                }
+                return e;
+            }
             Region::Cds => inframe_protein_effect(genome, tx, pos, reference, alt)
                 .unwrap_or(if net > 0 { "inframe_deletion" } else { "inframe_insertion" }),
             other => region_label(other),
@@ -524,11 +535,12 @@ fn coding_snp(ann: &Annotation, genome: &Genome, tx: &Transcript, idx: u64, alt:
     effect_of(label, Some(tx), Some(aa), ann)
 }
 
-const INFO_DEFINITIONS: [&str; 5] = [
+const INFO_DEFINITIONS: [&str; 6] = [
     "##INFO=<ID=EFFECT,Number=A,Type=String,Description=\"Effect on the canonical transcript, one per alternate allele (the _derived labels come from exons and CDS, not from UTR or intron features)\">",
     "##INFO=<ID=GENE,Number=1,Type=String,Description=\"Gene (locus tag) of the canonical transcript\">",
     "##INFO=<ID=TRANSCRIPT,Number=1,Type=String,Description=\"Canonical transcript: the one with the longest CDS\">",
-    "##INFO=<ID=AA,Number=A,Type=String,Description=\"Protein change of a coding SNP, for example L424I; * is a stop\">",
+    "##INFO=<ID=AA,Number=A,Type=String,Description=\"Protein change of a coding SNP, for example L424I; * is a stop. For a frameshift: the first changed residue, what it becomes, fs, and *N for the residues up to the new stop, for example E3Dfs*4 (E3Dfs*? when no stop is found)\">",
+    "##INFO=<ID=TRUNC,Number=A,Type=String,Description=\"For a frameshift with a new stop: residues in the new protein / residues in the reference protein\">",
     "##INFO=<ID=NTX,Number=1,Type=Integer,Description=\"Number of transcripts of the gene\">",
 ];
 
@@ -579,6 +591,10 @@ pub fn annotate_vcf<R: BufRead, W: io::Write>(
                         let aas: Vec<&str> = effects.iter().map(|e| e.aa.as_deref().unwrap_or(".")).collect();
                         tags.push_str(&format!(";AA={}", aas.join(",")));
                     }
+                    if effects.iter().any(|e| e.truncation.is_some()) {
+                        let t: Vec<&str> = effects.iter().map(|e| e.truncation.as_deref().unwrap_or(".")).collect();
+                        tags.push_str(&format!(";TRUNC={}", t.join(",")));
+                    }
                     if first.gene.is_some() {
                         tags.push_str(&format!(";NTX={}", first.n_transcripts));
                     }
@@ -624,7 +640,22 @@ fn protein(codons: &[u8], table: u8) -> Vec<u8> {
 /// remove the terminal stop? Returns the label, or None when the protein changes in length only.
 fn inframe_protein_effect(genome: &Genome, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Option<&'static str> {
     let cds = tx.coding_sequence(genome)?;
-    let alt_cds = if reference.len() > alt.len() {
+    let alt_cds = altered_cds(tx, &cds, pos, reference, alt)?;
+    let (ref_aa, alt_aa) = (protein(&cds, tx.transl_table), protein(&alt_cds, tx.transl_table));
+    if alt_aa.first() != ref_aa.first() && ref_aa.first() == Some(&b'M') {
+        return Some("start_lost");
+    }
+    let ref_has_stop = ref_aa.last() == Some(&b'*');
+    match alt_aa.iter().position(|&a| a == b'*') {
+        Some(i) if i + 1 != alt_aa.len() || !ref_has_stop => Some("nonsense"),
+        None if ref_has_stop => Some("stop_lost"),
+        _ => None,
+    }
+}
+
+/// The coding sequence with the indel applied. `reference` and `alt` are in VCF form (one anchor base).
+fn altered_cds(tx: &Transcript, cds: &[u8], pos: u64, reference: &str, alt: &str) -> Option<Vec<u8>> {
+    Some(if reference.len() > alt.len() {
         // The deleted bases follow the anchor. Their coding indices are contiguous.
         let deleted = (reference.len() - alt.len()) as u64;
         let indices: Vec<u64> = (pos + 1..=pos + deleted).map(|p| tx.coding_index(p)).collect::<Option<_>>()?;
@@ -638,15 +669,57 @@ fn inframe_protein_effect(genome: &Genome, tx: &Transcript, pos: u64, reference:
             Strand::Minus => (anchor, reverse_complement(inserted)),
         };
         [&cds[..at], &bases[..], &cds[at..]].concat()
-    };
+    })
+}
+
+/// The exon bases after the CDS, in transcript order (the 3' UTR, spliced). A frameshift near the end of the CDS can read into it.
+fn three_prime_bases(genome: &Genome, tx: &Transcript) -> Vec<u8> {
+    let (Some(first), Some(last)) = (tx.cds.first(), tx.cds.last()) else { return Vec::new() };
+    let mut out = Vec::new();
+    match tx.strand {
+        Strand::Plus => {
+            for &(s, e) in &tx.exons {
+                for p in s.max(last.1 + 1)..=e {
+                    if let Some(b) = genome.base(&tx.contig, p) {
+                        out.push(b.to_ascii_uppercase());
+                    }
+                }
+            }
+        }
+        Strand::Minus => {
+            for &(s, e) in tx.exons.iter().rev() {
+                if s >= first.0 {
+                    continue;
+                }
+                for p in (s..=e.min(first.0 - 1)).rev() {
+                    if let Some(b) = genome.base(&tx.contig, p) {
+                        out.push(complement(b.to_ascii_uppercase()));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What a frameshift does to the protein. Returns the protein change and, when the shifted frame has a stop, the truncation.
+/// The change is the first residue that differs from the reference, what it becomes, `fs`, and `*N`: N residues from the first
+/// changed one up to and including the new stop (`*?` when no stop is found, even in the 3' UTR). A first changed codon that is
+/// already a stop is written `E3*fs`. The truncation is `new length/reference length` in residues.
+fn frameshift_protein(genome: &Genome, tx: &Transcript, pos: u64, reference: &str, alt: &str) -> Option<(String, Option<String>)> {
+    let cds = tx.coding_sequence(genome)?;
+    let mut alt_cds = altered_cds(tx, &cds, pos, reference, alt)?;
+    alt_cds.extend(three_prime_bases(genome, tx));
     let (ref_aa, alt_aa) = (protein(&cds, tx.transl_table), protein(&alt_cds, tx.transl_table));
-    if alt_aa.first() != ref_aa.first() && ref_aa.first() == Some(&b'M') {
-        return Some("start_lost");
-    }
-    let ref_has_stop = ref_aa.last() == Some(&b'*');
-    match alt_aa.iter().position(|&a| a == b'*') {
-        Some(i) if i + 1 != alt_aa.len() || !ref_has_stop => Some("nonsense"),
-        None if ref_has_stop => Some("stop_lost"),
-        _ => None,
-    }
+    let ref_len = ref_aa.len() - usize::from(ref_aa.last() == Some(&b'*'));
+    let common = ref_aa.len().min(alt_aa.len());
+    let at = (0..common).find(|&i| ref_aa[i] != alt_aa[i]).unwrap_or(common);
+    let ref_char = ref_aa.get(at).copied().unwrap_or(b'?') as char;
+    let stop = alt_aa.iter().position(|&a| a == b'*').filter(|&j| j >= at);
+    Some(match (alt_aa.get(at).copied(), stop) {
+        (Some(b'*'), _) => (format!("{ref_char}{}*fs", at + 1), Some(format!("{at}/{ref_len}"))),
+        (Some(a), Some(j)) => (format!("{ref_char}{}{}fs*{}", at + 1, a as char, j - at + 1), Some(format!("{j}/{ref_len}"))),
+        (Some(a), None) => (format!("{ref_char}{}{}fs*?", at + 1, a as char), None),
+        (None, _) => (format!("{ref_char}{}fs*?", at + 1), None),
+    })
 }

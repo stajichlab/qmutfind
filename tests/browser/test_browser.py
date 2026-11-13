@@ -1720,7 +1720,7 @@ def variant_vcf(records):
     lines = ["##fileformat=VCFv4.2", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"]
     for r in records:
         info = f"CLASS={r.get('cls', 'SNP')};DP={r.get('dp', 20)};AF={r.get('af', '1.0000')};EFFECT={r.get('effect', 'intergenic')}"
-        for tag, key in (("GENE", "gene"), ("GENENAME", "name"), ("PRODUCT", "product"), ("AA", "aa")):
+        for tag, key in (("GENE", "gene"), ("GENENAME", "name"), ("PRODUCT", "product"), ("AA", "aa"), ("TRUNC", "trunc")):
             if r.get(key):
                 info += f";{tag}={r[key]}"
         lines.append(f"{r['contig']}\t{r['pos']}\t.\t{r.get('ref', 'A')}\t{r.get('alt', 'G')}\t.\tPASS\t{info}")
@@ -2001,3 +2001,18 @@ def test_a_combine_without_a_parent_has_no_new_filter_option(driver, server, sha
     options = [o.get_attribute("value") for o in driver.find_elements(By.CSS_SELECTOR, "#sharing-filter option")]
 
     assert options == ["", "one", "all"]
+
+
+def test_a_frameshift_shows_what_the_protein_becomes_next_to_its_protein_change(driver, server):
+    records = [
+        {"contig": "c1", "pos": 30, "effect": "frameshift", "aa": "E3Dfs*4", "trunc": "5/16", "gene": "G1"},
+        {"contig": "c1", "pos": 40, "effect": "frameshift", "aa": "D7Ifs*?", "gene": "G1"},  # no stop found: no truncation
+        {"contig": "c1", "pos": 50, "effect": "missense", "aa": "A2D", "gene": "G1"},
+    ]
+    load_variant_table(driver, server, records)
+
+    cells = column(driver, "Protein change")
+
+    assert cells == ["E3Dfs*4 (protein 5 of 16 aa)", "D7Ifs*?", "A2D"]
+    sort_by(driver, "Protein change")
+    assert column(driver, "Protein change") == ["A2D", "D7Ifs*?", "E3Dfs*4 (protein 5 of 16 aa)"]  # sorted by the change itself
