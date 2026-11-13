@@ -1,13 +1,17 @@
 //! Combine the results of several strains (one VCF and one coverage BED each) into one table.
 //!
 //! A row is one variant: the same contig, position, REF and ALT. Each strain gets a cell for the row:
-//! a call (with its allele fraction and depth), `ref` (no call, and the coverage there is enough to say the base matches
-//! the reference), `low` (no call, but too little coverage to say), `unknown` (no call and no coverage data), or `other`
-//! (the strain has a different ALT at the same position).
+//! a call (with its allele fraction and depth), `weak` (no call, but the evidence file of the strain has some reads for this
+//! ALT, below the calling thresholds), `ref` (no call, no such reads, and the coverage there is enough to say the base
+//! matches the reference), `low` (no call, but too little coverage to say), `unknown` (no call and no coverage data), or
+//! `other` (the strain has a different ALT at the same position).
 //!
 //! One strain can be marked as the parent. Then each other strain gets a status for the row: `new` (a call that the
 //! parent lacks, and the parent is covered), `inherited` (the parent has it too), `lost` (the parent has it, the strain
-//! does not, and the strain is covered), or `unknown` (the parent or the strain has too little coverage to say).
+//! does not, and the strain is covered), or `unknown` (the parent or the strain has weak evidence or too little coverage
+//! to say). A variant is never `new` when the parent has some reads for it, and never `lost` when the strain has some.
+//!
+//! The evidence file of a strain is a VCF made with relaxed thresholds (`Caller::evidence_calls`). It is optional.
 //!
 //! The coverage BED has windows (`contig`, 0-based start, end, mean depth), as `depth-out` of the caller or mosdepth
 //! writes it. A window is coarse: the depth at one site can differ from the window mean.
@@ -19,6 +23,8 @@ pub struct CombineInput<'a> {
     pub name: &'a str,
     pub vcf: &'a str,
     pub depth_bed: Option<&'a str>,
+    /// Calls at relaxed thresholds, from the same mapping. Without it, a weak signal cannot be told from no signal.
+    pub evidence_vcf: Option<&'a str>,
 }
 
 pub struct CombineOptions<'a> {
@@ -31,6 +37,8 @@ pub struct CombineOptions<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Cell {
     Call { af: f64, depth: u64 },
+    /// Some reads carry this ALT, but too few for a call.
+    Weak { af: f64, depth: u64 },
     Ref,
     Low,
     Unknown,
@@ -66,6 +74,8 @@ pub struct Combined {
     pub strains: Vec<String>,
     pub parent: Option<usize>,
     pub rows: Vec<Row>,
+    /// Things the user should know that are not errors, such as a coverage contig that no VCF has.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -110,23 +120,36 @@ fn parse_vcf(text: &str, name: &str) -> Result<(ContigLengths, Vec<Record>), Str
             return Err(format!("{name}: a VCF line has {} fields, needs at least 8: {line}", f.len()));
         }
         let pos: u64 = f[1].parse().map_err(|_| format!("{name}: bad VCF position in: {line}"))?;
+        if pos == 0 {
+            return Err(format!("{name}: VCF position 0 is not valid in: {line}"));
+        }
+        if !matches!(f[6], "PASS" | "." | "") {
+            continue; // the record failed a filter
+        }
         let info = |key: &str| f[7].split(';').find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='));
-        let alt = f[4].split(',').next().unwrap_or("").to_string();
         let depth: u64 = info("DP").and_then(|v| v.parse().ok()).unwrap_or(0);
-        let af = info("AF")
-            .and_then(|v| v.split(',').next()?.parse().ok())
-            .or_else(|| Some(info("AO")?.split(',').next()?.parse::<f64>().ok()? / depth as f64))
-            .unwrap_or(f64::NAN);
-        let class = match info("CLASS") {
-            Some(c) => c.to_string(),
-            None => match crate::classify(f[3], &alt, 50) {
-                crate::VariantClass::Snp => "SNP",
-                crate::VariantClass::SmallIndel => "SMALL_INDEL",
-                crate::VariantClass::LargeIndel => "LARGE_INDEL",
+        let fractions: Vec<&str> = info("AF").map(|v| v.split(',').collect()).unwrap_or_default();
+        let counts: Vec<&str> = info("AO").map(|v| v.split(',').collect()).unwrap_or_default();
+        for (k, alt) in f[4].split(',').enumerate() {
+            if alt.is_empty() || alt == "*" {
+                continue;
             }
-            .to_string(),
-        };
-        records.push(Record { contig: f[0].to_string(), pos, reference: f[3].to_string(), alt, class, af, depth });
+            let af = fractions
+                .get(k)
+                .and_then(|v| v.parse::<f64>().ok())
+                .or_else(|| (depth > 0).then(|| counts.get(k)?.parse::<f64>().ok().map(|n| n / depth as f64)).flatten())
+                .unwrap_or(f64::NAN);
+            let class = match info("CLASS") {
+                Some(c) => c.to_string(),
+                None => match crate::classify(f[3], alt, 50) {
+                    crate::VariantClass::Snp => "SNP",
+                    crate::VariantClass::SmallIndel => "SMALL_INDEL",
+                    crate::VariantClass::LargeIndel => "LARGE_INDEL",
+                }
+                .to_string(),
+            };
+            records.push(Record { contig: f[0].to_string(), pos, reference: f[3].to_string(), alt: alt.to_string(), class, af, depth });
+        }
     }
     Ok((contigs, records))
 }
@@ -164,9 +187,9 @@ fn status_of(cell: Cell, parent: Cell) -> Status {
     match (cell, parent) {
         (Call { .. }, Call { .. }) => Status::Inherited,
         (Call { .. }, Ref | Other) => Status::New,
-        (Call { .. }, Low | Unknown) => Status::Unknown,
+        (Call { .. }, Low | Unknown | Weak { .. }) => Status::Unknown,
         (Ref | Other, Call { .. }) => Status::Lost,
-        (Low | Unknown, Call { .. }) => Status::Unknown,
+        (Low | Unknown | Weak { .. }, Call { .. }) => Status::Unknown,
         _ => Status::None,
     }
 }
@@ -177,6 +200,9 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
     }
     let mut seen = HashSet::new();
     for input in inputs {
+        if input.name.is_empty() || input.name.contains(['\t', '\n', '\r']) {
+            return Err(format!("the strain name {:?} is not valid: it must not be empty or hold a tab or a line break", input.name));
+        }
         if !seen.insert(input.name) {
             return Err(format!("the strain name {} is used more than once", input.name));
         }
@@ -192,6 +218,7 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
     let mut lengths: HashMap<String, (u64, &str)> = HashMap::new();
     let mut parsed = Vec::new();
     let mut windows = Vec::new();
+    let mut evidence: Vec<HashMap<(String, u64, String, String), (f64, u64)>> = Vec::new();
     for input in inputs {
         let (contigs, records) = parse_vcf(input.vcf, input.name)?;
         for (contig, length) in contigs {
@@ -213,6 +240,19 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
         }
         parsed.push(records);
         windows.push(input.depth_bed.map(|b| parse_bed(b, input.name)).transpose()?);
+        let weak = match input.evidence_vcf {
+            Some(text) => parse_vcf(text, input.name)?.1,
+            None => Vec::new(),
+        };
+        evidence.push(weak.into_iter().map(|r| ((r.contig, r.pos, r.reference, r.alt), (r.af, r.depth))).collect());
+    }
+    let mut warnings = Vec::new();
+    for (input, w) in inputs.iter().zip(&windows) {
+        let mut unknown: Vec<&String> = w.iter().flat_map(|w| w.keys()).filter(|c| !order.contains(c)).collect();
+        unknown.sort();
+        for contig in unknown {
+            warnings.push(format!("{}: the coverage file has contig {contig}, which no VCF has, so it is not used", input.name));
+        }
     }
     let rank: HashMap<&str, usize> = order.iter().enumerate().map(|(i, c)| (c.as_str(), i)).collect();
 
@@ -235,6 +275,10 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
             .map(|i| match calls[i] {
                 Some((af, depth)) => Cell::Call { af, depth },
                 None if called_at[i].contains(&(contig.as_str(), pos)) => Cell::Other,
+                None if evidence[i].contains_key(&(contig.clone(), pos, reference.clone(), alt.clone())) => {
+                    let (af, depth) = evidence[i][&(contig.clone(), pos, reference.clone(), alt.clone())];
+                    Cell::Weak { af, depth }
+                }
                 None => match windows[i].as_ref().and_then(|w| depth_at(w, &contig, pos)) {
                     None => Cell::Unknown,
                     Some(d) if d >= options.min_depth => Cell::Ref,
@@ -251,13 +295,14 @@ pub fn combine(inputs: &[CombineInput], options: &CombineOptions) -> Result<Comb
             .collect();
         rows.push(Row { contig, pos, reference, alt, class, cells, status });
     }
-    Ok(Combined { strains: inputs.iter().map(|i| i.name.to_string()).collect(), parent, rows })
+    Ok(Combined { strains: inputs.iter().map(|i| i.name.to_string()).collect(), parent, rows, warnings })
 }
 
 impl Cell {
     fn text(&self) -> String {
         match self {
             Cell::Call { af, depth } => format!("{af:.2}:{depth}"),
+            Cell::Weak { af, depth } => format!("weak:{af:.2}:{depth}"),
             Cell::Ref => "ref".to_string(),
             Cell::Low => "low".to_string(),
             Cell::Unknown => "unknown".to_string(),
@@ -376,8 +421,8 @@ mod tests {
     fn run(parent_name: Option<&str>) -> Combined {
         let (p, e, b) = two_strains();
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b) },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&b) },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&b), evidence_vcf: None },
         ];
         combine(&inputs, &options(parent_name)).unwrap()
     }
@@ -406,8 +451,8 @@ mod tests {
         let (p, e, _) = two_strains();
         let low = bed([30.0, 4.0, 30.0]); // the window of position 1500 has depth 4
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&low) },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: None },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&low), evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: None, evidence_vcf: None },
         ];
 
         let c = combine(&inputs, &options(None)).unwrap();
@@ -415,8 +460,8 @@ mod tests {
         assert_eq!(c.rows[1].cells[0], Cell::Low);
         assert_eq!(c.rows[0].cells[1], Cell::Call { af: 1.0, depth: 28 });
         let no_bed = combine(&[
-            CombineInput { name: "parent", vcf: &p, depth_bed: None },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: None },
+            CombineInput { name: "parent", vcf: &p, depth_bed: None, evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: None, evidence_vcf: None },
         ], &options(None)).unwrap();
         assert_eq!(no_bed.rows[1].cells[0], Cell::Unknown);
     }
@@ -426,8 +471,8 @@ mod tests {
         let (p, e, _) = two_strains();
         let edge = bed([30.0, 10.0, 30.0]); // 10.0 is the minimum depth of the options
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&edge) },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&edge) },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&edge), evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&edge), evidence_vcf: None },
         ];
 
         let c = combine(&inputs, &options(None)).unwrap();
@@ -441,8 +486,8 @@ mod tests {
         let b = vcf(CONTIGS, &[("chrA", 700, "A", "T", "SNP", 30, 1.0)]);
         let bd = bed([30.0, 30.0, 30.0]);
         let inputs = [
-            CombineInput { name: "a", vcf: &a, depth_bed: Some(&bd) },
-            CombineInput { name: "b", vcf: &b, depth_bed: Some(&bd) },
+            CombineInput { name: "a", vcf: &a, depth_bed: Some(&bd), evidence_vcf: None },
+            CombineInput { name: "b", vcf: &b, depth_bed: Some(&bd), evidence_vcf: None },
         ];
 
         let c = combine(&inputs, &options(None)).unwrap();
@@ -467,8 +512,8 @@ mod tests {
         let (p, _, b) = two_strains();
         let reverted = vcf(CONTIGS, &[]);
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b) },
-            CombineInput { name: "revertant", vcf: &reverted, depth_bed: Some(&b) },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "revertant", vcf: &reverted, depth_bed: Some(&b), evidence_vcf: None },
         ];
         let c = combine(&inputs, &options(Some("parent"))).unwrap();
         assert_eq!(c.rows[0].status, vec![Status::Parent, Status::Lost]);
@@ -480,8 +525,8 @@ mod tests {
         let parent_bed = bed([30.0, 3.0, 30.0]); // the parent has depth 3 at 1500
         let strain_bed = bed([30.0, 30.0, 30.0]);
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&parent_bed) },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&strain_bed) },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&parent_bed), evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&strain_bed), evidence_vcf: None },
         ];
 
         let c = combine(&inputs, &options(Some("parent"))).unwrap();
@@ -495,9 +540,9 @@ mod tests {
         let (p, e, b) = two_strains();
         let other = vcf(CONTIGS, &[]);
         let inputs = [
-            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b) },
-            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&b) },
-            CombineInput { name: "plain", vcf: &other, depth_bed: Some(&b) },
+            CombineInput { name: "parent", vcf: &p, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "evolved", vcf: &e, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "plain", vcf: &other, depth_bed: Some(&b), evidence_vcf: None },
         ];
 
         let c = combine(&inputs, &options(Some("parent"))).unwrap();
@@ -509,21 +554,21 @@ mod tests {
     fn the_input_is_checked_for_a_repeated_name_a_missing_parent_and_different_contig_lengths() {
         let (p, e, b) = two_strains();
         let inputs = [
-            CombineInput { name: "x", vcf: &p, depth_bed: Some(&b) },
-            CombineInput { name: "x", vcf: &e, depth_bed: Some(&b) },
+            CombineInput { name: "x", vcf: &p, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "x", vcf: &e, depth_bed: Some(&b), evidence_vcf: None },
         ];
         assert!(combine(&inputs, &options(None)).unwrap_err().contains("more than once"));
 
         let inputs = [
-            CombineInput { name: "a", vcf: &p, depth_bed: Some(&b) },
-            CombineInput { name: "b", vcf: &e, depth_bed: Some(&b) },
+            CombineInput { name: "a", vcf: &p, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "b", vcf: &e, depth_bed: Some(&b), evidence_vcf: None },
         ];
         assert!(combine(&inputs, &options(Some("zzz"))).unwrap_err().contains("parent"));
 
         let other_genome = vcf(&[("chrA", 9999)], &[]);
         let inputs = [
-            CombineInput { name: "a", vcf: &p, depth_bed: None },
-            CombineInput { name: "b", vcf: &other_genome, depth_bed: None },
+            CombineInput { name: "a", vcf: &p, depth_bed: None, evidence_vcf: None },
+            CombineInput { name: "b", vcf: &other_genome, depth_bed: None, evidence_vcf: None },
         ];
         assert!(combine(&inputs, &options(None)).unwrap_err().contains("chrA"));
 
@@ -554,5 +599,88 @@ mod tests {
         assert_eq!(s[0], StrainSummary { strain: "parent".into(), calls: 1, new: 0, inherited: 0, lost: 0, unknown: 0 });
         assert_eq!(s[1], StrainSummary { strain: "evolved".into(), calls: 3, new: 2, inherited: 1, lost: 0, unknown: 0 });
         assert_eq!(c.summary_tsv().lines().next().unwrap(), "strain\tcalls\tnew\tinherited\tlost\tunknown");
+    }
+
+    fn raw_vcf(lines: &[&str]) -> String {
+        let mut text = String::from("##fileformat=VCFv4.2\n##contig=<ID=chrA,length=3000>\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
+        for l in lines {
+            text.push_str(l);
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn a_record_with_a_filter_other_than_pass_or_dot_is_ignored() {
+        let v = raw_vcf(&[
+            "chrA\t500\t.\tA\tG\t50\tPASS\tDP=30;AO=30;AF=1.0",
+            "chrA\t600\t.\tA\tG\t50\t.\tDP=30;AO=30;AF=1.0",
+            "chrA\t700\t.\tA\tG\t5\tLowQual\tDP=30;AO=3;AF=0.1",
+        ]);
+
+        let c = combine(&[CombineInput { name: "a", vcf: &v, depth_bed: None, evidence_vcf: None }], &options(None)).unwrap();
+
+        let positions: Vec<u64> = c.rows.iter().map(|r| r.pos).collect();
+        assert_eq!(positions, vec![500, 600]);
+    }
+
+    #[test]
+    fn each_alt_of_a_multi_allelic_record_is_its_own_row_with_its_own_fraction() {
+        let v = raw_vcf(&["chrA\t500\t.\tA\tG,T\t50\tPASS\tDP=30;AO=18,9;AF=0.6000,0.3000"]);
+
+        let c = combine(&[CombineInput { name: "a", vcf: &v, depth_bed: None, evidence_vcf: None }], &options(None)).unwrap();
+
+        assert_eq!(c.rows.len(), 2);
+        assert_eq!((c.rows[0].alt.as_str(), c.rows[0].cells[0]), ("G", Cell::Call { af: 0.6, depth: 30 }));
+        assert_eq!((c.rows[1].alt.as_str(), c.rows[1].cells[0]), ("T", Cell::Call { af: 0.3, depth: 30 }));
+    }
+
+    #[test]
+    fn position_zero_a_bad_name_and_a_bed_for_an_unknown_contig_are_reported() {
+        let zero = raw_vcf(&["chrA\t0\t.\tA\tG\t50\tPASS\tDP=30;AO=30;AF=1.0"]);
+        let err = combine(&[CombineInput { name: "a", vcf: &zero, depth_bed: None, evidence_vcf: None }], &options(None)).unwrap_err();
+        assert!(err.contains("position"), "{err}");
+
+        let ok = raw_vcf(&[]);
+        for bad in ["", "a\tb", "a\nb"] {
+            let err = combine(&[CombineInput { name: bad, vcf: &ok, depth_bed: None, evidence_vcf: None }], &options(None)).unwrap_err();
+            assert!(err.contains("name"), "{bad:?}: {err}");
+        }
+
+        let wrong_bed = "chrZ\t0\t1000\t30\n";
+        let c = combine(&[CombineInput { name: "a", vcf: &ok, depth_bed: Some(wrong_bed), evidence_vcf: None }], &options(None)).unwrap();
+        assert!(c.warnings.iter().any(|w| w.contains("chrZ") && w.contains("a")), "{:?}", c.warnings);
+    }
+
+    #[test]
+    fn evidence_below_the_calling_thresholds_makes_a_weak_cell_that_blocks_new_and_lost() {
+        let parent = vcf(CONTIGS, &[]);
+        let parent_evidence = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 30, 0.2)]); // 6 of 30 reads, no call
+        let child = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 25, 0.96)]);
+        let b = bed([30.0, 30.0, 30.0]);
+        let inputs = [
+            CombineInput { name: "parent", vcf: &parent, depth_bed: Some(&b), evidence_vcf: Some(&parent_evidence) },
+            CombineInput { name: "child", vcf: &child, depth_bed: Some(&b), evidence_vcf: None },
+        ];
+
+        let c = combine(&inputs, &options(Some("parent"))).unwrap();
+
+        assert_eq!(c.rows[0].cells[0], Cell::Weak { af: 0.2, depth: 30 });
+        assert_eq!(c.rows[0].status[1], Status::Unknown); // not "new": the parent has 20% alternate reads
+        assert!(c.to_tsv().contains("weak:0.20:30"));
+        // Without the evidence file the same site is "new".
+        let inputs = [
+            CombineInput { name: "parent", vcf: &parent, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "child", vcf: &child, depth_bed: Some(&b), evidence_vcf: None },
+        ];
+        assert_eq!(combine(&inputs, &options(Some("parent"))).unwrap().rows[0].status[1], Status::New);
+        // A weak cell in the child blocks "lost" where the parent has the call.
+        let parent_call = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 25, 0.96)]);
+        let child_evidence = vcf(CONTIGS, &[("chrA", 1500, "C", "T", "SNP", 30, 0.2)]);
+        let inputs = [
+            CombineInput { name: "parent", vcf: &parent_call, depth_bed: Some(&b), evidence_vcf: None },
+            CombineInput { name: "child", vcf: &parent, depth_bed: Some(&b), evidence_vcf: Some(&child_evidence) },
+        ];
+        assert_eq!(combine(&inputs, &options(Some("parent"))).unwrap().rows[0].status[1], Status::Unknown);
     }
 }

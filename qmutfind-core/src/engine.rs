@@ -108,6 +108,14 @@ impl Engine {
         self.reads
     }
 
+    /// The weak signals so far (calls at relaxed thresholds) as VCF text. See `Caller::evidence_calls`.
+    pub fn evidence_vcf(&self) -> Result<String, String> {
+        let mut out = Vec::new();
+        write_vcf(&mut out, &self.contigs, &self.sample, &self.caller.evidence_calls(), self.config.large_indel_min)
+            .map_err(|e| e.to_string())?;
+        String::from_utf8(out).map_err(|e| e.to_string())
+    }
+
     /// The calls so far as VCF text.
     pub fn vcf(&self) -> Result<String, String> {
         let mut out = Vec::new();

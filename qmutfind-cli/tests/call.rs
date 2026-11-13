@@ -531,3 +531,48 @@ fn depth_out_is_rejected_with_freebayes_because_that_path_keeps_no_counts() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--depth-out"));
 }
+
+#[test]
+fn evidence_out_writes_the_weak_signals_that_the_strict_calls_leave_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    let alt = if seq[30_000] == b'G' { b'T' } else { b'G' };
+    // Ten reads cover 30,000; only three carry the alternate base, so the SNP fraction (0.3) is below the 0.8 default.
+    let mut fastq = String::new();
+    for i in 0..10 {
+        let start = 29_900 + i * 10;
+        let mut read = seq[start..start + 150].to_vec();
+        if i < 3 {
+            read[30_000 - start] = alt;
+        }
+        fastq.push_str(&format!("@r{i}\n{}\n+\n{}\n", String::from_utf8_lossy(&read), "I".repeat(150)));
+    }
+    fs::write(dir.path().join("reads.fq"), fastq).unwrap();
+
+    let calls = call_rows(dir.path(), &["--evidence-out", "evidence.vcf"]);
+
+    assert_eq!(calls.len(), 0, "the strict calls must not include a 30% variant");
+    let evidence = records(&fs::read_to_string(dir.path().join("evidence.vcf")).unwrap());
+    assert_eq!(evidence.len(), 1);
+    assert_eq!((evidence[0][1].as_str(), evidence[0][4].as_str()), ("30001", (alt as char).to_string().as_str()));
+    assert!(evidence[0][7].contains("AO=3") && evidence[0][7].contains("DP=10"), "{}", evidence[0][7]);
+}
+
+#[test]
+fn evidence_out_is_rejected_with_freebayes_because_that_path_keeps_no_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let seq = reference();
+    write_reference(dir.path(), &seq);
+    write_snp_reads(dir.path(), &seq, b'G');
+
+    let out = Command::new(env!("CARGO_BIN_EXE_qmutfind"))
+        .args(["call", "--reference", "ref.fa", "--reads", "reads.fq", "--sample", "s1", "--preset", "short", "--out", "out.vcf"])
+        .args(["--aligner", "bwa-mem2", "--caller", "freebayes", "--evidence-out", "evidence.vcf"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--evidence-out"));
+}

@@ -980,7 +980,8 @@ Built and tested:
 - `qmutfind_core::combine` (`qmutfind-core/src/combine.rs`): input per strain = VCF text + optional coverage BED text.
   Rows = distinct (contig, pos, REF, ALT). Cells: call (AF:DP), `ref`, `low`, `unknown`, `other`. With a parent, status per
   strain: `new`, `inherited`, `lost`, `unknown`, `.`. A site where the parent has too little coverage is `unknown`, never
-  `new`. `min_depth` (default 10 in the CLI; NOT tuned) decides covered or low from the window mean depth.
+  `new`. `min_depth` (default 5 in the CLI, the caller's own minimum for short reads; NOT tuned) decides covered or low from the
+  window mean depth. (It was 10 first; the review showed that this made `lost` impossible for a 5.9x strain.)
 - CLI `qmutfind combine --strain NAME=VCF[,BED] ... [--parent NAME] [--min-depth N] --out-prefix P` writes
   `P.combined.tsv` and `P.summary.tsv`. WASM `combine_tables(names, vcfs, beds, parent, min_depth)` returns the two texts;
   a Node test checks that WASM and CLI give identical tables.
@@ -999,7 +1000,36 @@ Decisions and reasons:
 Known limits and unknowns:
 - Coverage windows are 10 kb in the page (`depth_bed(10000)`), so "covered" at a site is a window mean. A finer window may
   help; not measured.
-- Indels from different strains must have the same left-aligned REF/ALT to share a row. The caller left-aligns, but this was
-  not tested across strains. Overlapping or nested indels and multi-allelic sites are not merged.
-- Combine was tested with hand-made VCFs only; no end-to-end test with simulated parent and evolved strains yet.
+- Indels from different strains must have the same left-aligned REF/ALT to share a row. CORRECTION (2026-11-12): before
+  this date the built-in path did NOT left-align (only the FreeBayes path did); the review found it. `Caller::calls` now
+  left-aligns every explicit indel, sorts again and keeps the call with more reads when two become equal (tests in
+  `qmutfind-core/tests/sam.rs`). `<INS>` calls (anchor tolerance up to 20 bp), overlapping or nested indels are not merged.
+- Review fixes in `combine` (2026-11-12): records with FILTER other than PASS or `.` are ignored; each ALT of a multi-allelic
+  record is its own row; POS 0 and bad strain names are errors; a coverage contig that no VCF has is a warning.
+- Parent status now uses an optional per-strain EVIDENCE VCF (`Caller::evidence_calls`: depth 2, fraction 0.1, two reads for an
+  indel, no QUAL filter; `qmutfind call --evidence-out`, `Session.evidence_vcf()`). A cell with some reads for the ALT but no
+  call is `weak`; a `weak` cell on either side makes the status `unknown`, never `new` or `lost`. Reason: on the real pair
+  SRR6277228 / SRR6277229, 5 of 7 sites marked `new` had parent alternate reads (AF 0.18 to 0.40; review of 2026-11-12).
+  The evidence thresholds (0.1, depth 2) are the reviewer's choice and were not tuned.
+- Tests: `qmutfind-core/tests/combine_pipeline.rs` simulates a parent and a child through the caller with six sites of known
+  truth (inherited, new, weak in the parent, lost, weak in the child, parent not covered). Simulated reads are clean; this
+  checks the logic, not the thresholds.
 - Per-strain time (about 80 s for 4 M reads) is an extrapolation from 58.8 s for 2.85 M reads, not a measurement.
+
+### Parent status on the real pair after the review fixes (2026-11-12)
+SRR6277228 (parent) and SRR6277229 (EVOL20_3), Af293, `rammap` + built-in, 1 kb coverage windows, evidence VCFs, `combine
+--parent` with min depth 5, release build, both runs at the same time: parent 90.3 s and 585 MB, EVOL20 42.2 s and 634 MB.
+- Before the fixes (10 kb windows, no evidence, min depth 10): 7 new, 22 inherited, 0 lost, 41 unknown.
+- After: 3 new, 22 inherited, 6 lost, 39 unknown (evol20 has 31 calls, the parent 61).
+- The five sites that the reviewer found with parent alternate reads (NC_007194.1:882403, NC_007195.1:1786423 and :1786426,
+  NC_007195.1:2535794, NC_007196.1:4041535) are now `unknown`. The two clean sites (NC_007198.1:2132142 and :3852237) stay
+  `new`. A third `new` site, NC_007196.1:2407906 TAG>T (EVOL20 AF 0.50, depth 6), was not in the reviewer's list and has weak
+  support; it is not checked.
+- The 39 `unknown`: 25 are parent calls where EVOL20 has weak evidence (likely shared, below EVOL20's thresholds at 5.9x), 8 are
+  parent calls where the EVOL20 window is below the minimum depth, 6 are EVOL20 calls where the parent has weak evidence. A
+  separate status for "parent call, child weak" may help; not decided.
+- The 6 `lost` rest on a 1 kb window mean (at least 5) and no evidence record in EVOL20; site depth was not checked, so a site
+  with 1 or 2 reads could be called `ref`. Treat `lost` as a lead, not as proof.
+- The evidence files are large: 4.7 MB (0.32 MB gzip) for the parent and 16.7 MB (1.05 MB gzip, 180,449 records) for EVOL20.
+  The low-coverage sample has more noise records at depth 2 and fraction 0.1. A floor of two alternate reads for SNP evidence
+  may cut this; not tried.

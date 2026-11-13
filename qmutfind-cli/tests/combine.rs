@@ -58,9 +58,9 @@ fn a_strain_without_a_bed_has_unknown_cells() {
 }
 
 #[test]
-fn min_depth_defaults_to_10_and_the_option_changes_it() {
+fn min_depth_defaults_to_5_and_the_option_changes_it() {
     let dir = tempfile::tempdir().unwrap();
-    setup(dir.path(), 5.0); // window depth 5
+    setup(dir.path(), 4.0); // window depth 4
     let args = |extra: &[&'static str]| {
         let mut a = vec!["--strain", "parent=parent.vcf,parent.bed", "--strain", "evolved=evolved.vcf,evolved.bed", "--out-prefix", "m"];
         a.extend_from_slice(extra);
@@ -69,8 +69,36 @@ fn min_depth_defaults_to_10_and_the_option_changes_it() {
 
     assert!(run(dir.path(), &args(&[])).status.success());
     assert!(fs::read_to_string(dir.path().join("m.combined.tsv")).unwrap().lines().nth(2).unwrap().contains("\tlow\t"));
-    assert!(run(dir.path(), &args(&["--min-depth", "5"])).status.success());
+    assert!(run(dir.path(), &args(&["--min-depth", "4"])).status.success());
     assert!(fs::read_to_string(dir.path().join("m.combined.tsv")).unwrap().lines().nth(2).unwrap().contains("\tref\t"));
+}
+
+#[test]
+fn a_third_file_after_the_bed_is_the_evidence_vcf_and_an_empty_bed_field_is_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), 30.0);
+    // The parent has 6 of 30 reads for the evolved strain's SNP at 1500, below the calling thresholds.
+    fs::write(dir.path().join("parent.evidence.vcf"), vcf(&[(1500, "C", "T", 30, "0.2000")])).unwrap();
+
+    let out = run(dir.path(), &["--strain", "parent=parent.vcf,parent.bed,parent.evidence.vcf", "--strain", "evolved=evolved.vcf,,", "--parent", "parent", "--out-prefix", "e"]);
+
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let table = fs::read_to_string(dir.path().join("e.combined.tsv")).unwrap();
+    let row = table.lines().nth(2).unwrap();
+    assert!(row.starts_with("chrA\t1500\tC\tT\tSNP\t1\tweak:0.20:30\t0.96:25"), "{row}");
+    assert!(row.ends_with("parent\tunknown"), "{row}");
+}
+
+#[test]
+fn a_warning_about_a_coverage_contig_is_printed_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), 30.0);
+    fs::write(dir.path().join("wrong.bed"), "chrZ\t0\t1000\t30\n").unwrap();
+
+    let out = run(dir.path(), &["--strain", "a=parent.vcf,wrong.bed", "--out-prefix", "w"]);
+
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("chrZ"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]

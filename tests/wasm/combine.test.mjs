@@ -36,7 +36,7 @@ function cli(parent) {
 
 test('combine in WASM equals the CLI tables, with and without a parent (a missing coverage file is an empty string)', () => {
   for (const parent of [undefined, 'parent']) {
-    const [table, summary] = wasm.combine_tables(['parent', 'evolved'], [PARENT, EVOLVED], [bed(30), ''], parent, 10);
+    const [table, summary] = wasm.combine_tables(['parent', 'evolved'], [PARENT, EVOLVED], [bed(30), ''], ['', ''], parent, 10);
     const [cliTable, cliSummary] = cli(parent);
     assert.equal(table, cliTable);
     assert.equal(summary, cliSummary);
@@ -44,9 +44,48 @@ test('combine in WASM equals the CLI tables, with and without a parent (a missin
 });
 
 test('combine in WASM reports a bad parent as an error', () => {
-  assert.throws(() => wasm.combine_tables(['a'], [PARENT], [''], 'zzz', 10), /parent/);
+  assert.throws(() => wasm.combine_tables(['a'], [PARENT], [''], [''], 'zzz', 10), /parent/);
 });
 
 test('combine in WASM needs one VCF and one coverage text per name', () => {
-  assert.throws(() => wasm.combine_tables(['a', 'b'], [PARENT], ['', ''], undefined, 10), /same number/);
+  assert.throws(() => wasm.combine_tables(['a', 'b'], [PARENT], ['', ''], ['', ''], undefined, 10), /same number/);
+});
+
+test('combine in WASM uses the evidence text of a strain (an empty string means none)', () => {
+  const parent = vcf([]);
+  const evidence = vcf([[1500, 'C', 'T', 30, '0.2000']]);
+  const child = vcf([[1500, 'C', 'T', 25, '0.9600']]);
+  const b = bed(30);
+  const [table] = wasm.combine_tables(['parent', 'child'], [parent, child], [b, b], [evidence, ''], 'parent', 5);
+  assert.match(table.split('\n')[1], /weak:0\.20:30\t0\.96:25\tparent\tunknown$/);
+});
+
+test('the session evidence VCF equals the CLI --evidence-out file', () => {
+  let state = 42n;
+  const next = () => { state = (state * 6364136223846793005n + 1442695040888963407n) & 0xFFFFFFFFFFFFFFFFn; return 'ACGT'[Number((state >> 33n) % 4n)]; };
+  const seq = Array.from({ length: 20000 }, next).join('');
+  const alt = seq[10000] === 'G' ? 'T' : 'G';
+  let fastq = '';
+  for (let i = 0; i < 10; i++) {
+    const start = 9900 + i * 10;
+    const read = seq.slice(start, start + 150).split('');
+    if (i < 3) read[10000 - start] = alt; // 3 of 10 reads: below the 0.8 SNP threshold, above the 0.1 evidence threshold
+    fastq += `@r${i}\n${read.join('')}\n+\n${'I'.repeat(150)}\n`;
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'qmutfind-evidence-'));
+  try {
+    writeFileSync(join(dir, 'ref.fa'), `>chrA\n${seq}\n`);
+    writeFileSync(join(dir, 'reads.fq'), fastq);
+    const result = spawnSync(CLI, ['call', '--reference', 'ref.fa', '--reads', 'reads.fq', '--sample', 's1', '--preset', 'short', '--out', 'out.vcf', '--evidence-out', 'evidence.vcf'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const session = new wasm.Session(new TextEncoder().encode(`>chrA\n${seq}\n`), 'short', 's1');
+    session.add_reads(new TextEncoder().encode(fastq));
+    session.end_file();
+    const evidence = session.evidence_vcf();
+    session.free();
+    assert.equal(evidence, readFileSync(join(dir, 'evidence.vcf'), 'utf8'));
+    assert.match(evidence, /\t10001\t/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

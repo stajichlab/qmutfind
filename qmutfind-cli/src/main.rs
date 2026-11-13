@@ -106,6 +106,10 @@ fn call(args: &[String]) -> Result<(), String> {
         Some(v) => v.parse().ok().filter(|w| *w > 0).ok_or_else(|| format!("--depth-window must be a whole number of bases above 0, not {v}"))?,
         None => 10_000,
     };
+    let evidence_out = flags.get("evidence-out");
+    if evidence_out.is_some() && caller_name == "freebayes" {
+        return Err("--evidence-out needs the built-in caller: the FreeBayes path keeps no per-base counts".to_string());
+    }
     if depth_out.is_some() && caller_name == "freebayes" {
         return Err("--depth-out needs the built-in caller: the FreeBayes path keeps no per-base counts".to_string());
     }
@@ -131,6 +135,7 @@ fn call(args: &[String]) -> Result<(), String> {
     let mut freebayes_calls = None;
     let mut engine_vcf: Option<String> = None;
     let mut depth_bed: Option<String> = None;
+    let mut evidence_text: Option<String> = None;
     if aligner_name == "bwa-mem2" {
         let work = external::Workdir::create(&external::default_tmpdir(flags.get("tmpdir")))?;
         let plain_reference = external::write_plain_copy(&work, "ref.fa", &mut *open_input(reference_path)?)?;
@@ -187,12 +192,24 @@ fn call(args: &[String]) -> Result<(), String> {
             engine.end_file().map_err(|e| format!("{path}: {e}"))?;
         }
         depth_bed = depth_out.map(|_| engine.depth_bed(depth_window));
+        evidence_text = evidence_out.map(|_| engine.evidence_vcf()).transpose()?;
         engine_vcf = Some(engine.vcf()?);
     }
 
     if let Some(path) = depth_out {
         let bed = depth_bed.unwrap_or_else(|| caller.depth_bed(depth_window));
         std::fs::write(path, bed).map_err(|e| format!("{path}: {e}"))?;
+    }
+    if let Some(path) = evidence_out {
+        let text = match evidence_text {
+            Some(text) => text,
+            None => {
+                let mut buffer = Vec::new();
+                write_vcf(&mut buffer, &contigs, sample, &caller.evidence_calls(), DEFAULT_LARGE_INDEL_MIN).map_err(|e| format!("{path}: {e}"))?;
+                String::from_utf8(buffer).map_err(|e| e.to_string())?
+            }
+        };
+        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))?;
     }
     let out = File::create(out_path).map_err(|e| format!("cannot create {out_path}: {e}"))?;
     if let Some(vcf) = engine_vcf {
@@ -286,22 +303,23 @@ fn stats(args: &[String]) -> Result<(), String> {
 
 /// `qmutfind combine`: one table for several strains, with an optional parent. `--strain NAME=VCF[,BED]` is repeated.
 fn combine_command(args: &[String]) -> Result<(), String> {
-    let mut strains: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut strains: Vec<(String, String, Option<String>, Option<String>)> = Vec::new();
     let mut parent: Option<String> = None;
     let mut prefix: Option<String> = None;
-    let mut min_depth = 10.0;
+    let mut min_depth = 5.0; // the caller's own minimum depth for short reads; the coverage windows are coarse
     let mut it = args.iter();
     while let Some(key) = it.next() {
         let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
         let value = it.next().ok_or_else(|| format!("missing value for --{name}"))?;
         match name {
             "strain" => {
-                let (strain, files) = value.split_once('=').filter(|(n, f)| !n.is_empty() && !f.is_empty()).ok_or_else(|| format!("--strain must look like NAME=VCF or NAME=VCF,BED, not {value}"))?;
-                let (vcf, bed) = match files.split_once(',') {
-                    Some((v, b)) => (v, Some(b.to_string())),
-                    None => (files, None),
-                };
-                strains.push((strain.to_string(), vcf.to_string(), bed));
+                let (strain, files) = value.split_once('=').filter(|(n, f)| !n.is_empty() && !f.is_empty()).ok_or_else(|| format!("--strain must look like NAME=VCF, NAME=VCF,BED or NAME=VCF,BED,EVIDENCE_VCF, not {value}"))?;
+                let parts: Vec<&str> = files.split(',').collect();
+                if parts.len() > 3 || parts[0].is_empty() {
+                    return Err(format!("--strain must look like NAME=VCF, NAME=VCF,BED or NAME=VCF,BED,EVIDENCE_VCF, not {value}"));
+                }
+                let optional = |i: usize| parts.get(i).filter(|p| !p.is_empty()).map(|p| p.to_string());
+                strains.push((strain.to_string(), parts[0].to_string(), optional(1), optional(2)));
             }
             "parent" => parent = Some(value.clone()),
             "out-prefix" => prefix = Some(value.clone()),
@@ -319,11 +337,17 @@ fn combine_command(args: &[String]) -> Result<(), String> {
         Ok(text)
     };
     let mut texts = Vec::new();
-    for (name, vcf, bed) in &strains {
-        texts.push((name.as_str(), read(vcf)?, bed.as_deref().map(read).transpose()?));
+    for (name, vcf, bed, evidence) in &strains {
+        texts.push((name.as_str(), read(vcf)?, bed.as_deref().map(read).transpose()?, evidence.as_deref().map(read).transpose()?));
     }
-    let inputs: Vec<CombineInput> = texts.iter().map(|(name, vcf, bed)| CombineInput { name, vcf, depth_bed: bed.as_deref() }).collect();
+    let inputs: Vec<CombineInput> = texts
+        .iter()
+        .map(|(name, vcf, bed, evidence)| CombineInput { name, vcf, depth_bed: bed.as_deref(), evidence_vcf: evidence.as_deref() })
+        .collect();
     let combined = combine(&inputs, &CombineOptions { parent: parent.as_deref(), min_depth })?;
+    for warning in &combined.warnings {
+        eprintln!("qmutfind: warning: {warning}");
+    }
     std::fs::write(format!("{prefix}.combined.tsv"), combined.to_tsv()).map_err(|e| format!("{prefix}.combined.tsv: {e}"))?;
     std::fs::write(format!("{prefix}.summary.tsv"), combined.summary_tsv()).map_err(|e| format!("{prefix}.summary.tsv: {e}"))
 }
@@ -360,7 +384,7 @@ fn main() -> ExitCode {
         Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

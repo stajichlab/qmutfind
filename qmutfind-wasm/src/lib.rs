@@ -72,6 +72,11 @@ impl Session {
         self.engine.depth_bed(window as usize)
     }
 
+    /// The weak signals so far (calls at relaxed thresholds) as VCF text, for `combine_tables`.
+    pub fn evidence_vcf(&self) -> Result<String, JsError> {
+        self.engine.evidence_vcf().map_err(|e| JsError::new(&e))
+    }
+
     /// The calls so far as VCF text.
     pub fn vcf(&self) -> Result<String, JsError> {
         self.engine.vcf().map_err(|e| JsError::new(&e))
@@ -93,15 +98,20 @@ pub fn stats(vcf: &str, window: u32) -> Result<String, JsError> {
         .map_err(|e| JsError::new(&e))
 }
 
+/// `None` for an empty text.
+fn non_empty(text: &str) -> Option<&str> {
+    if text.is_empty() { None } else { Some(text) }
+}
+
 /// The combined table of several strains and its summary, as two TSV texts [table, summary]. `names`, `vcfs` and `beds`
-/// have one entry per strain; an empty coverage text means the strain has no coverage file. `parent` is optional.
+/// `evidence` have one entry per strain; an empty coverage or evidence text means the strain has none. `parent` is optional.
 #[wasm_bindgen]
-pub fn combine_tables(names: Vec<String>, vcfs: Vec<String>, beds: Vec<String>, parent: Option<String>, min_depth: f64) -> Result<Vec<String>, JsError> {
-    if names.len() != vcfs.len() || names.len() != beds.len() {
-        return Err(JsError::new("give the same number of names, VCF texts and coverage texts"));
+pub fn combine_tables(names: Vec<String>, vcfs: Vec<String>, beds: Vec<String>, evidence: Vec<String>, parent: Option<String>, min_depth: f64) -> Result<Vec<String>, JsError> {
+    if names.len() != vcfs.len() || names.len() != beds.len() || names.len() != evidence.len() {
+        return Err(JsError::new("give the same number of names, VCF texts, coverage texts and evidence texts"));
     }
     let inputs: Vec<qmutfind_core::CombineInput> = (0..names.len())
-        .map(|i| qmutfind_core::CombineInput { name: &names[i], vcf: &vcfs[i], depth_bed: if beds[i].is_empty() { None } else { Some(&beds[i]) } })
+        .map(|i| qmutfind_core::CombineInput { name: &names[i], vcf: &vcfs[i], depth_bed: non_empty(&beds[i]), evidence_vcf: non_empty(&evidence[i]) })
         .collect();
     let combined = qmutfind_core::combine(&inputs, &qmutfind_core::CombineOptions { parent: parent.as_deref(), min_depth }).map_err(|e| JsError::new(&e))?;
     Ok(vec![combined.to_tsv(), combined.summary_tsv()])

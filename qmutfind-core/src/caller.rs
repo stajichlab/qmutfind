@@ -332,6 +332,19 @@ impl Caller {
 
     /// All calls, in reference order.
     pub fn calls(&self) -> Vec<Call> {
+        self.calls_with(&self.config, self.min_indel_alt_reads, true)
+    }
+
+    /// Calls at relaxed thresholds (depth 2, fraction 0.1, two reads for an indel, no QUAL or depth-ratio filter): the
+    /// weak signals below the calling thresholds. `combine` uses them to tell "some reads carry it" from "none do".
+    /// It is a superset of `calls()` for SNPs; an indel needs two supporting reads here, as in the strict set only
+    /// when `min_indel_alt_reads` is lower.
+    pub fn evidence_calls(&self) -> Vec<Call> {
+        let relaxed = CallerConfig { min_depth: 2, min_snp_fraction: 0.1, min_indel_fraction: 0.1, large_indel_min: self.config.large_indel_min };
+        self.calls_with(&relaxed, 2, false)
+    }
+
+    fn calls_with(&self, config: &CallerConfig, min_indel_alt_reads: u32, filters: bool) -> Vec<Call> {
         let stats = self.sample_stats();
         let depth_ratio = |depth: u32| if stats.median_depth > 0.0 { Some(depth as f64 / stats.median_depth) } else { None };
         let snp_qual = |depth: u32, alt: u32| Some(phred_binomial_tail(depth, alt, stats.snp_error));
@@ -340,7 +353,7 @@ impl Caller {
         for (ci, (name, seq)) in self.reference.iter().enumerate() {
             for (pos, c) in self.counts[ci].iter().enumerate() {
                 let depth: u32 = c.iter().map(|&x| x as u32).sum();
-                if depth < self.config.min_depth {
+                if depth < config.min_depth {
                     continue;
                 }
                 let Some(ref_idx) = base_index(seq[pos]) else {
@@ -351,7 +364,7 @@ impl Caller {
                     .max_by_key(|&b| c[b])
                     .unwrap();
                 let alt_count = c[best] as u32;
-                if alt_count > 0 && alt_count as f64 / depth as f64 >= self.config.min_snp_fraction {
+                if alt_count > 0 && alt_count as f64 / depth as f64 >= config.min_snp_fraction {
                     out.push((ci, Call {
                         contig: name.clone(),
                         pos: pos as u64 + 1,
@@ -372,9 +385,9 @@ impl Caller {
                 continue; // REF would hold a base that VCF does not allow
             }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
-            if depth >= self.config.min_depth
-                && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
-                && alt_count >= self.min_indel_alt_reads
+            if depth >= config.min_depth
+                && alt_count as f64 / depth as f64 >= config.min_indel_fraction
+                && alt_count >= min_indel_alt_reads
             {
                 out.push((ci, Call {
                     contig: self.reference[ci].0.clone(),
@@ -391,7 +404,7 @@ impl Caller {
         }
         let mut large: Vec<Vec<(usize, usize, u32)>> = vec![Vec::new(); self.reference.len()];
         for (&(ci, anchor, len), ev) in &self.insertions {
-            if len >= self.config.large_indel_min {
+            if len >= config.large_indel_min {
                 large[ci].push((anchor, len, ev.count));
                 continue;
             }
@@ -401,9 +414,9 @@ impl Caller {
                 continue; // anchor base is ambiguous
             }
             let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
-            if depth >= self.config.min_depth
-                && alt_count as f64 / depth as f64 >= self.config.min_indel_fraction
-                && alt_count >= self.min_indel_alt_reads
+            if depth >= config.min_depth
+                && alt_count as f64 / depth as f64 >= config.min_indel_fraction
+                && alt_count >= min_indel_alt_reads
             {
                 let mut alt = vec![seq[anchor]];
                 alt.extend(ev.bases.iter().map(|c| {
@@ -430,9 +443,9 @@ impl Caller {
                     continue; // anchor base is ambiguous
                 }
                 let depth: u32 = self.counts[ci][anchor].iter().map(|&x| x as u32).sum();
-                if depth >= self.config.min_depth
-                    && support as f64 / depth as f64 >= self.config.min_indel_fraction
-                    && support >= self.min_indel_alt_reads
+                if depth >= config.min_depth
+                    && support as f64 / depth as f64 >= config.min_indel_fraction
+                    && support >= min_indel_alt_reads
                 {
                     out.push((ci, Call {
                         contig: self.reference[ci].0.clone(),
@@ -449,11 +462,35 @@ impl Caller {
             }
         }
         out.sort_by_key(|(ci, c)| (*ci, c.pos));
-        out.into_iter()
+        let kept: Vec<Call> = out
+            .into_iter()
             .map(|(_, c)| c)
-            .filter(|c| c.qual.map_or(true, |q| q >= self.min_qual))
-            .filter(|c| self.max_depth_ratio <= 0.0 || c.depth_ratio.map_or(true, |r| r <= self.max_depth_ratio))
-            .collect()
+            .filter(|c| !filters || c.qual.map_or(true, |q| q >= self.min_qual))
+            .filter(|c| !filters || self.max_depth_ratio <= 0.0 || c.depth_ratio.map_or(true, |r| r <= self.max_depth_ratio))
+            .collect();
+        self.left_aligned(kept)
+    }
+
+    /// Write every explicit indel in its leftmost form, so that the same event has the same REF, ALT and POS in every
+    /// sample. Reads place an indel in a repeat at different bases; the evidence is counted where the reads put it.
+    /// Calls that become equal keep the one with more supporting reads (the counts are not added). The result is
+    /// sorted by contig order and position.
+    fn left_aligned(&self, calls: Vec<Call>) -> Vec<Call> {
+        let rank: HashMap<&str, usize> = self.reference.iter().enumerate().map(|(i, (name, _))| (name.as_str(), i)).collect();
+        let mut aligned = crate::normalize::left_align_calls(calls, &self.reference);
+        aligned.sort_by_key(|c| (rank.get(c.contig.as_str()).copied().unwrap_or(usize::MAX), c.pos));
+        let mut out: Vec<Call> = Vec::with_capacity(aligned.len());
+        for c in aligned {
+            match out.last_mut() {
+                Some(last) if last.contig == c.contig && last.pos == c.pos && last.reference == c.reference && last.alt == c.alt => {
+                    if c.alt_count > last.alt_count {
+                        *last = c;
+                    }
+                }
+                _ => out.push(c),
+            }
+        }
+        out
     }
 }
 
