@@ -17,13 +17,15 @@ fn pair_name(name: &str) -> &str {
 
 pub struct Engine {
     aligner: RammapAligner,
-    caller: Caller,
+    pub(crate) caller: Caller,
+    /// When set, every read that has two or more alignments is also given to the junction collector (see `confirm`).
+    pub(crate) junctions: Option<crate::confirm::JunctionCollector>,
     chunker: FastqChunker,
     chunker2: FastqChunker,
     /// Reads of each mate file that wait for their mate.
     waiting: [VecDeque<Read>; 2],
     max_insert: usize,
-    contigs: Vec<(String, usize)>,
+    pub(crate) contigs: Vec<(String, usize)>,
     sample: String,
     config: CallerConfig,
     reads: u64,
@@ -45,6 +47,7 @@ impl Engine {
         Ok(Engine {
             aligner: RammapAligner::new(reference, kind),
             caller,
+            junctions: None,
             chunker: FastqChunker::new(),
             chunker2: FastqChunker::new(),
             waiting: [VecDeque::new(), VecDeque::new()],
@@ -54,6 +57,12 @@ impl Engine {
             config,
             reads: 0,
         })
+    }
+
+    /// Record the junctions of split reads (reads with two or more alignments), for `Confirmer`. Call before adding reads.
+    pub(crate) fn track_junctions(&mut self, options: crate::confirm::JunctionOptions) {
+        let order = self.contigs.iter().map(|(n, _)| n.clone()).collect();
+        self.junctions = Some(crate::confirm::JunctionCollector::new(order, options));
     }
 
     /// Replace the calling thresholds. Call before adding reads.
@@ -162,8 +171,12 @@ impl Engine {
 
     fn map_records(&mut self, records: Vec<(String, Vec<u8>)>) {
         for (name, seq) in records {
-            for alignment in self.aligner.align(&name, &seq) {
-                self.caller.add(&alignment, &seq);
+            let alignments = self.aligner.align(&name, &seq);
+            for alignment in &alignments {
+                self.caller.add(alignment, &seq);
+            }
+            if let Some(collector) = self.junctions.as_mut() {
+                collector.add(&alignments);
             }
             self.reads += 1;
         }

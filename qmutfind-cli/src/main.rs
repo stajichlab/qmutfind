@@ -44,7 +44,7 @@ fn parse_flags(args: &[String]) -> Result<HashMap<String, String>, String> {
     let mut it = args.iter();
     while let Some(key) = it.next() {
         let name = key.strip_prefix("--").ok_or_else(|| format!("unexpected argument: {key}"))?;
-        if name == "paired" || name == "html" {
+        if name == "paired" || name == "html" || name == "always-exit-zero" {
             flags.insert(name.to_string(), "true".to_string()); // a switch without a value
             continue;
         }
@@ -441,12 +441,125 @@ fn context(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// `qmutfind confirm`: is an introduced cassette integrated where it should be, and intact? Reads are mapped to the genome plus the cassette;
+/// see `qmutfind_core::Confirmer`. Exit status: 0 confirmed, 3 not confirmed, 4 inconclusive (1 for an error); `--always-exit-zero` gives 0 after a report.
+fn confirm_command(args: &[String]) -> Result<(), String> {
+    use qmutfind_core::{find_gene, ConfirmOptions, Confirmer, Target, Verdict};
+    let flags = parse_flags(args)?;
+    let reference_path = required(&flags, "reference")?;
+    let construct_path = flags.get("construct").ok_or_else(|| "missing required option --construct: a FASTA file with the sequence you introduced (for example the hph cassette)".to_string())?;
+    let reads_path = required(&flags, "reads")?;
+    let prefix = required(&flags, "out-prefix")?;
+    let kind = match required(&flags, "preset")?.as_str() {
+        "short" => ReadKind::Short,
+        "long" => ReadKind::Long,
+        other => return Err(format!("--preset must be short or long, not {other}")),
+    };
+    let number = |name: &str, default: f64| -> Result<f64, String> {
+        match flags.get(name) {
+            None => Ok(default),
+            Some(v) => v.parse::<f64>().ok().filter(|x| *x >= 0.0).ok_or_else(|| format!("--{name} must be a number of 0 or more, not {v}")),
+        }
+    };
+    let mut genome = read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?;
+    let construct = read_fasta(open_input(construct_path)?).map_err(|e| format!("{construct_path}: {e}"))?;
+    if construct.is_empty() {
+        return Err(format!("{construct_path} has no sequence"));
+    }
+    for (name, _) in &construct {
+        if genome.iter().any(|(g, _)| g == name) {
+            return Err(format!("the construct contig {name} has the same name as a contig of the reference; rename it in {construct_path}"));
+        }
+    }
+    let names: Vec<String> = construct.iter().map(|(n, _)| n.clone()).collect();
+    genome.extend(construct);
+    let mut fasta = Vec::new();
+    for (name, seq) in &genome {
+        fasta.extend_from_slice(format!(">{name}\n").as_bytes());
+        fasta.extend_from_slice(seq);
+        fasta.push(b'\n');
+    }
+    drop(genome);
+    let target = match (flags.get("target"), flags.get("gene")) {
+        (Some(_), Some(_)) => return Err("give --target or --gene, not both".to_string()),
+        (Some(t), None) => {
+            let bad = || format!("--target must be CONTIG:START-END (1-based, for example chr1:50001-51500), not {t}");
+            let (contig, range) = t.rsplit_once(':').ok_or_else(bad)?;
+            let (start, end) = range.replace(',', "").split_once('-').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(bad)?;
+            let (start, end): (u64, u64) = (start.parse().map_err(|_| bad())?, end.parse().map_err(|_| bad())?);
+            if start == 0 || end < start {
+                return Err(bad());
+            }
+            Some(Target { contig: contig.to_string(), start, end })
+        }
+        (None, Some(gene)) => {
+            let gff = flags.get("gff").ok_or_else(|| "--gene needs --gff: the GFF3 file that holds the gene".to_string())?;
+            Some(find_gene(open_input(gff)?, gene).map_err(|e| format!("{gff}: {e}"))?)
+        }
+        (None, None) => None,
+    };
+    let defaults = ConfirmOptions::default();
+    let options = ConfirmOptions {
+        target,
+        min_junction_reads: number("min-junction-reads", defaults.min_junction_reads as f64)? as u32,
+        min_depth: number("min-depth", defaults.min_depth)?,
+        target_tolerance: number("tolerance", defaults.target_tolerance as f64)? as u64,
+        ..defaults
+    };
+    let constructs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut confirmer = Confirmer::new(&fasta, &constructs, kind, options)?;
+    drop(fasta);
+    let mut buffer = vec![0u8; 4 << 20];
+    let mut paths = vec![reads_path.clone()];
+    if let Some(second) = flags.get("reads2") {
+        paths.push(second.clone());
+    }
+    for path in &paths {
+        let mut reader = open_input(path)?;
+        loop {
+            let n = reader.read(&mut buffer).map_err(|e| format!("{path}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            confirmer.add_reads(&buffer[..n]).map_err(|e| format!("{path}: {e}"))?;
+        }
+        confirmer.end_file().map_err(|e| format!("{path}: {e}"))?;
+    }
+    let report = confirmer.report();
+    let write = |suffix: &str, text: String| std::fs::write(format!("{prefix}.{suffix}"), text).map_err(|e| format!("{prefix}.{suffix}: {e}"));
+    write("confirm.txt", report.to_text())?;
+    write("confirm.json", report.to_json())?;
+    let side = |s: qmutfind_core::Side| if s == qmutfind_core::Side::Left { "left" } else { "right" };
+    let mut tsv = String::from("contig_a\tpos_a\tside_a\tcontig_b\tpos_b\tside_b\treads\toverlap\tkind\n");
+    for j in &report.junctions {
+        let (ca, cb) = (names.contains(&j.a.contig), names.contains(&j.b.contig));
+        let kind = match (ca, cb) { (true, true) => "cassette_internal", (false, false) => "genome", _ => "integration" };
+        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{kind}\n", j.a.contig, j.a.pos, side(j.a.keeps), j.b.contig, j.b.pos, side(j.b.keeps), j.reads, j.overlap));
+    }
+    write("junctions.tsv", tsv)?;
+    let mut depth = String::from("contig\tpos\tdepth\n");
+    for k in &report.cassettes {
+        for (i, d) in k.depth.iter().enumerate() {
+            depth.push_str(&format!("{}\t{}\t{d}\n", k.name, i + 1));
+        }
+    }
+    write("cassette_depth.tsv", depth)?;
+    print!("{}", report.to_text());
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let code = match report.verdict() { Verdict::Confirmed => 0, Verdict::NotConfirmed => 3, Verdict::Inconclusive => 4 };
+    if code != 0 && !flags.contains_key("always-exit-zero") {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("call") => call(&args[1..]),
         Some("annotate") => annotate(&args[1..]),
         Some("context") => context(&args[1..]),
+        Some("confirm") => confirm_command(&args[1..]),
         Some("stats") => stats(&args[1..]),
         Some("combine") => combine_command(&args[1..]),
         Some("report") => report(&args[1..]),
@@ -454,7 +567,7 @@ fn main() -> ExitCode {
         Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank BASES] [--html] [--out FILE]\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank BASES] [--html] [--out FILE]\n       qmutfind confirm --reference FA --construct FA --reads FQ [--reads2 FQ] --preset short|long (--target CONTIG:START-END | --gene NAME --gff GFF3) --out-prefix PREFIX\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

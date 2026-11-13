@@ -1330,3 +1330,17 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   `initiator_codon_variant` in snpEff); 10 frameshifts near the gene end show a different residue and `?` for the reference residue (qmutfind display defect, not fixed).
 - Earlier (2026-11-12) comparisons with `bcftools csq` 1.25 and snpEff 5.4c on 3,700 simulated truth variants were smaller; this run adds scale (all SNVs of 750 genes), protein-change checks and the gene/transcript check.
 - `CHANGELOG.md` lists all features added so far. Tests now: 298 Rust, 62 Node, 201 browser, 74 bench.
+
+## 12v. Confirming a knock-out or replacement allele: core and CLI (2026-11-13)
+- Question from the user: introduced an hph replacement allele; where is it integrated and is it intact? Decisions: both read types with short reads first; CLI first, then a separate page; either construct form (cassette alone
+  or a donor with arms), tested on simulated data and, if the marker can be found, on the public ΔcrpA and ΔaceA strains of PRJNA1094460 (the marker of those strains was not found: a web search did not identify it).
+- Feasibility checked first: rammap gives two primary alignments for a read that crosses a genome-cassette junction, with exact coordinates (probe: 22 of 24,100 reads at 30x, junction at chr:50000 and chr:51500 as built).
+- `qmutfind-core/src/confirm.rs`: `JunctionCollector` (hooked into `Engine::map_records`; ends are (contig, last base, side) so that a read of either strand gives the same junction; parts need 25 bases and mapq 1; neighbours on the read overlap by at most 50 or
+  are separated by at most 50; clustering within 3 bases; at least 3 reads), `Confirmer`, `Report` (sites, cassette summaries, nine checks, verdict, text and JSON), `find_gene`, and a 24-mer comparison of the construct with the genome that warns about homology arms.
+  Shared bases at a junction (microhomology) are reported and the flank that is not in doubt is given. CLI `confirm`; exit status 0/3/4.
+- Tests: 11 scenario tests and 2 warning tests and 1 gene-lookup test in `qmutfind-core/tests/confirm.rs`, an opt-in sweep of 24 random worlds (passed: exact flanks, right orientation, confirmed, in all 24; 125 s), 5 CLI tests.
+  Two first-run failures were useful: a one-base microhomology moved the reported flank (now reported as homology), and one test had a wrong coordinate after an earlier splice.
+- Real reads (A1163, 4 M reads, dummy 2 kb construct, 95-100 s, 520 MB): ΔcrpA strain: `target_replaced` Pass (0% of genome depth inside AFUB_036430), no integration (correct); wild type: 105%, Fail. About 20 genome-to-genome junctions with 5 or more reads appear in each
+  (repeats and artefacts); no check uses them, and the text report lists only the junctions that involve the cassette or lie within 5 kb of the target.
+- Open: real transformant data; long reads; mate pairs as junction evidence; donor with arms (auto-strip by alignment of the construct to the genome); the page (`confirm.html`, worker step, WASM export); thresholds on real data.
+- Tests now: 317 Rust (+1 opt-in), 62 Node, 201 browser, 74 bench.

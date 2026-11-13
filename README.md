@@ -77,6 +77,50 @@ no protein. `--flank` is the number of bases on each side (default 40, at least 
 one anchor base). The command stops with a reason when the contig is missing or when REF does not match the reference. `--html` writes the same
 text with the changed columns in `<span>` tags. The WASM function `context` gives the same text.
 
+### Confirming a knock-out or a replacement allele
+
+`qmutfind confirm` answers one question: *I introduced a marker cassette (for example `hph`); where is it integrated, and is it intact?*
+
+```bash
+qmutfind confirm --reference genome.fa.gz --construct hph.fa --reads r1.fastq.gz --reads2 r2.fastq.gz --preset short \
+  --gff genes.gff3.gz --gene AFUA_1G00100 --out-prefix mutant1
+```
+
+`--construct` is a FASTA file with the sequence you introduced, **the cassette only, without homology arms**. `--target CONTIG:START-END` (1-based) or
+`--gene NAME --gff GFF3` says which region the cassette should replace; without either, the tool still reports where the cassette is. Reads are
+mapped to the genome plus the cassette as one more contig. The report is printed and written to `PREFIX.confirm.txt`; the same result is in `PREFIX.confirm.json`,
+all junctions are in `PREFIX.junctions.tsv`, and the depth at each cassette base is in `PREFIX.cassette_depth.tsv`. The exit status is 0 when confirmed, 3 when not
+confirmed, 4 when inconclusive (1 for an error); `--always-exit-zero` gives 0 after a report. `--min-junction-reads` (default 3), `--min-depth` (default 10) and
+`--tolerance` (bases between a flank and the target edge, default 20) change the thresholds.
+
+How it decides. A read that starts in the genome and goes on into the cassette aligns in two parts. The tool groups such split reads into junctions (the last
+reference base next to the breakpoint and the side the read lies on; a read from either strand gives the same junction). Where the two parts share bases, the breakpoint is
+uncertain by that many bases and the report gives the flank that is not in doubt. Each check is Pass, Fail or Inconclusive; a lack of coverage is never a pass.
+
+| Check | Pass when |
+|---|---|
+| `integration_found` | at least `--min-junction-reads` reads join the genome to the cassette (Inconclusive when the genome depth is below `--min-depth` and nothing was found) |
+| `both_sides_joined` | the main site has a junction on the left and on the right |
+| `single_site` | there is one site; several sites mean extra insertions |
+| `at_target` | both flanks are within the tolerance of the target edges (needs a target) |
+| `target_replaced` | the inside of the target has at most 10% of the genome depth (no wild-type copy; needs a target) |
+| `cassette_coverage` | every cassette base has at least `max(3, 0.2 x genome depth)` reads |
+| `cassette_sequence` | no difference from the given cassette sequence is called (SNP or small indel) |
+| `cassette_structure` | no read joins one part of the cassette to another (an internal deletion, a duplication or a concatemer) |
+| `copy_number` | cassette depth is 0.6 to 1.5 times the genome depth (one copy per genome, for a haploid) |
+
+The verdict is *confirmed* when nothing failed and nothing was inconclusive. The report also lists the orientation of the cassette (forward when its start is joined to the left flank),
+the number of genome bases that it replaced, and warnings. A warning says that the construct shares sequence with the genome (24-base words found in both): usually these are homology arms,
+and reads from them map to the genome and to the cassette equally well, so remove the arms from the construct file.
+
+**What was tested.** Simulated 30x reads from a 120 kb genome with a 2 kb cassette: an intact replacement (24 random genomes, both orientations, replaced lengths 300 to 2,800 bases: the flanks were
+exact and the verdict *confirmed* every time), a reversed cassette, a point change and a deletion inside the cassette, a missing stretch inside the cassette, a second copy elsewhere, a half wild-type
+population, an insertion away from the target, no insertion, and 2x coverage (inconclusive). On real reads of *A. fumigatus* A1163 (4,000,000 reads, about 95 s and 520 MB) with a dummy construct that is not in the reads:
+the Δ*crpA* strain gave no integration and 0% coverage inside AFUB_036430 (`target_replaced` passed), and the wild type gave 105% (it failed), as expected.
+**Not tested:** a real transformant with its real marker; long reads (`--preset long` runs, but no thresholds were checked on long reads); reads whose two mates span a junction (mates are mapped as single reads and
+only split reads count); diploid or heterokaryotic strains beyond the half wild-type simulation; constructs with homology arms (the tool warns but does not remove them). The thresholds were not tuned on real data.
+For short reads the tool shows the junctions and the coverage; it cannot show in one piece that the whole insertion is contiguous, which only long reads can.
+
 `qmutfind stats --vcf FILE --out-prefix P` writes `P.stats.json` and `P.stats.tsv`: counts by class and effect,
 Ts/Tv, the substitution spectrum, indel lengths, density per contig, an allele-fraction histogram, the share
 of calls with a fraction from 0.2 to 0.8, and clustering.

@@ -4,6 +4,7 @@
 mod annotate;
 mod caller;
 mod combine;
+mod confirm;
 mod context;
 mod engine;
 mod freebayes;
@@ -18,6 +19,7 @@ mod sam;
 mod stats;
 mod vcf;
 pub use combine::{combine, Cell, Combined, CombineInput, CombineOptions, Row, Status, StrainSummary};
+pub use confirm::{find_gene, CassetteSummary, Check, CheckStatus, ConfirmOptions, Confirmer, End, Junction, Orientation, Report, Side, Site, Target, Verdict};
 pub use context::{context_text, sequence_context, SequenceContext};
 pub use caller::{classify, Call, Caller, CallerConfig, DepthWindow, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};
@@ -110,6 +112,11 @@ impl Alignment {
     pub fn with_mapq(mut self, mapq: u8) -> Alignment {
         self.mapq = mapq;
         self
+    }
+
+    /// The part of the read that this alignment covers: 0-based start and end (exclusive) on the read as it was given to the aligner.
+    pub fn query_range(&self) -> (usize, usize) {
+        (self.query_start, self.query_end)
     }
 
     /// The 0-based end on the contig (exclusive): the start plus the reference bases of the CIGAR.

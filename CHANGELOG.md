@@ -7,6 +7,10 @@ The measurements behind each entry are in [PLAN.md](PLAN.md).
 
 ### Added: command line and core
 
+- **`qmutfind confirm`** (core module `confirm`): confirm a knock-out or replacement allele. Reads are mapped to the genome plus the introduced cassette; split reads give the junctions where the
+  cassette joins the genome, and nine checks (integration found, both sides joined, single site, at the target, target replaced, cassette coverage, cassette sequence, cassette structure, copy number) give a
+  verdict (confirmed, not confirmed, inconclusive) with the evidence. Target by region or by gene name from a GFF3. Outputs: text and JSON report, junction table, depth of the cassette. Warns when the construct holds homology arms.
+  See the README section "Confirming a knock-out or a replacement allele". A browser page for it is planned.
 - **`qmutfind context`** and the WASM function `context`: the sequence around one variant as aligned rows (position ruler, a marker under the changed column, reference DNA,
   reference protein, variant DNA, variant protein). Exons are capitals, other bases small letters. An insertion adds a gap column, a deletion a gap in the variant row, a minus-strand
   gene is shown as it reads, a codon split by an intron is translated across the junction, and a frameshift reads on into the 3' UTR. Text or HTML (`--html`).

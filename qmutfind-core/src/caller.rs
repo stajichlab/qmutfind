@@ -291,6 +291,32 @@ impl Caller {
         out
     }
 
+    /// The read depth at each position of `contig` from 1-based `start` to `end` (inclusive), or None when there is no such contig.
+    pub(crate) fn depth_range(&self, contig: &str, start: u64, end: u64) -> Option<Vec<u32>> {
+        let ci = self.reference.iter().position(|(n, _)| n == contig)?;
+        let len = self.counts[ci].len() as u64;
+        let (lo, hi) = (start.max(1), end.min(len));
+        Some((lo..=hi).map(|p| self.counts[ci][(p - 1) as usize].iter().map(|&x| x as u32).sum()).collect())
+    }
+
+    /// A histogram of the depth (0 to 2,000, higher values counted as 2,000) over the positions of every contig not in `exclude` that have
+    /// at least one read.
+    pub(crate) fn depth_histogram(&self, exclude: &[String]) -> Vec<u64> {
+        let mut histogram = vec![0u64; 2_001];
+        for (ci, (name, _)) in self.reference.iter().enumerate() {
+            if exclude.contains(name) {
+                continue;
+            }
+            for c in &self.counts[ci] {
+                let depth = c.iter().map(|&x| x as usize).sum::<usize>();
+                if depth > 0 {
+                    histogram[depth.min(2_000)] += 1;
+                }
+            }
+        }
+        histogram
+    }
+
     /// `depth_windows` as BED text with four columns (contig, start, end, mean depth), the format of the
     /// `mosdepth` regions file.
     pub fn depth_bed(&self, window: usize) -> String {
