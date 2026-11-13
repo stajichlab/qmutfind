@@ -15,7 +15,7 @@
   document.documentElement.setAttribute('data-theme', chosen);
 })();
 </script>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=__BUILD__">
 </head>
 <body>
 <div class="frame">
@@ -39,8 +39,8 @@
 </header>
 
 <section class="hero panel">
-  <p class="lede">qmutfind maps sequencing reads to a reference genome, finds SNPs and small insertions and deletions,
-  says what each change does to the genes, and draws the result.</p>
+	<p class="lede">To quickly map sequencing reads, identify mutations try qmutfind. Will identify SNPs and small insertions and deletions,
+  describes mutational impact, and presents a locus view graphic of the variant.</p>
   <p>It runs in this page. The page does not send your files to any server. Use it for haploid samples, such as fungal
   isolates or evolved strains, compared with a reference genome.</p>
   <ol class="steps">
@@ -277,7 +277,7 @@ qmutfind annotate --vcf mutant1.vcf --reference ref.fa.gz --gff genes.gff3.gz --
 </footer>
 
 </div>
-<script src="theme.js"></script>
-<script type="module" src="app.js"></script>
+<script src="theme.js?v=__BUILD__"></script>
+<script type="module" src="app.js?v=__BUILD__"></script>
 </body>
 </html>

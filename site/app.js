@@ -1,8 +1,8 @@
 // The page: three steps (call, summarize, draw). The result of each step is kept here and the next step uses it.
-import { Gunzip, Gzip, zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js';
+import { Gunzip, Gzip, zipSync, unzipSync, strToU8, strFromU8 } from './vendor/fflate.js?v=__BUILD__';
 
 const $ = (id) => document.getElementById(id);
-const worker = new Worker('worker.js', { type: 'module' });
+const worker = new Worker('worker.js?v=__BUILD__', { type: 'module' });
 
 // The state that carries from step to step.
 const state = { vcf: null, annotated: null, depth: null };
@@ -760,7 +760,7 @@ describeLimit();
 /** Run one message in a worker of its own. The worker is stopped when the answer comes, or when the queue is cancelled. */
 function callWorker(message, onProgress) {
   return new Promise((resolve, reject) => {
-    const w = new Worker('worker.js', { type: 'module' });
+    const w = new Worker('worker.js?v=__BUILD__', { type: 'module' });
     activeWorker = { w, reject };
     const finish = () => { w.terminate(); if (activeWorker && activeWorker.w === w) activeWorker = null; };
     w.onmessage = (event) => {

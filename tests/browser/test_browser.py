@@ -1682,3 +1682,29 @@ def test_an_unsafe_or_malformed_reference_address_is_refused_before_any_request(
     WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "genome-status").text.startswith("Error"))
 
     assert fragment in driver.find_element(By.ID, "genome-status").text
+
+
+# A cached old file must never mix with a new page: every file the page loads is named with the build stamp
+
+def test_the_files_of_the_page_carry_one_build_stamp(driver, server):
+    import re
+
+    open_site(driver, server)
+    html = driver.page_source
+    stamps = set(re.findall(r'(?:style\.css|theme\.js|app\.js)\?v=([0-9a-f]{10})\b', html))
+    assert len(stamps) == 1, stamps
+    stamp = stamps.pop()
+    get = lambda path: driver.execute_async_script("const cb = arguments[arguments.length - 1]; fetch(arguments[0]).then(r => r.text()).then(cb);", f"{server}/{SITE.rsplit('/', 1)[0]}/{path}".replace("//index.html", "/index.html"))
+    app, worker = get("app.js"), get("worker.js")
+    assert "__BUILD__" not in html and "__BUILD__" not in app and "__BUILD__" not in worker
+    assert app.count(f"worker.js?v={stamp}") == 2  # both places that start a worker
+    assert f"./pkg-web/qmutfind_wasm.js?v={stamp}" in worker and f"./vendor/fflate.js?v={stamp}" in worker
+    assert f"qmutfind_wasm_bg.wasm?v={stamp}" in worker
+
+
+def test_the_scripts_the_page_imports_are_loaded_with_the_stamp(driver, server):
+    open_site(driver, server)
+    names = driver.execute_script("return performance.getEntriesByType('resource').map(e => e.name);")
+
+    assert any("app.js?v=" in n for n in names) and any("vendor/fflate.js?v=" in n for n in names), names
+    assert not any(n.endswith("vendor/fflate.js") for n in names), names

@@ -1,11 +1,14 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, annotate, stats, report, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js';
+import init, { Session, annotate, stats, report, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
-import { Gunzip } from './vendor/fflate.js';
+import { Gunzip } from './vendor/fflate.js?v=__BUILD__';
+
+// The wasm file is named with the build stamp too, so a cached old file cannot meet a new glue file.
+const start = () => init({ module_or_path: new URL('./pkg-web/qmutfind_wasm_bg.wasm?v=__BUILD__', import.meta.url) });
 
 /** Yield the bytes of a file in chunks. A .gz file is decompressed on the way. */
 async function* chunksOf(file) {
@@ -140,7 +143,7 @@ async function reportStep({ vcf, gff, region }) {
 
 // The size of the WebAssembly memory, for the tests (it can grow but never shrinks).
 async function memory() {
-  const exports = await init();
+  const exports = await start();
   postMessage({ step: 'memory', type: 'done', bytes: exports.memory.buffer.byteLength });
 }
 
@@ -156,7 +159,7 @@ self.onmessage = async (event) => {
   const { step } = event.data;
   if (event.data.limit) maxBytes = event.data.limit;
   try {
-    await init();
+    await start();
     await handlers[step](event.data);
   } catch (error) {
     postMessage({ step, type: 'error', message: String((error && error.message) || error) });

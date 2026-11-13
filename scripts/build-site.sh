@@ -14,5 +14,11 @@ cp -r site/genomes dist-site/genomes
 mkdir -p dist-site/pkg-web
 cp pkg-web/qmutfind_wasm.js pkg-web/qmutfind_wasm_bg.wasm dist-site/pkg-web/
 grep -q "./pkg-web/qmutfind_wasm.js" dist-site/worker.js || { echo "worker.js does not import ./pkg-web/qmutfind_wasm.js" >&2; exit 1; }
+# Name every file the page loads with one stamp (a hash of their content). GitHub Pages lets a browser keep a file for
+# 10 minutes, so an old script could otherwise meet a new page. The source files hold the token __BUILD__ for the stamp.
+STAMP=$(cat site/index.html site/style.css site/theme.js site/app.js site/worker.js site/vendor/fflate.js pkg-web/qmutfind_wasm.js pkg-web/qmutfind_wasm_bg.wasm | sha1sum | cut -c1-10)
+sed -i "s/__BUILD__/$STAMP/g" dist-site/index.html dist-site/app.js dist-site/worker.js
+if grep -rl "__BUILD__" dist-site --include=*.html --include=*.js >/dev/null; then echo "a __BUILD__ token is left in dist-site" >&2; exit 1; fi
+echo "build stamp: $STAMP"
 if [ -n "${SITE_CNAME:-}" ]; then echo "$SITE_CNAME" > dist-site/CNAME; fi
 ls -l dist-site
