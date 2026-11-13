@@ -284,3 +284,32 @@ pre.context { font-family: var(--mono); font-size: .9rem; line-height: 1.35; whi
 pre.context .ctx-var { background: var(--accent); color: var(--accent-fg); font-weight: 700; }
 pre.context .ctx-aa { font-weight: 700; text-decoration: underline; }
 h3.sub { margin: 14px 0 4px; font-size: 1.05rem; }
+
+/* The page links in the header */
+nav.pages { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+nav.pages a { padding: 5px 12px; border: 1px solid var(--field-line); border-radius: var(--radius); color: var(--link); background: var(--panel); text-decoration: none; font-weight: 600; }
+nav.pages a[aria-current="page"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+/* The result of the allele confirmation. The text is always in the panel colour; the colour is only an addition to the words and symbols. */
+.verdict { padding: 12px 14px; border-radius: var(--radius); border: 2px solid var(--line); border-left-width: 10px; font-size: 1.05rem; font-weight: 600; margin: 6px 0 10px; }
+.verdict[data-verdict="confirmed"] { border-left-color: #1f8a3b; }
+.verdict[data-verdict="not_confirmed"] { border-left-color: #c0262d; }
+.verdict[data-verdict="inconclusive"] { border-left-color: #b8860b; }
+.verdict[data-verdict="confirmed"]::before { content: "\2713  "; }
+.verdict[data-verdict="not_confirmed"]::before { content: "\2717  "; }
+.verdict[data-verdict="inconclusive"]::before { content: "?  "; }
+.warnings { border: 2px solid #b8860b; border-radius: var(--radius); padding: 4px 12px; margin: 8px 0; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; border: 2px solid var(--line); font-weight: 700; white-space: nowrap; }
+.chip.pass { border-color: #1f8a3b; }
+.chip.fail { border-color: #c0262d; }
+.chip.unclear { border-color: #b8860b; }
+#confirm-checks td:nth-child(3) { overflow-wrap: anywhere; }
+.plot svg { width: 100%; height: auto; max-height: 260px; font-family: var(--font); font-size: 12px; }
+.plot svg text { fill: currentColor; }
+.plot .area { fill: var(--accent); opacity: .25; stroke: none; }
+.plot .line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.plot .median { stroke: currentColor; stroke-dasharray: 5 4; stroke-width: 1; opacity: .7; }
+.plot .gap { fill: #c0262d; opacity: .3; }
+.plot .junction { stroke: #1f6fd0; stroke-width: 2; }
+.plot .variant { fill: #c0262d; }
+.plot .axis { stroke: currentColor; stroke-width: 1; opacity: .6; }

@@ -90,6 +90,80 @@ pub fn annotate(vcf: &str, reference_fasta: &[u8], gff: Option<Vec<u8>>) -> Resu
     qmutfind_core::annotate_text(vcf, reference_fasta, gff.as_deref()).map_err(|e| JsError::new(&e))
 }
 
+/// Confirmation of an introduced allele (see `qmutfind confirm`): the reads are mapped to the genome plus the construct, and the report says where
+/// the construct joins the genome and whether it is intact. JavaScript passes the genome and the construct FASTA once, then FASTQ bytes in chunks.
+#[wasm_bindgen]
+pub struct Confirmation {
+    inner: qmutfind_core::Confirmer,
+}
+
+#[wasm_bindgen]
+impl Confirmation {
+    /// `target_contig` is the contig of the region that the construct should replace (1-based `target_start` to `target_end`), or `undefined` for no target.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        genome_fasta: &[u8], construct_fasta: &[u8], kind: &str, target_contig: Option<String>, target_start: f64, target_end: f64,
+        min_junction_reads: u32, min_depth: f64, tolerance: f64,
+    ) -> Result<Confirmation, JsError> {
+        let target = match target_contig {
+            Some(contig) => {
+                if !(target_start >= 1.0 && target_end >= target_start && target_end < 4.0e9) {
+                    return Err(JsError::new("the target must be a region with 1 <= start <= end"));
+                }
+                Some(qmutfind_core::Target { contig, start: target_start as u64, end: target_end as u64 })
+            }
+            None => None,
+        };
+        let defaults = qmutfind_core::ConfirmOptions::default();
+        let options = qmutfind_core::ConfirmOptions {
+            target, min_junction_reads, min_depth, target_tolerance: tolerance.max(0.0) as u64, ..defaults
+        };
+        let inner = qmutfind_core::Confirmer::from_fasta(genome_fasta, construct_fasta, read_kind(kind)?, options).map_err(|e| JsError::new(&e))?;
+        Ok(Confirmation { inner })
+    }
+
+    /// Add a chunk of FASTQ bytes. The chunk can split a record anywhere.
+    pub fn add_reads(&mut self, chunk: &[u8]) -> Result<(), JsError> {
+        self.inner.add_reads(chunk).map_err(|e| JsError::new(&e))
+    }
+
+    /// Mark the end of one reads file.
+    pub fn end_file(&mut self) -> Result<(), JsError> {
+        self.inner.end_file().map_err(|e| JsError::new(&e))
+    }
+
+    pub fn read_count(&self) -> f64 {
+        self.inner.read_count() as f64
+    }
+
+    /// The report as text (the same as `PREFIX.confirm.txt` of the CLI).
+    pub fn report_text(&self) -> String {
+        self.inner.report().to_text()
+    }
+
+    /// The report as JSON.
+    pub fn report_json(&self) -> String {
+        self.inner.report().to_json()
+    }
+
+    /// All junctions as a table.
+    pub fn junctions_tsv(&self) -> String {
+        self.inner.report().junctions_tsv()
+    }
+
+    /// The depth at each base of the construct.
+    pub fn depth_tsv(&self) -> String {
+        self.inner.report().depth_tsv()
+    }
+}
+
+/// The region of a gene in a GFF3 file (plain bytes), found by its ID, Name, gene or locus_tag, as JSON: `{"contig":..,"start":..,"end":..}`.
+#[wasm_bindgen]
+pub fn find_gene(gff: &[u8], name: &str) -> Result<String, JsError> {
+    let t = qmutfind_core::find_gene(gff, name).map_err(|e| JsError::new(&e))?;
+    Ok(format!("{{\"contig\":\"{}\",\"start\":{},\"end\":{}}}", t.contig.replace('\\', "\\\\").replace('"', "\\\""), t.start, t.end))
+}
+
 /// The sequence around one variant as aligned text rows (or as HTML with the changed columns in spans). `reference_fasta` and `gff` are plain
 /// bytes; `reference` and `alt` are in VCF form. Same text as `qmutfind context`.
 #[wasm_bindgen]

@@ -368,6 +368,31 @@ pub struct Confirmer {
 }
 
 impl Confirmer {
+    /// From a genome FASTA and a construct FASTA (plain bytes). The construct contigs must not have the name of a genome contig.
+    pub fn from_fasta(genome_fasta: &[u8], construct_fasta: &[u8], kind: ReadKind, options: ConfirmOptions) -> Result<Confirmer, String> {
+        let mut genome = crate::read_fasta(genome_fasta).map_err(|e| format!("reference FASTA: {e}"))?;
+        let construct = crate::read_fasta(construct_fasta).map_err(|e| format!("construct FASTA: {e}"))?;
+        if construct.is_empty() {
+            return Err("the construct FASTA has no sequence: give the sequence you introduced (for example the hph cassette)".to_string());
+        }
+        for (name, _) in &construct {
+            if genome.iter().any(|(g, _)| g == name) {
+                return Err(format!("the construct contig {name} has the same name as a contig of the reference; rename it in the construct file"));
+            }
+        }
+        let names: Vec<String> = construct.iter().map(|(n, _)| n.clone()).collect();
+        genome.extend(construct);
+        let mut fasta = Vec::new();
+        for (name, seq) in &genome {
+            fasta.extend_from_slice(format!(">{name}\n").as_bytes());
+            fasta.extend_from_slice(seq);
+            fasta.push(b'\n');
+        }
+        drop(genome);
+        let constructs: Vec<&str> = names.iter().map(String::as_str).collect();
+        Confirmer::new(&fasta, &constructs, kind, options)
+    }
+
     /// `reference_fasta` holds the genome and the construct contigs (one FASTA); `constructs` names the construct contigs.
     pub fn new(reference_fasta: &[u8], constructs: &[&str], kind: ReadKind, options: ConfirmOptions) -> Result<Confirmer, String> {
         let mut engine = Engine::new(reference_fasta, kind, "confirm")?;
@@ -722,18 +747,58 @@ impl Report {
         out
     }
 
+    /// All junctions as a table: the two ends, the reads, the overlap, and the kind (`integration`: genome to cassette; `cassette_internal`; `genome`).
+    pub fn junctions_tsv(&self) -> String {
+        let constructs: Vec<&str> = self.cassettes.iter().map(|k| k.name.as_str()).collect();
+        let side = |s: Side| if s == Side::Left { "left" } else { "right" };
+        let mut tsv = String::from("contig_a\tpos_a\tside_a\tcontig_b\tpos_b\tside_b\treads\toverlap\tkind\n");
+        for j in &self.junctions {
+            let kind = match (constructs.contains(&j.a.contig.as_str()), constructs.contains(&j.b.contig.as_str())) {
+                (true, true) => "cassette_internal",
+                (false, false) => "genome",
+                _ => "integration",
+            };
+            tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{kind}\n", j.a.contig, j.a.pos, side(j.a.keeps), j.b.contig, j.b.pos, side(j.b.keeps), j.reads, j.overlap));
+        }
+        tsv
+    }
+
+    /// The depth at each base of each cassette: contig, position, depth.
+    pub fn depth_tsv(&self) -> String {
+        let mut out = String::from("contig\tpos\tdepth\n");
+        for k in &self.cassettes {
+            for (i, d) in k.depth.iter().enumerate() {
+                out.push_str(&format!("{}\t{}\t{d}\n", k.name, i + 1));
+            }
+        }
+        out
+    }
+
     pub fn to_json(&self) -> String {
-        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t");
         let verdict = match self.verdict() { Verdict::Confirmed => "confirmed", Verdict::NotConfirmed => "not_confirmed", Verdict::Inconclusive => "inconclusive" };
         let status = |s: CheckStatus| match s { CheckStatus::Pass => "pass", CheckStatus::Fail => "fail", CheckStatus::Inconclusive => "inconclusive", CheckStatus::NotApplicable => "not_applicable" };
         let opt = |v: Option<u64>| v.map(|x| x.to_string()).unwrap_or_else(|| "null".to_string());
         let checks: Vec<String> = self.checks.iter().map(|c| format!("{{\"name\":\"{}\",\"status\":\"{}\",\"detail\":\"{}\"}}", c.name, status(c.status), esc(&c.detail))).collect();
         let sites: Vec<String> = self.sites.iter().map(|s| format!(
-            "{{\"contig\":\"{}\",\"construct\":\"{}\",\"left\":{},\"right\":{},\"reads_left\":{},\"reads_right\":{},\"orientation\":\"{}\",\"replaced_bases\":{}}}",
+            "{{\"contig\":\"{}\",\"construct\":\"{}\",\"left\":{},\"right\":{},\"reads_left\":{},\"reads_right\":{},\"orientation\":\"{}\",\"replaced_bases\":{},\"construct_at_left\":{},\"construct_at_right\":{},\"homology_left\":{},\"homology_right\":{}}}",
             esc(&s.contig), esc(&s.construct), opt(s.left), opt(s.right), s.reads_left, s.reads_right,
             match s.orientation { Some(Orientation::Forward) => "forward", Some(Orientation::Reverse) => "reverse", None => "unknown" },
-            s.replaced_bases.map(|v| v.to_string()).unwrap_or_else(|| "null".into()))).collect();
+            s.replaced_bases.map(|v| v.to_string()).unwrap_or_else(|| "null".into()), opt(s.construct_at_left), opt(s.construct_at_right), s.homology_left, s.homology_right)).collect();
         let warnings: Vec<String> = self.warnings.iter().map(|w| format!("\"{}\"", esc(w))).collect();
-        format!("{{\"verdict\":\"{verdict}\",\"reads\":{},\"genome_depth\":{:.2},\"warnings\":[{}],\"sites\":[{}],\"checks\":[{}]}}", self.reads, self.genome_depth, warnings.join(","), sites.join(","), checks.join(","))
+        let cassettes: Vec<String> = self.cassettes.iter().map(|k| {
+            let gaps: Vec<String> = k.gaps.iter().map(|(a, b)| format!("[{a},{b}]")).collect();
+            let variants: Vec<String> = k.variants.iter().map(|v| format!("{{\"pos\":{},\"ref\":\"{}\",\"alt\":\"{}\",\"alt_count\":{},\"depth\":{}}}", v.pos, esc(&v.reference), esc(&v.alt), v.alt_count, v.depth)).collect();
+            format!("{{\"name\":\"{}\",\"length\":{},\"median_depth\":{:.2},\"copy_ratio\":{:.3},\"gaps\":[{}],\"variants\":[{}]}}", esc(&k.name), k.length, k.median_depth, k.copy_ratio, gaps.join(","), variants.join(","))
+        }).collect();
+        let target = match &self.target {
+            Some(t) => format!("{{\"contig\":\"{}\",\"start\":{},\"end\":{}}}", esc(&t.contig), t.start, t.end),
+            None => "null".to_string(),
+        };
+        let ratio = self.target_depth_ratio.map(|r| format!("{r:.3}")).unwrap_or_else(|| "null".into());
+        format!(
+            "{{\"verdict\":\"{verdict}\",\"reads\":{},\"genome_depth\":{:.2},\"target\":{target},\"target_depth_ratio\":{ratio},\"warnings\":[{}],\"sites\":[{}],\"cassettes\":[{}],\"checks\":[{}]}}",
+            self.reads, self.genome_depth, warnings.join(","), sites.join(","), cassettes.join(","), checks.join(",")
+        )
     }
 }

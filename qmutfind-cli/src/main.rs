@@ -461,25 +461,10 @@ fn confirm_command(args: &[String]) -> Result<(), String> {
             Some(v) => v.parse::<f64>().ok().filter(|x| *x >= 0.0).ok_or_else(|| format!("--{name} must be a number of 0 or more, not {v}")),
         }
     };
-    let mut genome = read_fasta(open_input(reference_path)?).map_err(|e| format!("{reference_path}: {e}"))?;
-    let construct = read_fasta(open_input(construct_path)?).map_err(|e| format!("{construct_path}: {e}"))?;
-    if construct.is_empty() {
-        return Err(format!("{construct_path} has no sequence"));
-    }
-    for (name, _) in &construct {
-        if genome.iter().any(|(g, _)| g == name) {
-            return Err(format!("the construct contig {name} has the same name as a contig of the reference; rename it in {construct_path}"));
-        }
-    }
-    let names: Vec<String> = construct.iter().map(|(n, _)| n.clone()).collect();
-    genome.extend(construct);
-    let mut fasta = Vec::new();
-    for (name, seq) in &genome {
-        fasta.extend_from_slice(format!(">{name}\n").as_bytes());
-        fasta.extend_from_slice(seq);
-        fasta.push(b'\n');
-    }
-    drop(genome);
+    let mut reference_bytes = Vec::new();
+    open_input(reference_path)?.read_to_end(&mut reference_bytes).map_err(|e| format!("{reference_path}: {e}"))?;
+    let mut construct_bytes = Vec::new();
+    open_input(construct_path)?.read_to_end(&mut construct_bytes).map_err(|e| format!("{construct_path}: {e}"))?;
     let target = match (flags.get("target"), flags.get("gene")) {
         (Some(_), Some(_)) => return Err("give --target or --gene, not both".to_string()),
         (Some(t), None) => {
@@ -506,9 +491,8 @@ fn confirm_command(args: &[String]) -> Result<(), String> {
         target_tolerance: number("tolerance", defaults.target_tolerance as f64)? as u64,
         ..defaults
     };
-    let constructs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut confirmer = Confirmer::new(&fasta, &constructs, kind, options)?;
-    drop(fasta);
+    let mut confirmer = Confirmer::from_fasta(&reference_bytes, &construct_bytes, kind, options)?;
+    drop(reference_bytes);
     let mut buffer = vec![0u8; 4 << 20];
     let mut paths = vec![reads_path.clone()];
     if let Some(second) = flags.get("reads2") {
@@ -529,21 +513,8 @@ fn confirm_command(args: &[String]) -> Result<(), String> {
     let write = |suffix: &str, text: String| std::fs::write(format!("{prefix}.{suffix}"), text).map_err(|e| format!("{prefix}.{suffix}: {e}"));
     write("confirm.txt", report.to_text())?;
     write("confirm.json", report.to_json())?;
-    let side = |s: qmutfind_core::Side| if s == qmutfind_core::Side::Left { "left" } else { "right" };
-    let mut tsv = String::from("contig_a\tpos_a\tside_a\tcontig_b\tpos_b\tside_b\treads\toverlap\tkind\n");
-    for j in &report.junctions {
-        let (ca, cb) = (names.contains(&j.a.contig), names.contains(&j.b.contig));
-        let kind = match (ca, cb) { (true, true) => "cassette_internal", (false, false) => "genome", _ => "integration" };
-        tsv.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{kind}\n", j.a.contig, j.a.pos, side(j.a.keeps), j.b.contig, j.b.pos, side(j.b.keeps), j.reads, j.overlap));
-    }
-    write("junctions.tsv", tsv)?;
-    let mut depth = String::from("contig\tpos\tdepth\n");
-    for k in &report.cassettes {
-        for (i, d) in k.depth.iter().enumerate() {
-            depth.push_str(&format!("{}\t{}\t{d}\n", k.name, i + 1));
-        }
-    }
-    write("cassette_depth.tsv", depth)?;
+    write("junctions.tsv", report.junctions_tsv())?;
+    write("cassette_depth.tsv", report.depth_tsv())?;
     print!("{}", report.to_text());
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     let code = match report.verdict() { Verdict::Confirmed => 0, Verdict::NotConfirmed => 3, Verdict::Inconclusive => 4 };

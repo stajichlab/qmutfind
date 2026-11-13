@@ -1344,3 +1344,12 @@ A fresh review of 5dd1387..b0d139e (Opus, read-only) found one high and several 
   (repeats and artefacts); no check uses them, and the text report lists only the junctions that involve the cassette or lie within 5 kb of the target.
 - Open: real transformant data; long reads; mate pairs as junction evidence; donor with arms (auto-strip by alignment of the construct to the genome); the page (`confirm.html`, worker step, WASM export); thresholds on real data.
 - Tests now: 317 Rust (+1 opt-in), 62 Node, 201 browser, 74 bench.
+
+## 12w. Allele confirmation page (2026-11-13)
+- Core: `Confirmer::from_fasta` (genome FASTA and construct FASTA, with the name checks), `Report::junctions_tsv` and `depth_tsv`, and a fuller JSON (cassettes with gaps and variants, junction positions on the cassette, homology, target). The CLI uses the same functions.
+- WASM: class `Confirmation` and `find_gene`; Node test: text, JSON and both tables equal the CLI, for two chunk sizes, with and without a target (4 tests).
+- Page: `site/confirm.html` and `confirm.js` (same theme and layout scripts and the same worker as the main page; a `confirm` step in `worker.js`, which shares its read-feeding loop with `run`). Inputs: genome (file, https address, NCBI list), GFF3 (for a gene name), cassette (file or pasted
+  sequence, with a name added when none), target (none, region or gene), reads (files and https addresses; a read limit uses the same worker download as the main page), thresholds. Result: verdict banner (words and a symbol; colour only as an addition), junction table,
+  SVG depth plot (built with `createElementNS`, text set as text), checks table with chips, warnings, four downloads. The names from the files are always set as text (a test with a hostile contig name; a mutation to `innerHTML` makes it fail).
+- Tests: 15 browser tests (inputs and links; a confirmed run whose downloaded report equals the CLI text; gene by name; wild type; low coverage; homology-arm warning; input errors; hostile names; cancel; readable in five styles; phone layout). A first draft of the check labels read badly in the banner ("Failed: Every part of the cassette is covered") and was renamed to noun phrases.
+- Tests now: 317 Rust (+1 opt-in), 66 Node, 216 browser, 74 bench.

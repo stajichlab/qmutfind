@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
+import init, { Session, Confirmation, find_gene, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -69,6 +69,30 @@ async function vcfText(source) {
   return typeof source === 'string' ? source : new TextDecoder().decode(await readAll(source));
 }
 
+/**
+ * Give the bytes of one reads file to `add(bytes)` in chunks (a .gz file is unpacked on the way and checked). With `maxReads` only the first reads are given:
+ * four lines are one read. `tick()` is called after each chunk. Returns true when the limit cut the file.
+ */
+async function feedFile(file, maxReads, add, tick) {
+  const lineLimit = maxReads ? maxReads * 4 : 0;
+  let lines = 0;
+  let cut = false;
+  for await (const chunk of chunksOf(file)) {
+    let bytes = chunk;
+    if (lineLimit) {
+      let seen = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] === 10 && ++seen + lines === lineLimit) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
+      }
+      lines += seen;
+    }
+    add(bytes);
+    tick();
+    if (cut) break;
+  }
+  return cut;
+}
+
 async function run({ reference, reads, sample, kind, depthWindow, evidence, maxReads }) {
   const started = performance.now();
   postMessage({ step: 'run', type: 'status', text: 'Reading the reference and building the index' });
@@ -80,26 +104,13 @@ async function run({ reference, reads, sample, kind, depthWindow, evidence, maxR
     let lastReport = 0;
     for (const file of reads) {
       postMessage({ step: 'run', type: 'status', text: `Mapping ${file.name}` });
-      // With a read limit, only the first `maxReads` reads of each file are mapped: four lines are one read.
-      const lineLimit = maxReads ? maxReads * 4 : 0;
-      let lines = 0;
-      let cut = false;
-      for await (const chunk of chunksOf(file)) {
-        let bytes = chunk;
-        if (lineLimit) {
-          let seen = 0;
-          for (let i = 0; i < bytes.length; i++) {
-            if (bytes[i] === 10 && ++seen + lines === lineLimit) { bytes = bytes.subarray(0, i + 1); cut = true; break; }
-          }
-          lines += seen;
-        }
-        session.add_reads(bytes);
+      // With a read limit, only the first `maxReads` reads of each file are mapped.
+      const cut = await feedFile(file, maxReads, (bytes) => session.add_reads(bytes), () => {
         if (performance.now() - lastReport > 1000) {
           lastReport = performance.now();
           postMessage({ step: 'run', type: 'progress', reads: session.read_count() });
         }
-        if (cut) break;
-      }
+      });
       session.end_file();
       fileReports.push({ name: file.name, cut });
     }
@@ -130,6 +141,43 @@ async function fetchReads({ url, maxReads, maxKept, maxDownload, label }) {
     onProgress: (p) => postMessage({ step: 'fetchreads', type: 'progress', ...p }),
   });
   postMessage({ step: 'fetchreads', type: 'done', ...result }, [result.bytes.buffer]);
+}
+
+/**
+ * Confirm an introduced allele: map the reads to the genome plus the construct and report where the construct joins the genome and whether it is intact
+ * (see `Confirmation` in the WebAssembly package). `construct` is FASTA bytes; the target is a region `{ contig, start, end }`, or a gene name with the GFF3 file.
+ */
+async function confirmStep({ reference, construct, reads, kind, target, gene, gff, options, maxReads }) {
+  const started = performance.now();
+  postMessage({ step: 'confirm', type: 'status', text: 'Reading the reference and building the index' });
+  const fasta = await bytesOf('reference', reference);
+  let region = target || null;
+  if (gene) {
+    const gffBytes = await bytesOf('gff', gff);
+    region = JSON.parse(find_gene(gffBytes, gene));
+  }
+  const c = new Confirmation(fasta, construct, kind, region ? region.contig : undefined, region ? region.start : 0, region ? region.end : 0, options.minReads, options.minDepth, options.tolerance);
+  try {
+    const files = [];
+    let lastReport = 0;
+    for (const file of reads) {
+      postMessage({ step: 'confirm', type: 'status', text: `Mapping ${file.name}` });
+      const cut = await feedFile(file, maxReads, (bytes) => c.add_reads(bytes), () => {
+        if (performance.now() - lastReport > 1000) {
+          lastReport = performance.now();
+          postMessage({ step: 'confirm', type: 'progress', reads: c.read_count() });
+        }
+      });
+      c.end_file();
+      files.push({ name: file.name, cut });
+    }
+    postMessage({
+      step: 'confirm', type: 'done', text: c.report_text(), json: c.report_json(), junctions: c.junctions_tsv(), depth: c.depth_tsv(),
+      reads: c.read_count(), seconds: (performance.now() - started) / 1000, target: region, files,
+    });
+  } finally {
+    c.free(); // the index and counts of a large genome are several hundred MB
+  }
 }
 
 async function summarize({ vcf, bed, reference, order }) {
@@ -185,7 +233,7 @@ async function combineStep({ names, vcfs, beds, evidence, parent, minDepth }) {
   postMessage({ step: 'combine', type: 'done', table, summary, warnings, vcf });
 }
 
-const handlers = { run, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
+const handlers = { run, confirm: confirmStep, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
 
 self.onmessage = async (event) => {
   const { step } = event.data;

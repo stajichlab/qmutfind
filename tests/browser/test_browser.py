@@ -3057,3 +3057,248 @@ def test_a_gene_name_with_html_characters_is_shown_as_text_in_the_sequence_view(
 
     assert 'G<b>1"x' in context_text_of(driver)
     assert driver.execute_script("return document.querySelectorAll('#context-view b').length;") == 0
+
+
+# The allele confirmation page (confirm.html): is an introduced cassette integrated where it should be, and intact?
+
+CONFIRM = "dist-site/confirm.html"
+_COMP = {"A": "T", "C": "G", "G": "C", "T": "A"}
+
+
+def _revcomp(seq):
+    return "".join(_COMP[c] for c in reversed(seq))
+
+
+def _cassette():
+    import random
+    r = random.Random(3)
+    return "".join(r.choice("ACGT") for _ in range(2000))
+
+
+def _sim_reads(seq, depth, seed):
+    import random
+    r = random.Random(seed)
+    out = []
+    for i in range(int(len(seq) * depth / 150)):
+        start = r.randrange(0, len(seq) - 150)
+        read = seq[start:start + 150]
+        if r.random() < 0.5:
+            read = _revcomp(read)
+        out.append(f"@r{i}\n{read}\n+\n{'I' * 150}\n")
+    return "".join(out)
+
+
+@pytest.fixture
+def confirm_inputs(inputs):
+    """Files for the confirmation page, in the test directory: the reference (ref.fa, contig chrA), the cassette, genes with a gene at 50,001-51,500,
+    and reads of three samples: the cassette replaced the gene (mutant.fq), the unmodified genome (wild.fq), and a 3x run of the mutant (low.fq)."""
+    cassette = _cassette()
+    modified = CHR_A[:50_000] + cassette + CHR_A[51_500:]
+    (inputs / "cassette.fa").write_text(f">hph\n{cassette}\n")
+    (inputs / "genes_c.gff3").write_text("##gff-version 3\nchrA\ts\tgene\t50001\t51500\t.\t+\t.\tID=gene-G1;Name=G1;locus_tag=G1\n")
+    (inputs / "mutant.fq").write_text(_sim_reads(modified, 30, 1))
+    (inputs / "wild.fq").write_text(_sim_reads(CHR_A, 30, 2))
+    (inputs / "low.fq").write_text(_sim_reads(modified, 3, 3))
+    (inputs / "mutant.fq.gz").write_bytes(gzip.compress((inputs / "mutant.fq").read_bytes(), compresslevel=1))
+    return inputs
+
+
+def open_confirm(driver, server, theme=None):
+    driver.get(f"{server}/{CONFIRM}" + (f"?theme={theme}" if theme else ""))
+    WebDriverWait(driver, 20).until(lambda d: d.find_element(By.ID, "confirm-run").is_displayed())
+
+
+def confirm_fill(driver, inputs, reads="mutant.fq", target="region", construct="file", reference="ref.fa", gff=None):
+    driver.find_element(By.ID, "confirm-reference").send_keys(str(inputs / reference))
+    if construct == "file":
+        driver.find_element(By.ID, "confirm-construct-file").send_keys(str(inputs / "cassette.fa"))
+    elif construct:
+        driver.find_element(By.ID, "confirm-construct-text").send_keys(construct)
+    driver.find_element(By.CSS_SELECTOR, f"#confirm-target-kind option[value='{target}']").click()
+    if target == "region":
+        driver.find_element(By.ID, "confirm-region").send_keys("chrA:50001-51500")
+    elif target == "gene":
+        driver.find_element(By.ID, "confirm-gene").send_keys("G1")
+    if gff:
+        driver.find_element(By.ID, "confirm-gff").send_keys(str(inputs / gff))
+    if reads:
+        driver.find_element(By.ID, "confirm-reads").send_keys(str(inputs / reads))
+
+
+def confirm_run(driver, wait=240):
+    driver.find_element(By.ID, "confirm-run").click()
+    WebDriverWait(driver, wait).until(lambda d: d.find_element(By.ID, "confirm-status").text.startswith(("Done", "Error", "Give", "Choose", "Cancelled", "Type")))
+    return driver.find_element(By.ID, "confirm-status").text
+
+
+def verdict_of(driver):
+    el = driver.find_element(By.ID, "confirm-verdict")
+    return el.get_attribute("data-verdict"), el.text
+
+
+def check_statuses(driver):
+    return driver.execute_script("return Object.fromEntries(Array.from(document.querySelectorAll('#confirm-checks tbody tr')).map((r) => [r.dataset.check, r.dataset.status]));")
+
+
+def cli_confirm_text(inputs, extra):
+    run_cli("confirm", "--reference", "ref.fa", "--construct", "cassette.fa", "--reads", "mutant.fq", "--preset", "short", "--out-prefix", "cli", "--always-exit-zero", *extra, cwd=inputs)
+    return (inputs / "cli.confirm.txt").read_text()
+
+
+def test_the_confirmation_page_has_its_inputs_and_links_to_and_from_the_main_page(driver, server):
+    open_confirm(driver, server)
+
+    for element_id in ["confirm-reference", "confirm-construct-file", "confirm-construct-text", "confirm-target-kind", "confirm-reads", "confirm-kind", "confirm-run"]:
+        assert driver.find_element(By.ID, element_id), element_id
+    assert "allele" in driver.title.lower()
+    assert driver.find_element(By.CSS_SELECTOR, "a[href^='index.html']").is_displayed()
+    open_site(driver, server)
+    assert driver.find_element(By.CSS_SELECTOR, "a[href^='confirm.html']").is_displayed()
+
+
+def test_a_replacement_is_confirmed_in_the_page_and_the_downloaded_report_equals_the_cli(driver, server, confirm_inputs):
+    expected = cli_confirm_text(confirm_inputs, ["--target", "chrA:50001-51500"])
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="mutant.fq.gz")
+
+    status = confirm_run(driver)
+
+    assert status.startswith("Done"), status
+    kind, text = verdict_of(driver)
+    assert kind == "confirmed" and text.lower().startswith("confirmed"), (kind, text)
+    statuses = check_statuses(driver)
+    assert statuses and set(statuses.values()) == {"pass"}, statuses
+    assert set(statuses) >= {"integration_found", "at_target", "target_replaced", "cassette_coverage", "copy_number"}
+    sites = driver.find_element(By.ID, "confirm-sites").text
+    assert "50000" in sites and "51501" in sites and "forward" in sites.lower(), sites
+    assert driver.find_elements(By.CSS_SELECTOR, "#confirm-plot svg path")
+    assert download_text(driver, "confirm-download-text") == expected
+
+
+def test_a_gene_name_with_a_gff_gives_the_same_target(driver, server, confirm_inputs):
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, target="gene", gff="genes_c.gff3")
+
+    status = confirm_run(driver)
+
+    assert status.startswith("Done"), status
+    assert verdict_of(driver)[0] == "confirmed"
+    assert "chrA:50001-51500" in driver.find_element(By.ID, "confirm-result").text
+
+
+def test_reads_of_the_unmodified_strain_are_not_confirmed_and_the_failed_checks_are_named(driver, server, confirm_inputs):
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="wild.fq")
+
+    confirm_run(driver)
+
+    kind, text = verdict_of(driver)
+    assert kind == "not_confirmed" and "not confirmed" in text.lower(), (kind, text)
+    statuses = check_statuses(driver)
+    assert statuses["integration_found"] == "fail" and statuses["target_replaced"] == "fail", statuses
+
+
+def test_too_little_coverage_is_inconclusive_and_says_why(driver, server, confirm_inputs):
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="low.fq")
+
+    confirm_run(driver)
+
+    kind, text = verdict_of(driver)
+    assert kind == "inconclusive", (kind, text)
+    assert "coverage" in driver.find_element(By.ID, "confirm-checks").text.lower()
+
+
+def test_a_construct_with_homology_arms_shows_a_warning(driver, server, confirm_inputs):
+    donor = CHR_A[49_700:50_000] + _cassette() + CHR_A[51_500:51_800]
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, construct=f">donor\n{donor}\n")
+
+    confirm_run(driver)
+
+    warnings = driver.find_element(By.ID, "confirm-warnings")
+    assert warnings.is_displayed() and "arm" in warnings.text.lower(), warnings.text
+
+
+def test_missing_or_wrong_inputs_give_a_reason_before_or_after_the_run(driver, server, confirm_inputs):
+    open_confirm(driver, server)
+    assert confirm_run(driver).startswith("Choose the reference"), driver.find_element(By.ID, "confirm-status").text
+
+    driver.find_element(By.ID, "confirm-reference").send_keys(str(confirm_inputs / "ref.fa"))
+    assert confirm_run(driver).startswith("Give the construct")
+
+    driver.find_element(By.ID, "confirm-construct-text").send_keys(">chrA\n" + "ACGT" * 100)
+    assert confirm_run(driver).startswith("Choose the reads")
+
+    driver.find_element(By.ID, "confirm-reads").send_keys(str(confirm_inputs / "mutant.fq"))
+    status = confirm_run(driver)  # the construct has the name of a genome contig
+    assert status.startswith("Error") and "same name" in status, status
+
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, target="region")
+    box = driver.find_element(By.ID, "confirm-region")
+    box.clear()
+    box.send_keys("chrA:50")
+    assert confirm_run(driver).startswith("Type a region"), driver.find_element(By.ID, "confirm-status").text
+
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, target="gene")  # a gene name but no GFF
+    assert "GFF" in confirm_run(driver)
+
+
+def test_names_from_the_files_are_shown_as_text(driver, server, confirm_inputs):
+    hostile = '<img/src=x/onerror=window.__owned=1>'  # no spaces: a FASTA name ends at the first space
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, construct=f">{hostile}\n{_cassette()}\n")
+
+    confirm_run(driver)
+
+    assert driver.execute_script("return document.querySelectorAll('#confirm-result img').length;") == 0
+    assert driver.execute_script("return window.__owned === undefined;")
+    assert hostile in driver.find_element(By.ID, "confirm-result").text
+
+
+def test_a_running_confirmation_can_be_cancelled(driver, server, confirm_inputs):
+    (confirm_inputs / "big.fq").write_text(_sim_reads(CHR_A, 400, 4)[:200_000_000])  # long enough to cancel
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="big.fq")
+    driver.find_element(By.ID, "confirm-run").click()
+    WebDriverWait(driver, 60).until(lambda d: d.find_element(By.ID, "confirm-cancel").is_displayed())
+
+    driver.find_element(By.ID, "confirm-cancel").click()
+
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "confirm-status").text.startswith("Cancelled"))
+    assert driver.find_element(By.ID, "confirm-run").is_enabled()
+    assert not driver.find_element(By.ID, "confirm-verdict").is_displayed()
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_verdict_and_the_check_chips_are_readable_in_every_style(driver, server, confirm_inputs, theme):
+    open_confirm(driver, server, theme)
+    confirm_fill(driver, confirm_inputs)
+    confirm_run(driver)
+
+    ratios = driver.execute_script("""
+      const parse = (c) => c.match(/[\\d.]+/g).slice(0, 4).map(Number);
+      const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      const backdrop = (el) => { for (let e = el; e; e = e.parentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c.length < 4 || c[3] > 0.5) return c; } return [255, 255, 255, 1]; };
+      const ratio = (el) => { const a = lum(parse(getComputedStyle(el).color)), b = lum(backdrop(el)); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+      const els = [document.getElementById('confirm-verdict'), ...document.querySelectorAll('#confirm-checks .chip')];
+      return els.map((e) => [e.id || e.className, ratio(e)]);""")
+
+    assert len(ratios) >= 5, ratios
+    assert all(r >= 4.5 for _, r in ratios), (theme, ratios)
+
+
+def test_the_confirmation_page_has_no_sideways_scroll_on_a_phone(driver, server, confirm_inputs):
+    driver.set_window_size(500, 1100)
+    try:
+        open_confirm(driver, server)
+        confirm_fill(driver, confirm_inputs)
+        confirm_run(driver)
+
+        widths = driver.execute_script("return [document.documentElement.scrollWidth, document.documentElement.clientWidth, document.documentElement.getAttribute('data-layout')];")
+    finally:
+        driver.set_window_size(1300, 1000)
+
+    assert widths[2] == "phone" and widths[0] <= widths[1] + 1, widths

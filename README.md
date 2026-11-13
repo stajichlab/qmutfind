@@ -113,6 +113,11 @@ The verdict is *confirmed* when nothing failed and nothing was inconclusive. The
 the number of genome bases that it replaced, and warnings. A warning says that the construct shares sequence with the genome (24-base words found in both): usually these are homology arms,
 and reads from them map to the genome and to the cassette equally well, so remove the arms from the construct file.
 
+**In the browser.** The same analysis runs in `confirm.html` (the link "Confirm an allele" in the header of the main page; `https://qmutfind.fungalgenomes.org/confirm.html`). Choose the genome (a file, a web address
+or the NCBI list), give the cassette (a FASTA file or its pasted sequence), say where it should be (a region, or a gene name with the GFF3 file, or nothing), and choose the reads (files or https addresses, plain or `.gz`; optionally
+only the first reads of each file). The page shows a verdict, the junction table, a depth plot along the cassette (gaps, junctions and differences from the given sequence marked), the checks with their evidence, and downloads
+of the report, the JSON, the junction table and the depth table. Its text report is the same as the command line report (a test compares them). The files stay in the browser; nothing is sent to a server.
+
 **What was tested.** Simulated 30x reads from a 120 kb genome with a 2 kb cassette: an intact replacement (24 random genomes, both orientations, replaced lengths 300 to 2,800 bases: the flanks were
 exact and the verdict *confirmed* every time), a reversed cassette, a point change and a deletion inside the cassette, a missing stretch inside the cassette, a second copy elsewhere, a half wild-type
 population, an insertion away from the target, no insertion, and 2x coverage (inconclusive). On real reads of *A. fumigatus* A1163 (4,000,000 reads, about 95 s and 520 MB) with a dummy construct that is not in the reads:

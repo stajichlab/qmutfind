@@ -240,6 +240,33 @@ fn the_text_report_names_every_check_and_the_junction_coordinates() {
     assert!(text.contains("Junctions that involve the cassette"), "{text}");
     let json = r.to_json();
     assert!(json.contains("\"verdict\":\"confirmed\"") && json.contains("\"integration_found\""), "{json}");
+    // What the page draws from: the cassette (depth summary, gaps, variants), the junctions on the cassette, and the target.
+    assert!(json.contains("\"cassettes\":[{\"name\":\"cass\",\"length\":2000"), "{json}");
+    assert!(json.contains("\"gaps\":[]") && json.contains("\"variants\":[]"), "{json}");
+    assert!(json.contains("\"construct_at_left\":1,") && json.contains("\"construct_at_right\":2000"), "{json}");
+    assert!(json.contains("\"target\":{\"contig\":\"chr\",\"start\":50001,\"end\":51500}"), "{json}");
+    assert!(json.contains("\"homology_left\":") && json.contains("\"copy_ratio\":"), "{json}");
+}
+
+#[test]
+fn the_json_lists_gaps_and_variants_of_a_damaged_cassette_and_escapes_text() {
+    let w = world();
+    let mut damaged = w.cassette.clone();
+    damaged[1_000] = if damaged[1_000] == b'A' { b'C' } else { b'A' };
+    damaged.drain(800..1_200);
+    let modified = splice(&w.genome, 50_000..51_500, &damaged);
+    let r = run(&w, &reads(&modified, 30.0, 16), Some(target()));
+    let json = r.to_json();
+    assert!(json.contains("\"gaps\":[[8"), "the gap starts around 801: {json}");
+    assert!(json.contains("\"verdict\":\"not_confirmed\""), "{json}");
+    // Balanced braces and brackets outside strings: a cheap check that the JSON is well formed.
+    let (mut depth, mut in_string, mut escaped) = (0i32, false, false);
+    for ch in json.chars() {
+        if in_string { if escaped { escaped = false } else if ch == '\\' { escaped = true } else if ch == '"' { in_string = false } continue }
+        match ch { '"' => in_string = true, '{' | '[' => depth += 1, '}' | ']' => depth -= 1, _ => {} }
+        assert!(depth >= 0, "{json}");
+    }
+    assert_eq!(depth, 0, "{json}");
 }
 
 /// A sweep over many random genomes and cassettes, both orientations, with the replaced length and the place varied. Slow (about a minute):
@@ -320,4 +347,34 @@ fn a_cassette_without_arms_gets_no_warning() {
     let r = run(&w, &reads(&modified, 30.0, 14), Some(target()));
 
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+}
+
+#[test]
+fn a_confirmer_can_be_made_from_a_genome_fasta_and_a_construct_fasta_and_checks_the_names() {
+    let w = world();
+    let genome = format!(">chr\n{}\n", String::from_utf8_lossy(&w.genome)).into_bytes();
+    let construct = format!(">hph\n{}\n", String::from_utf8_lossy(&w.cassette)).into_bytes();
+    let modified = splice(&w.genome, 50_000..51_500, &w.cassette);
+    let options = ConfirmOptions { target: Some(target()), ..ConfirmOptions::default() };
+
+    let mut c = Confirmer::from_fasta(&genome, &construct, ReadKind::Short, options.clone()).unwrap();
+    c.add_reads(reads(&modified, 30.0, 15).as_bytes()).unwrap();
+    c.end_file().unwrap();
+    let r = c.report();
+
+    assert_eq!(r.verdict(), Verdict::Confirmed);
+    assert_eq!(r.cassettes[0].name, "hph");
+    // The tables that the CLI and the page write.
+    let junctions = r.junctions_tsv();
+    assert!(junctions.starts_with("contig_a\tpos_a\tside_a\tcontig_b\tpos_b\tside_b\treads\toverlap\tkind\n"), "{junctions}");
+    assert!(junctions.lines().filter(|l| l.ends_with("\tintegration")).count() == 2, "{junctions}");
+    let depth = r.depth_tsv();
+    assert_eq!(depth.lines().count(), 1 + CASSETTE_LEN);
+    assert!(depth.starts_with("contig\tpos\tdepth\nhph\t1\t"), "{}", &depth[..40]);
+
+    let clash = format!(">chr\n{}\n", String::from_utf8_lossy(&w.cassette)).into_bytes();
+    let err = Confirmer::from_fasta(&genome, &clash, ReadKind::Short, options.clone()).err().unwrap();
+    assert!(err.contains("chr") && err.contains("same name"), "{err}");
+    let err = Confirmer::from_fasta(&genome, b"", ReadKind::Short, options).err().unwrap();
+    assert!(err.contains("construct") && err.contains("no sequence"), "{err}");
 }
