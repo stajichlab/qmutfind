@@ -107,11 +107,11 @@
   the sample has more than one). The page maps every file as separate reads; it does not use read pairs. The samples run one
   after the other, each in its own worker. Files from your computer are read from disk and are not sent anywhere.</p>
   <div class="form">
-    <label for="read-limit">Reads to use from each file, in thousands (0 uses all). Downloads stop after this many reads.</label>
+    <label for="read-limit">Sampled read count from each file in 1000s (0 uses all). Downloads stop after reaching read quota.</label>
     <input id="read-limit" type="number" min="0" step="500" value="2000">
     <div id="read-limit-echo" class="hint" role="status"></div>
     <label for="kind">Read type</label>
-    <select id="kind"><option value="short">Short reads (Illumina)</option><option value="long">Long reads (Nanopore)</option></select>
+    <select id="kind"><option value="short">Short reads</option><option value="long">Long reads</option></select>
   </div>
   <div class="table-wrap"><table id="strain-table" class="grid">
     <thead><tr><th>Sample (&minus; removes it)</th><th>Source</th><th>Reads</th><th>State</th><th>Reads used</th><th>Calls</th><th>Seconds</th><th>Note</th></tr></thead>
