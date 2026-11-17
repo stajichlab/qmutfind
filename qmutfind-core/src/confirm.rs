@@ -503,7 +503,7 @@ pub fn find_gene<R: std::io::BufRead>(gff: R, name: &str) -> Result<Target, Stri
             continue;
         }
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || !matches!(f[2], "gene" | "pseudogene") {
+        if f.len() < 9 || !(matches!(f[2], "gene" | "pseudogene") || f[2].ends_with("_gene")) {
             continue;
         }
         let hit = f[8].split(';').filter_map(|kv| kv.trim().split_once('=')).any(|(k, v)| {
@@ -1024,6 +1024,13 @@ impl Report {
                 s.replaced_bases.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
                 if s.homology_left > 0 || s.homology_right > 0 { format!(" (shared bases at the junctions: {} left, {} right; the breakpoints could be that far out)", s.homology_left.max(0), s.homology_right.max(0)) } else { String::new() },
             ));
+            // Regions that can be copied into a genome browser or into --target.
+            if let (Some(l), Some(r)) = (s.left, s.right) {
+                if r > l + 1 {
+                    out.push_str(&format!("    replaced region (copy): {}   {}\n", crate::locus::region_text(&s.contig, l + 1, r - 1), crate::locus::region_dots(&s.contig, l + 1, r - 1)));
+                }
+                out.push_str(&format!("    flanks (copy): {}   {}\n", crate::locus::region_text(&s.contig, l, r), crate::locus::region_dots(&s.contig, l, r)));
+            }
         }
         out.push_str("\nCassette:\n");
         for k in &self.cassettes {
@@ -1100,10 +1107,12 @@ impl Report {
         let opt = |v: Option<u64>| v.map(|x| x.to_string()).unwrap_or_else(|| "null".to_string());
         let checks: Vec<String> = self.checks.iter().map(|c| format!("{{\"name\":\"{}\",\"status\":\"{}\",\"detail\":\"{}\"}}", c.name, status(c.status), esc(&c.detail))).collect();
         let sites: Vec<String> = self.sites.iter().map(|s| format!(
-            "{{\"contig\":\"{}\",\"construct\":\"{}\",\"left\":{},\"right\":{},\"reads_left\":{},\"reads_right\":{},\"orientation\":\"{}\",\"replaced_bases\":{},\"construct_at_left\":{},\"construct_at_right\":{},\"homology_left\":{},\"homology_right\":{}}}",
+            "{{\"contig\":\"{}\",\"construct\":\"{}\",\"left\":{},\"right\":{},\"reads_left\":{},\"reads_right\":{},\"orientation\":\"{}\",\"replaced_bases\":{},\"construct_at_left\":{},\"construct_at_right\":{},\"homology_left\":{},\"homology_right\":{},\"replaced_region\":{},\"replaced_region_dots\":{}}}",
             esc(&s.contig), esc(&s.construct), opt(s.left), opt(s.right), s.reads_left, s.reads_right,
             match s.orientation { Some(Orientation::Forward) => "forward", Some(Orientation::Reverse) => "reverse", None => "unknown" },
-            s.replaced_bases.map(|v| v.to_string()).unwrap_or_else(|| "null".into()), opt(s.construct_at_left), opt(s.construct_at_right), s.homology_left, s.homology_right)).collect();
+            s.replaced_bases.map(|v| v.to_string()).unwrap_or_else(|| "null".into()), opt(s.construct_at_left), opt(s.construct_at_right), s.homology_left, s.homology_right,
+            match (s.left, s.right) { (Some(l), Some(r)) if r > l + 1 => format!("\"{}\"", esc(&crate::locus::region_text(&s.contig, l + 1, r - 1))), _ => "null".to_string() },
+            match (s.left, s.right) { (Some(l), Some(r)) if r > l + 1 => format!("\"{}\"", esc(&crate::locus::region_dots(&s.contig, l + 1, r - 1))), _ => "null".to_string() })).collect();
         let warnings: Vec<String> = self.warnings.iter().map(|w| format!("\"{}\"", esc(w))).collect();
         let cassettes: Vec<String> = self.cassettes.iter().map(|k| {
             let gaps: Vec<String> = k.gaps.iter().map(|(a, b)| format!("[{a},{b}]")).collect();

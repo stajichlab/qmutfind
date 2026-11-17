@@ -8,6 +8,9 @@ const show = (id, text) => { $(id).textContent = text; };
 // How far a file may unpack when it is loaded whole into memory. `?limit_mb=N` can lower it (the tests use that). The download limit is MAX_DOWNLOAD (reference-panel.js).
 const LIMIT_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get('limit_mb')) || 1024, 1024) * 1e6;
 
+// A gene that the insertion hits links to its FungiDB gene page. The link works for gene IDs that FungiDB uses.
+const GENE_LINK = 'https://fungidb.org/gene/';
+
 let activeWorker = null;
 let activeAbort = null;
 let running = false;
@@ -65,6 +68,7 @@ function callWorker(message, onProgress) {
     w.onmessage = (event) => {
       const m = event.data;
       if (m.type === 'status' && message.step === 'confirm') show('confirm-status', m.text);
+      if (m.type === 'status' && (message.step === 'breakpoints' || message.step === 'assembly')) show('bp-status', m.text);
       if (m.type === 'progress' && onProgress) onProgress(m);
       if (m.type === 'error') { finish(); reject(new Error(m.message)); }
       if (m.type === 'done') { finish(); resolve(m); }
@@ -155,6 +159,7 @@ $('confirm-run').addEventListener('click', async () => {
   $('confirm-run').disabled = true;
   $('confirm-cancel').hidden = false;
   $('confirm-result').hidden = true;
+  $('locus-section').hidden = true;
   activeAbort = new AbortController();
   try {
     const budget = { left: MAX_DOWNLOAD };
@@ -169,10 +174,11 @@ $('confirm-run').addEventListener('click', async () => {
     show('confirm-status', 'Starting');
     const m = await callWorker({
       step: 'confirm', reference, construct: new TextEncoder().encode(construct), reads, kind: $('confirm-kind').value, gff: gff || null,
-      ...wanted, maxReads,
+      ...wanted, maxReads, geneLink: GENE_LINK,
       options: { minReads: Math.max(1, Math.round(number('confirm-min-reads', 3))), minDepth: number('confirm-min-depth', 10), tolerance: $('confirm-tolerance').value === '' ? -1 : Math.round(number('confirm-tolerance', 20)) },
     }, (p) => show('confirm-status', `Mapping: ${p.reads.toLocaleString()} reads`));
     render(m);
+    renderLocus(m.locus, 'The main insertion site found from the reads.');
     show('confirm-status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s.`);
   } catch (error) {
     show('confirm-status', cancelled || error.name === 'AbortError' ? 'Cancelled.' : `Error: ${error.message}`);
@@ -327,3 +333,181 @@ function render(m) {
   offer('confirm-download-depth', 'cassette_depth.tsv', m.depth, 'text/tab-separated-values');
   $('confirm-result').scrollIntoView({ block: 'nearest' });
 }
+
+// ---- The locus drawing: from the reads (above) or from a breakpoint table -------------------------------------------------------------------
+/** Put `text` on the clipboard. Falls back to selecting nothing when the browser refuses (the text is shown in the page anyway). */
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch (error) {
+    button.textContent = 'Select and copy';
+  }
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+}
+
+/** A cell with a region as selectable text and a Copy button. */
+function regionCell(row, text) {
+  const cell = row.insertCell();
+  cell.appendChild(el('code', text, 'region'));
+  const button = el('button', 'Copy', 'copy');
+  button.type = 'button';
+  button.setAttribute('aria-label', `Copy ${text}`);
+  button.addEventListener('click', () => copyText(text, button));
+  cell.appendChild(button);
+}
+
+/** Draw the result of `locus_json` (a JSON text, or "null"). */
+function renderLocus(json, caption) {
+  const section = $('locus-section');
+  const data = json ? JSON.parse(json) : null;
+  if (!data) { section.hidden = true; return; }
+  section.hidden = false;
+  show('locus-caption', caption);
+  // The drawing comes from the WebAssembly package as SVG text; it is parsed as SVG, so no script can run in it.
+  const doc = new DOMParser().parseFromString(data.svg, 'image/svg+xml');
+  $('locus-svg').replaceChildren(document.importNode(doc.documentElement, true));
+  const regions = $('locus-regions').tBodies[0];
+  regions.replaceChildren();
+  for (const r of data.regions) {
+    const row = regions.insertRow();
+    row.insertCell().textContent = r.name;
+    regionCell(row, r.region);
+    regionCell(row, r.region_dots);
+  }
+  const genes = $('locus-genes');
+  const body = genes.tBodies[0];
+  body.replaceChildren();
+  genes.hidden = !data.genes.length;
+  show('locus-genes-note', data.genes.length
+    ? `The links go to fungidb.org. They work for gene IDs that FungiDB uses (the gene IDs of a FungiDB genome); for other genomes FungiDB shows its not-found page.`
+    : 'No gene overlaps the replaced bases, so there is no gene to link.');
+  for (const g of data.genes) {
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    const a = el('a', g.id);
+    a.href = `${GENE_LINK}${encodeURIComponent(g.id)}`;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    cell.appendChild(a);
+    row.insertCell().textContent = g.name || '';
+    row.insertCell().textContent = g.product || '';
+    regionCell(row, g.region);
+    row.insertCell().textContent = g.strand;
+    row.insertCell().textContent = `${g.removed_bases.toLocaleString()} of ${g.gene_bases.toLocaleString()}`;
+    row.insertCell().textContent = `${g.coding_removed.toLocaleString()} of ${g.coding_bases.toLocaleString()}`;
+    row.insertCell().textContent = g.effect;
+  }
+  const tsv = (header, rows) => `${header.join('\t')}\n${rows.map((r) => r.join('\t')).join('\n')}\n`;
+  offer('locus-download-svg', 'insertion_locus.svg', data.svg, 'image/svg+xml');
+  offer('locus-download-genes', 'insertion_genes.tsv', tsv(['gene', 'name', 'product', 'region', 'strand', 'gene_bases', 'removed_bases', 'coding_bases', 'coding_removed', 'effect'],
+    data.genes.map((g) => [g.id, g.name || '', g.product || '', g.region, g.strand, g.gene_bases, g.removed_bases, g.coding_bases, g.coding_removed, g.effect])), 'text/tab-separated-values');
+  offer('locus-download-regions', 'insertion_regions.tsv', tsv(['name', 'region', 'region_dots'], data.regions.map((r) => [r.name, r.region, r.region_dots])), 'text/tab-separated-values');
+}
+
+// ---- Draw from a breakpoint table or an assembly (no reads) ------------------------------------------------------------------------------------
+let breakpointTable = '';
+
+/** Fill the row menu from the table text. Chooses the first row that overlaps the locus. */
+async function loadRows(table) {
+  breakpointTable = table;
+  $('bp-row').replaceChildren();
+  $('bp-row').disabled = true;
+  $('bp-draw').disabled = true;
+  const m = await callWorker({ step: 'breakpoints', table });
+  const rows = JSON.parse(m.rows);
+  if (!rows.length) { show('bp-status', 'No gap between alignments was found in this table.'); return rows; }
+  $('bp-row').replaceChildren(...rows.map((r) => {
+    const option = el('option', `${r.sample || r.contig} · ${r.ref_scaffold}:${r.left}-${r.right} · ${r.query_gap_bp.toLocaleString()} bp in place of ${r.ref_gap_bp.toLocaleString()} bp${r.overlaps_locus ? ' · overlaps the locus' : ''}`);
+    option.value = String(r.index);
+    return option;
+  }));
+  const first = rows.find((r) => r.overlaps_locus) || rows[0];
+  $('bp-row').value = String(first.index);
+  $('bp-row').disabled = false;
+  $('bp-draw').disabled = false;
+  return rows;
+}
+
+async function drawRow() {
+  const gff = gffFile();
+  const m = await callWorker({ step: 'breakpoints', table: breakpointTable, row: Number($('bp-row').value), gff: gff || null, geneLink: GENE_LINK });
+  renderLocus(m.locus, gff
+    ? 'The row of the breakpoint table, drawn in the genes of the reference.'
+    : 'The row of the breakpoint table. No genes file was chosen (section 1), so no genes are drawn.');
+  $('locus-section').scrollIntoView({ block: 'nearest' });
+}
+
+$('bp-file').addEventListener('change', async () => {
+  const file = $('bp-file').files[0];
+  breakpointTable = '';
+  $('bp-row').replaceChildren();
+  $('bp-row').disabled = true;
+  $('bp-draw').disabled = true;
+  show('bp-status', '');
+  if (!file) return;
+  try {
+    if (file.size > 50e6) throw new Error('the file is larger than 50 MB');
+    const rows = await loadRows(await file.text());
+    if (rows.length) show('bp-status', `${rows.length} row${rows.length === 1 ? '' : 's'} read.`);
+  } catch (error) {
+    breakpointTable = '';
+    show('bp-status', `Error: ${error.message}`);
+  }
+});
+
+$('bp-draw').addEventListener('click', async () => {
+  if (!breakpointTable || running || loading) { if (loading) show('bp-status', 'Wait until the genome has loaded.'); return; }
+  show('bp-status', 'Drawing');
+  try {
+    await drawRow();
+    show('bp-status', 'Done.');
+  } catch (error) {
+    show('bp-status', `Error: ${error.message}`);
+  }
+});
+
+/** The locus box: `SCAFFOLD:START-END` or `SCAFFOLD:START..END` is a region; anything else is a gene name. */
+function locusOfForm() {
+  const text = $('bp-locus').value.trim();
+  if (!text) throw new Error('Type the locus: a region such as scf_000011:282,234-285,136, or a gene name.');
+  const m = text.match(/^(\S+):([\d,]+)(?:-|\.\.)([\d,]+)$/);
+  if (!m) return { gene: text };
+  const [start, end] = [Number(m[2].replace(/,/g, '')), Number(m[3].replace(/,/g, ''))];
+  if (!(start >= 1 && end >= start)) throw new Error('Type a region whose start is 1 or more and not above its end.');
+  return { locus: { contig: m[1], start, end } };
+}
+
+$('bp-find').addEventListener('click', async () => {
+  if (running || loading) { show('bp-status', loading ? 'Wait until the genome has loaded.' : 'Wait until the other run is done.'); return; }
+  const assembly = $('bp-assembly').files[0];
+  const reference = refFile();
+  if (!reference) { show('bp-status', 'Choose the reference genome first (section 1).'); return; }
+  if (!assembly) { show('bp-status', 'Choose the assembly (a FASTA file).'); return; }
+  let wanted;
+  try { wanted = locusOfForm(); } catch (error) { show('bp-status', error.message); return; }
+  const gff = gffFile();
+  if (wanted.gene && !gff) { show('bp-status', 'Choose the GFF3 file that holds the gene (section 1), or type a region.'); return; }
+  running = true;
+  $('bp-find').disabled = true;
+  try {
+    const sample = assembly.name.replace(/\.gz$/, '').replace(/\.(fasta|fa|fna)$/, '').replace(/\.sorted$/, '') || 'assembly';
+    const m = await callWorker({ step: 'assembly', reference, assembly, gff: gff || null, sample, preset: $('bp-preset').value, ...wanted },
+      (p) => show('bp-status', p.text || ''));
+    const result = JSON.parse(m.result);
+    offer('bp-download-table', 'breakpoint_summary.tsv', result.table, 'text/tab-separated-values');
+    offer('bp-download-fasta', 'inserted_sequences.fasta', result.fasta, 'text/plain');
+    const where = `${m.locus.contig}:${m.locus.start.toLocaleString()}-${m.locus.end.toLocaleString()}`;
+    if (result.contigs_near_locus === 0) { show('bp-status', `No contig of the assembly aligns near ${where}: the assembly does not reach this locus (or it is too different; try a wider setting).`); return; }
+    const rows = await loadRows(result.table);
+    const hits = rows.filter((r) => r.overlaps_locus);
+    if (!hits.length) { show('bp-status', `${result.contigs_near_locus} contig(s) align near ${where}, but no insertion or deletion overlaps it. Other gaps nearby: ${rows.length}.`); return; }
+    await drawRow();
+    show('bp-status', `${hits.length} gap${hits.length === 1 ? '' : 's'} overlap${hits.length === 1 ? 's' : ''} ${where}.`);
+  } catch (error) {
+    show('bp-status', `Error: ${error.message}`);
+  } finally {
+    running = false;
+    $('bp-find').disabled = false;
+  }
+});

@@ -2,6 +2,7 @@
 //! This crate does no file I/O and starts no threads.
 
 mod annotate;
+mod breakpoints;
 mod caller;
 mod combine;
 mod confirm;
@@ -11,6 +12,7 @@ mod freebayes;
 mod depth_plot;
 mod genome_plot;
 mod layout;
+mod locus;
 mod normalize;
 mod pairing;
 mod parse;
@@ -20,6 +22,8 @@ mod stats;
 mod vcf;
 pub use combine::{combine, Cell, Combined, CombineInput, CombineOptions, Row, Status, StrainSummary};
 pub use confirm::{find_gene, CassetteSummary, Check, CheckStatus, ConfirmOptions, Confirmer, End, Junction, Orientation, Report, Side, Site, Spanning, Target, Verdict};
+pub use breakpoints::{breakpoint_table_tsv, inserted_sequences_fasta, AssemblyBreakpoints, BreakpointFinder, BreakpointOptions};
+pub use locus::{breakpoint_rows_json, locus_input_from_report, locus_view, locus_view_gff, parse_breakpoint_table, region_dots, region_text, BreakpointRow, Locus, LocusGene, LocusInput, NamedRegion};
 pub use context::{context_text, sequence_context, SequenceContext};
 pub use caller::{classify, Call, Caller, CallerConfig, DepthWindow, VariantClass};
 pub use annotate::{annotate_text, annotate_vcf, classify_effect, Annotation, Effect, Genome, Transcript};

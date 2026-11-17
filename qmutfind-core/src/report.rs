@@ -5,9 +5,9 @@ use std::io::BufRead;
 
 use crate::{Annotation, Transcript};
 
-const WIDTH: f64 = 1000.0;
-const LEFT: f64 = 60.0;
-const PLOT: f64 = 880.0;
+pub(crate) const WIDTH: f64 = 1000.0;
+pub(crate) const LEFT: f64 = 60.0;
+pub(crate) const PLOT: f64 = 880.0;
 /// The width of one character of a label, in pixels at font size 10 (an estimate for the label placement).
 const LABEL_CHAR_WIDTH: f64 = 6.0;
 /// The distance between the direction chevrons on a gene, and the length of the gene arrowhead, in pixels.
@@ -125,7 +125,7 @@ fn colour(effect: &str) -> &'static str {
     }
 }
 
-fn group(n: u64) -> String {
+pub(crate) fn group(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -137,38 +137,43 @@ fn group(n: u64) -> String {
     out
 }
 
-struct Scale {
-    start: u64,
-    length: f64,
+pub(crate) struct Scale {
+    pub(crate) start: u64,
+    pub(crate) length: f64,
 }
 
 impl Scale {
     /// The x position of the centre of base `pos`.
-    fn centre(&self, pos: u64) -> f64 {
+    pub(crate) fn centre(&self, pos: u64) -> f64 {
         LEFT + (pos as f64 - self.start as f64 + 0.5) / self.length * PLOT
     }
 
     /// The x range covered by bases `from..=to`, clipped to the plot.
-    fn span(&self, from: u64, to: u64) -> (f64, f64) {
+    pub(crate) fn span(&self, from: u64, to: u64) -> (f64, f64) {
         let x = |p: f64| (LEFT + (p - self.start as f64) / self.length * PLOT).clamp(LEFT, LEFT + PLOT);
         (x(from as f64), x(to as f64 + 1.0))
     }
 }
 
-fn draw_transcript(svg: &mut String, tx: &Transcript, scale: &Scale, region: &Region, y: f64) {
+/// `link` makes the gene label a link (opens in a new tab).
+pub(crate) fn draw_transcript(svg: &mut String, tx: &Transcript, scale: &Scale, region: &Region, y: f64, link: Option<&str>) {
     let strand = if tx.strand == crate::annotate::Strand::Minus { "-" } else { "+" };
     svg.push_str(&format!(
         "<g class=\"transcript\" data-strand=\"{strand}\" data-id=\"{}\">",
         escape(&tx.id)
     ));
-    svg.push_str(&format!(
+    let label = format!(
         "<text x=\"{LEFT}\" y=\"{:.1}\" font-size=\"13\" style=\"fill:var(--fg,#222)\">{}</text>",
         y + 6.0,
         escape(&match &tx.gene_name {
             Some(name) => format!("{name} ({})", tx.gene),
             None => tx.gene.clone(),
         })
-    ));
+    );
+    match link {
+        Some(href) => svg.push_str(&format!("<a class=\"gene-link\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{label}</a>", escape(href))),
+        None => svg.push_str(&label),
+    }
     let (x1, x2) = scale.span(tx.exons.first().map(|e| e.0).unwrap_or(0).max(region.start), tx.exons.last().map(|e| e.1).unwrap_or(0).min(region.end));
     svg.push_str(&format!(
         "<line class=\"intron\" x1=\"{x1:.1}\" y1=\"{:.1}\" x2=\"{x2:.1}\" y2=\"{:.1}\" style=\"stroke:var(--fg,#222)\" stroke-width=\"1\"/>",
@@ -265,7 +270,7 @@ pub fn render_locus_svg(ann: &Annotation, variants: &[ReportVariant], region: &R
 
     let mut y = 50.0;
     for tx in &transcripts {
-        draw_transcript(&mut body, tx, &scale, region, y);
+        draw_transcript(&mut body, tx, &scale, region, y, None);
         y += 50.0;
     }
 

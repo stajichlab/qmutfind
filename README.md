@@ -123,6 +123,28 @@ only the first reads of each file). The page shows a verdict, the junction table
 of the report, the JSON, the junction table and the depth table. Its text report is the same as the command line report (a test compares them). The files stay in the browser; nothing is sent to a server.
 A construct with homology arms is cut and the target is inferred there too; a note says what was done.
 
+**Drawing the insertion in the genes.** With `--gff`, `qmutfind confirm` also writes `PREFIX.locus.svg` (the drawing), `PREFIX.locus_genes.tsv` (the genes that the insertion hits) and `PREFIX.locus_regions.tsv`, and prints the regions and the genes.
+The drawing shows the reference with its genes on top and the allele below. The inserted sequence is drawn in place of the reference bases that it replaces, at the same scale as the reference, so the allele row is shorter or longer by the net change.
+`--gene-link URL_START` makes the name of each hit gene a link (for example `--gene-link https://fungidb.org/gene/`; the page uses that address). A gene that the insertion does not touch gets no link. The genes come from transcripts (exon or CDS lines), so a GFF3 with gene lines only draws no genes.
+Regions are given as `SCAFFOLD:START-END` and `SCAFFOLD:START..END`, ready to paste into a genome browser or into `--target`; the text report has them as `replaced region (copy)` and `flanks (copy)`.
+An assembly gives the same view without reads: `qmutfind locus --breakpoints breakpoint_summary.tsv --gff genes.gff3 --out-prefix P [--row N]` draws one row of a table of breakpoints (columns `ref_scaffold`, `ref_left_end` and `ref_right_start`: the last reference base before and the first after the insertion; `ref_gap_bp`; `query_gap_bp`: the inserted bases; optional `sample`, `call`, `overlaps_locus`). Without `--row` it draws the first row that overlaps the locus.
+In `confirm_allele.html` the section "Draw an insertion from an assembly (no reads)" does this (it can also align the assembly itself), and the section "The insertion in the genome" shows the drawing after a read-based run too, with the regions (each with a Copy button) and the table of genes.
+
+**Finding the insertion in an assembly: `qmutfind breakpoints`.** `qmutfind confirm` starts from reads and a cassette sequence that you give. When you have an assembly of the strain instead, `qmutfind breakpoints` finds the insertion, deletion or replacement
+near a locus and writes the sequence that was inserted:
+
+```bash
+qmutfind breakpoints --reference genome.fa.gz --gff genes.gff3.gz --gene AFUB_101460 \
+  --assembly mutant1=assembly1.fasta.gz --assembly assembly2.fasta.gz --out-prefix breakpoints/pfkA
+```
+
+The locus is `--locus SCAFFOLD:START-END` (`..` is accepted too) or `--gene NAME --gff GFF3`. `--assembly [NAME=]FASTA` can be given several times; the name is the file name without `.fasta.gz` when no NAME is given. `--preset asm5|asm10|asm20` says how different the assembly and the reference are (default `asm5`, 5% or less).
+`--flank` (default 50,000) is how far from the locus alignments are used, `--min-aln` (default 1,000) the smallest alignment, `--min-gap` (default 50) the smallest gap.
+Every assembly contig is aligned to the reference with `rammap` (the Rust port of minimap2 that `qmutfind call` also uses), so no program has to be installed and the browser page does the same alignment in WebAssembly. The alignments near the locus are cut where the two sequences disagree: a long insertion or deletion, or a run of different bases
+(an aligner keeps an insertion of a few kb in one alignment, and aligns a replacement of the same length straight through as mismatches). Each gap between two parts is reported with the last reference base before it, the first after it, the bases removed from the reference, the bases inserted, and a call (`insertion`, `deletion` or `replacement`).
+Outputs: `PREFIX.breakpoint_summary.tsv` (the table that `qmutfind locus` and the assembly section of `confirm_allele.html` read), `PREFIX.inserted_sequences.fasta` (the inserted sequence of each gap, on the reference strand), and, with `--gff`, a drawing `PREFIX.NAME.locus.svg` and `PREFIX.NAME.locus_genes.tsv` for the first gap of each assembly that overlaps the locus.
+The inserted sequence can be given to `qmutfind confirm --construct` to check it with reads. The command finds gaps by alignment only: it does not say what the inserted sequence is, and it does not use reads. It aligns whole assemblies, so it takes about 8 seconds per 30 Mb assembly on one CPU (the browser is slower).
+
 **What was tested.** Simulated 30x short reads from a 120 kb genome with a 2 kb cassette: an intact replacement (24 random genomes, both orientations, replaced lengths 300 to 2,800 bases: the flanks were
 exact and the verdict *confirmed* every time), a reversed cassette, a point change and a deletion inside the cassette, a missing stretch inside the cassette, a second copy elsewhere, a half wild-type
 population, an insertion away from the target, no insertion, and 2x coverage (inconclusive). Donors with homology arms of 60 to 800 bases in both orientations (16 random genomes): the arms were cut off, the target was inferred and

@@ -5,6 +5,16 @@ The measurements behind each entry are in [PLAN.md](PLAN.md).
 
 ## Unreleased
 
+### Added: locus drawing of an insertion (2026-11-16)
+
+- **Locus drawing** (core module `locus`, `qmutfind locus`, the output of `qmutfind confirm --gff`, and the section "The insertion in the genome" of `confirm_allele.html`): the reference with its genes on top,
+  the allele below, and the inserted sequence drawn in place of the reference bases that it replaces. Both rows use the same bases per pixel, so the allele row is shorter or longer by the net change.
+  The expected target is a dashed box, the removed bases are shaded, and the junctions, the cassette direction and the bases that the junctions share are labelled.
+- **Genes hit** are listed with the bases and the coding bases removed and what happens (`3′ end removed`, `entire coding sequence removed`, `internal part removed, gene interrupted`, `whole gene removed`, `interrupted by the insertion`; start and stop codons are named). Only a gene that the insertion hits gets a link, to `https://fungidb.org/gene/<ID>`. The drawing is built from transcripts (exons or CDS lines), so a GFF3 with gene lines only shows no genes.
+- **Copyable regions** as `SCAFFOLD:START-END` and `SCAFFOLD:START..END` (the removed bases, the two flank bases, the target, the drawn window, and each gene): in the page with Copy buttons, in the text report of `confirm` (`replaced region (copy)`, `flanks (copy)`), in its JSON (`replaced_region`, `replaced_region_dots`), and in `PREFIX.locus_regions.tsv` and `PREFIX.locus_genes.tsv`.
+- **`qmutfind breakpoints`** (core module `breakpoints`, WASM `find_breakpoints`): aligns assemblies to the reference with `rammap` (the `asm5`, `asm10` and `asm20` presets), cuts the alignments near a locus where the sequences disagree (long insertions and deletions, runs of different bases) and reports each gap with its flanks, sizes, call and inserted sequence: `breakpoint_summary.tsv`, `inserted_sequences.fasta`, and a locus drawing with `--gff`. Replaces the Python script `scripts/find_breakpoints.py` (which called minimap2 and missed plain insertions and deletions inside one alignment); on the 11 pfkA and laeA assemblies it gave the same rows at the locus.
+- **Draw from an assembly:** `qmutfind locus --breakpoints breakpoint_summary.tsv --gff genes.gff3` and the page section "Draw an insertion from an assembly (no reads)" read a table (the page can also align an assembly itself) of breakpoints (one row per gap between two alignment blocks of an assembly against the reference; columns `ref_scaffold`, `ref_left_end`, `ref_right_start`, `ref_gap_bp`, `query_gap_bp`) and draw the chosen row.
+
 ### Added: command line and core
 
 - **`qmutfind confirm`** (core module `confirm`): confirm a knock-out or replacement allele. Reads are mapped to the genome plus the introduced cassette; split reads give the junctions where the

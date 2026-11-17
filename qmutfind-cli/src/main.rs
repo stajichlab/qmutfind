@@ -516,12 +516,153 @@ fn confirm_command(args: &[String]) -> Result<(), String> {
     write("confirm.json", report.to_json())?;
     write("junctions.tsv", report.junctions_tsv())?;
     write("cassette_depth.tsv", report.depth_tsv())?;
+    // With a GFF3 file, draw the insertion in its genes and list the genes that it hits.
+    let mut locus_note = String::new();
+    if let (Some(gff), Some(input)) = (flags.get("gff"), qmutfind_core::locus_input_from_report(&report)) {
+        let ann = qmutfind_core::Annotation::from_gff(open_input(gff)?).map_err(|e| format!("{gff}: {e}"))?;
+        let locus = qmutfind_core::locus_view(&input, &ann, flags.get("gene-link").map(String::as_str));
+        write("locus.svg", locus.svg.clone())?;
+        write("locus_genes.tsv", locus.genes_tsv())?;
+        write("locus_regions.tsv", locus.regions_tsv())?;
+        locus_note = locus_text(&locus);
+    }
     print!("{}", report.to_text());
+    print!("{locus_note}");
     std::io::stdout().flush().map_err(|e| e.to_string())?;
     let code = match report.verdict() { Verdict::Confirmed => 0, Verdict::NotConfirmed => 3, Verdict::Inconclusive => 4 };
     if code != 0 && !flags.contains_key("always-exit-zero") {
         std::process::exit(code);
     }
+    Ok(())
+}
+
+/// `qmutfind breakpoints`: where do assemblies differ from the reference near one locus (an insertion, a deletion or a replacement)?
+/// Every assembly contig is aligned to the reference (the `rammap` library, `asm5` by default). `--assembly [NAME=]FASTA` can be given several times.
+fn breakpoints_command(args: &[String]) -> Result<(), String> {
+    use qmutfind_core::{breakpoint_table_tsv, find_gene, inserted_sequences_fasta, parse_region, BreakpointFinder, BreakpointOptions};
+    // `--assembly` repeats, so it is taken out before the other options are read.
+    let mut assemblies: Vec<String> = Vec::new();
+    let mut rest: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--assembly" {
+            assemblies.push(it.next().ok_or("missing value for --assembly")?.clone());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    let flags = parse_flags(&rest)?;
+    if assemblies.is_empty() {
+        return Err("missing required option --assembly [NAME=]FASTA (it can be given several times)".to_string());
+    }
+    let reference_path = required(&flags, "reference")?;
+    let prefix = required(&flags, "out-prefix")?;
+    let locus = match (flags.get("locus"), flags.get("gene")) {
+        (Some(_), Some(_)) => return Err("give --locus or --gene, not both".to_string()),
+        (Some(text), None) => parse_region(&text.replace("..", "-")).map_err(|e| format!("--locus: {e}"))?,
+        (None, Some(gene)) => {
+            let gff = flags.get("gff").ok_or_else(|| "--gene needs --gff: the GFF3 file that holds the gene".to_string())?;
+            let t = find_gene(open_input(gff)?, gene).map_err(|e| format!("{gff}: {e}"))?;
+            qmutfind_core::Region { contig: t.contig, start: t.start, end: t.end }
+        }
+        (None, None) => return Err("give the locus: --locus SCAFFOLD:START-END, or --gene NAME with --gff GFF3".to_string()),
+    };
+    let number = |name: &str, default: u64| -> Result<u64, String> {
+        match flags.get(name) {
+            None => Ok(default),
+            Some(v) => v.parse::<u64>().map_err(|_| format!("--{name} must be a whole number, not {v}")),
+        }
+    };
+    let defaults = BreakpointOptions::default();
+    let options = BreakpointOptions { flank: number("flank", defaults.flank)?, min_aln: number("min-aln", defaults.min_aln)?, min_gap: number("min-gap", defaults.min_gap)? };
+    let mut reference = Vec::new();
+    open_input(reference_path)?.read_to_end(&mut reference).map_err(|e| format!("{reference_path}: {e}"))?;
+    let finder = BreakpointFinder::new(&reference, flags.get("preset").map(String::as_str).unwrap_or("asm5"))?;
+    drop(reference);
+    let ann = match flags.get("gff") {
+        Some(gff) => Some(qmutfind_core::Annotation::from_gff(open_input(gff)?).map_err(|e| format!("{gff}: {e}"))?),
+        None => None,
+    };
+    let mut all_rows = Vec::new();
+    for spec in &assemblies {
+        let (name, path) = match spec.split_once('=') {
+            Some((n, p)) => (n.to_string(), p.to_string()),
+            None => {
+                let file = std::path::Path::new(spec).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| spec.clone());
+                let stem = ["fasta", "fa", "fna"].iter().find_map(|ext| file.strip_suffix(&format!(".{ext}.gz")).or_else(|| file.strip_suffix(&format!(".{ext}.zst"))).or_else(|| file.strip_suffix(&format!(".{ext}")))).unwrap_or(&file);
+                (stem.strip_suffix(".sorted").unwrap_or(stem).to_string(), spec.clone())
+            }
+        };
+        let mut bytes = Vec::new();
+        open_input(&path)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+        let found = finder.assembly(&name, &bytes, &locus, &options).map_err(|e| format!("{path}: {e}"))?;
+        let hits: Vec<_> = found.rows.iter().filter(|r| r.overlaps_locus).collect();
+        if found.contigs_near_locus == 0 {
+            println!("{name}: no alignment near {}:{}-{}", locus.contig, locus.start, locus.end);
+        } else if hits.is_empty() {
+            println!("{name}: alignments present, no gap overlapping {}:{}-{}", locus.contig, locus.start, locus.end);
+        }
+        for r in &hits {
+            println!("{name}: {} of {} bp (reference lost {} bp) between {}:{} and {} on {}", r.call, r.query_gap_bp, r.ref_gap_bp, r.ref_scaffold, r.ref_left_end, r.ref_right_start, r.contig);
+        }
+        // With genes, draw the first gap that overlaps the locus.
+        if let (Some(ann), Some(first)) = (&ann, hits.first()) {
+            let locus_view = qmutfind_core::locus_view(&first.locus_input(), ann, None);
+            std::fs::write(format!("{prefix}.{name}.locus.svg"), &locus_view.svg).map_err(|e| format!("{prefix}.{name}.locus.svg: {e}"))?;
+            std::fs::write(format!("{prefix}.{name}.locus_genes.tsv"), locus_view.genes_tsv()).map_err(|e| format!("{prefix}.{name}.locus_genes.tsv: {e}"))?;
+        }
+        all_rows.extend(found.rows);
+    }
+    std::fs::write(format!("{prefix}.breakpoint_summary.tsv"), breakpoint_table_tsv(&all_rows)).map_err(|e| format!("{prefix}.breakpoint_summary.tsv: {e}"))?;
+    std::fs::write(format!("{prefix}.inserted_sequences.fasta"), inserted_sequences_fasta(&all_rows)).map_err(|e| format!("{prefix}.inserted_sequences.fasta: {e}"))?;
+    println!("wrote {prefix}.breakpoint_summary.tsv and {prefix}.inserted_sequences.fasta");
+    Ok(())
+}
+
+/// The regions and the hit genes of a locus as text that can be copied.
+fn locus_text(locus: &qmutfind_core::Locus) -> String {
+    let mut out = String::from("\nRegions (copy):\n");
+    for r in &locus.regions {
+        out.push_str(&format!("  {}: {}   {}\n", r.name, r.text(), r.dots()));
+    }
+    if locus.genes.is_empty() {
+        out.push_str("\nNo gene overlaps the replaced bases.\n");
+    } else {
+        out.push_str("\nGenes hit by the insertion:\n");
+        for g in &locus.genes {
+            out.push_str(&format!(
+                "  {}{} {} ({}): {}; {} of {} gene bases and {} of {} coding bases removed\n",
+                g.id, g.name.as_ref().map(|n| format!(" ({n})")).unwrap_or_default(), g.region(), g.strand, g.effect, g.removed_bases, g.gene_bases, g.coding_removed, g.coding_bases
+            ));
+        }
+    }
+    out
+}
+
+/// `qmutfind locus`: draw an insertion from a breakpoint table (`breakpoint_summary.tsv`, one row per gap between assembly alignments).
+/// `--row N` picks a row (1 is the first data line); without it the first row that overlaps the locus is drawn.
+fn locus_command(args: &[String]) -> Result<(), String> {
+    let flags = parse_flags(args)?;
+    let table_path = required(&flags, "breakpoints")?;
+    let gff_path = required(&flags, "gff")?;
+    let prefix = required(&flags, "out-prefix")?;
+    let mut text = String::new();
+    open_input(table_path)?.read_to_string(&mut text).map_err(|e| format!("{table_path}: {e}"))?;
+    let rows = qmutfind_core::parse_breakpoint_table(&text).map_err(|e| format!("{table_path}: {e}"))?;
+    let row = match flags.get("row") {
+        Some(n) => {
+            let n: usize = n.parse().ok().filter(|n| *n >= 1).ok_or_else(|| format!("--row must be a number from 1, not {n}"))?;
+            rows.get(n - 1).ok_or_else(|| format!("--row {n}: the table has {} rows", rows.len()))?
+        }
+        None => rows.iter().find(|r| r.overlaps_locus).or(rows.first()).ok_or("the breakpoint table has no rows")?,
+    };
+    let ann = qmutfind_core::Annotation::from_gff(open_input(gff_path)?).map_err(|e| format!("{gff_path}: {e}"))?;
+    let locus = qmutfind_core::locus_view(&row.locus_input(), &ann, flags.get("gene-link").map(String::as_str));
+    let write = |suffix: &str, text: String| std::fs::write(format!("{prefix}.{suffix}"), text).map_err(|e| format!("{prefix}.{suffix}: {e}"));
+    write("locus.svg", locus.svg.clone())?;
+    write("locus_genes.tsv", locus.genes_tsv())?;
+    write("locus_regions.tsv", locus.regions_tsv())?;
+    print!("{} {} insertion of {} bp, {}\n{}", row.sample, row.call, row.query_gap_bp, row.contig, locus_text(&locus));
     Ok(())
 }
 
@@ -532,6 +673,8 @@ fn main() -> ExitCode {
         Some("annotate") => annotate(&args[1..]),
         Some("context") => context(&args[1..]),
         Some("confirm") => confirm_command(&args[1..]),
+        Some("locus") => locus_command(&args[1..]),
+        Some("breakpoints") => breakpoints_command(&args[1..]),
         Some("stats") => stats(&args[1..]),
         Some("combine") => combine_command(&args[1..]),
         Some("report") => report(&args[1..]),
@@ -539,7 +682,7 @@ fn main() -> ExitCode {
         Some("depth-plot") => depth_plot(&args[1..]),
         Some("fetch") => fetch::fetch(&args[1..]),
         Some(other) => Err(format!("unknown command: {other}")),
-        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank BASES] [--html] [--out FILE]\n       qmutfind confirm --reference FA --construct FA --reads FQ [--reads2 FQ] --preset short|long (--target CONTIG:START-END | --gene NAME --gff GFF3) --out-prefix PREFIX\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
+        None => Err("usage: qmutfind call --reference FA --reads FQ --sample NAME --preset short|long --out VCF\n       qmutfind annotate --vcf VCF --reference FA [--gff GFF3] --out VCF\n       qmutfind context --reference FA [--gff GFF3] --variant CONTIG:POS:REF:ALT [--flank BASES] [--html] [--out FILE]\n       qmutfind confirm --reference FA --construct FA --reads FQ [--reads2 FQ] --preset short|long (--target CONTIG:START-END | --gene NAME --gff GFF3) --out-prefix PREFIX\n       qmutfind breakpoints --reference FA --assembly [NAME=]FASTA ... (--locus SCAFFOLD:START-END | --gene NAME --gff GFF3) [--preset asm5|asm10|asm20] --out-prefix PREFIX\n       qmutfind locus --breakpoints TSV --gff GFF3 [--row N] [--gene-link URL_START] --out-prefix PREFIX\n       qmutfind stats --vcf VCF --out-prefix PREFIX [--window BASES]\n       qmutfind combine --strain NAME=VCF[,BED[,EVIDENCE_VCF]] ... [--parent NAME] [--min-depth DEPTH] --out-prefix PREFIX\n       qmutfind report --vcf VCF [--gff GFF3] --region CONTIG:START-END [--title TEXT] --out HTML\n       qmutfind plot --vcf VCF [--reference FA] [--order input|length|name] --out SVG\n       qmutfind depth-plot --bed BED [--vcf VCF] [--reference FA] [--order input|length|name] --out SVG\n       qmutfind fetch --organism NAME --out-dir DIR [--eupathdb-key-file FILE]   (the FASTA needs a key: EUPATHDB_KEY or --eupathdb-key-file)".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
