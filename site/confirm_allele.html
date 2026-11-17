@@ -114,9 +114,21 @@
 
 <section class="panel" id="breakpoint-section">
   <h2>Draw an insertion from an assembly (no reads)</h2>
-  <p class="hint">If you assembled the strain and aligned the assembly to the reference, give the table of breakpoints (<code>breakpoint_summary.tsv</code>, one row per gap between two alignments).
-  The page draws the row you choose in the genes of the reference (section 1; the genes file is optional). The table needs the columns <code>ref_scaffold</code>, <code>ref_left_end</code>, <code>ref_right_start</code>, <code>ref_gap_bp</code> and <code>query_gap_bp</code>.</p>
+  <p class="hint">If you assembled the strain, the page can align the assembly to the reference (section 1; the genes file is optional) and find the insertion near a locus. It aligns in your browser, so a whole genome takes a while.
+  Or give the table of breakpoints that <code>qmutfind breakpoints</code> wrote (<code>breakpoint_summary.tsv</code>). The page then draws the row you choose in the genes of the reference.</p>
   <div class="form">
+    <label for="bp-assembly">Assembly (FASTA, plain or .gz)</label>
+    <input id="bp-assembly" type="file">
+    <label for="bp-locus">Locus to look at: a region (<code>SCAFFOLD:START-END</code> or <code>SCAFFOLD:START..END</code>) or a gene name (needs the genes file)</label>
+    <input id="bp-locus" type="text" size="50" autocomplete="off">
+    <label for="bp-preset">How different the assembly and the reference are</label>
+    <select id="bp-preset">
+      <option value="asm5">Same species or strain (about 5% or less)</option>
+      <option value="asm10">Up to about 10%</option>
+      <option value="asm20">Up to about 20%</option>
+    </select>
+    <p><button id="bp-find" type="button" class="primary">Find the insertion</button></p>
+    <p class="hint">or</p>
     <label for="bp-file">Breakpoint table (TSV)</label>
     <input id="bp-file" type="file" accept=".tsv,.txt,.csv,text/tab-separated-values,text/plain">
     <label for="bp-row">Row to draw</label>
@@ -124,6 +136,10 @@
     <p><button id="bp-draw" type="button" class="primary" disabled>Draw the insertion</button></p>
   </div>
   <div id="bp-status" class="readout" role="status"></div>
+  <p class="downloads">
+    <a id="bp-download-table" hidden>Download the breakpoint table (TSV)</a>
+    <a id="bp-download-fasta" hidden>Download the inserted sequences (FASTA)</a>
+  </p>
 </section>
 
 <section class="panel" id="confirm-target-section">

@@ -167,6 +167,22 @@ impl Confirmation {
     }
 }
 
+/// Where an assembly differs from the reference near one locus (see `qmutfind breakpoints`): every contig of `assembly_fasta` is aligned to `reference_fasta`
+/// (the locus is `contig:start-end`, 1-based; `preset` is asm5, asm10 or asm20). Returns JSON `{"table":..,"fasta":..,"contigs_near_locus":N}`: the text of
+/// `breakpoint_summary.tsv`, the inserted sequences as FASTA, and the number of assembly contigs that reach the locus.
+#[wasm_bindgen]
+pub fn find_breakpoints(reference_fasta: &[u8], assembly_fasta: &[u8], sample: &str, contig: &str, start: f64, end: f64, preset: &str) -> Result<String, JsError> {
+    if !(start >= 1.0 && end >= start && end < 4.0e9) {
+        return Err(JsError::new("the locus must be a region with 1 <= start <= end"));
+    }
+    let finder = qmutfind_core::BreakpointFinder::new(reference_fasta, preset).map_err(|e| JsError::new(&e))?;
+    let locus = qmutfind_core::Region { contig: contig.to_string(), start: start as u64, end: end as u64 };
+    finder
+        .assembly(sample, assembly_fasta, &locus, &qmutfind_core::BreakpointOptions::default())
+        .map(|found| found.to_json())
+        .map_err(|e| JsError::new(&e))
+}
+
 /// The rows of a breakpoint table (`breakpoint_summary.tsv`) as JSON, for a menu.
 #[wasm_bindgen]
 pub fn breakpoint_rows(table: &str) -> Result<String, JsError> {

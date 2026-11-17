@@ -82,6 +82,14 @@ pub struct BreakpointRow {
     pub call: String,
     /// The table says whether the gap overlaps the locus that the user asked about.
     pub overlaps_locus: bool,
+    /// The strand of the alignments: `+` when the assembly contig runs the same way as the reference.
+    pub strand: char,
+    /// The lower mapping quality of the two alignments that border the gap.
+    pub min_mapq: u8,
+    /// The inserted sequence on the reference strand. `None` when the row was read from a table, or when nothing was inserted.
+    pub inserted: Option<String>,
+    /// The name of the inserted sequence in `inserted_sequences.fasta` (empty when nothing was inserted).
+    pub insert_id: String,
 }
 
 impl BreakpointRow {
@@ -109,6 +117,7 @@ pub fn parse_breakpoint_table(text: &str) -> Result<Vec<BreakpointRow>, String> 
     let need = |name: &str| col(name).ok_or_else(|| format!("the breakpoint table has no column {name}"));
     let (c_scaf, c_left, c_right, c_ref, c_query) = (need("ref_scaffold")?, need("ref_left_end")?, need("ref_right_start")?, need("ref_gap_bp")?, need("query_gap_bp")?);
     let (c_sample, c_contig, c_call, c_overlap) = (col("sample"), col("contig"), col("call"), col("overlaps_locus"));
+    let (c_strand, c_mapq, c_id) = (col("strand"), col("min_mapq"), col("insert_fasta_id"));
     let mut rows = Vec::new();
     for (i, line) in lines.enumerate() {
         let f: Vec<&str> = line.split('\t').collect();
@@ -125,6 +134,10 @@ pub fn parse_breakpoint_table(text: &str) -> Result<Vec<BreakpointRow>, String> 
             query_gap_bp: num(c_query, "query_gap_bp")?,
             call: text_of(c_call),
             overlaps_locus: text_of(c_overlap) == "yes",
+            strand: if text_of(c_strand) == "-" { '-' } else { '+' },
+            min_mapq: text_of(c_mapq).parse().unwrap_or(0),
+            inserted: None,
+            insert_id: text_of(c_id),
         });
     }
     Ok(rows)
@@ -268,7 +281,7 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
-fn json_string(text: &str) -> String {
+pub(crate) fn json_string(text: &str) -> String {
     let mut out = String::from("\"");
     for c in text.chars() {
         match c {

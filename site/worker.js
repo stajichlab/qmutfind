@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, Confirmation, find_gene, breakpoint_rows, breakpoint_locus, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
+import init, { Session, Confirmation, find_gene, breakpoint_rows, breakpoint_locus, find_breakpoints, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -248,7 +248,22 @@ async function breakpointStep({ table, row, gff, geneLink }) {
   postMessage({ step: 'breakpoints', type: 'done', rows, locus: breakpoint_locus(table, row, gffBytes, geneLink || undefined) });
 }
 
-const handlers = { run, confirm: confirmStep, breakpoints: breakpointStep, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
+/**
+ * Align an assembly to the reference and find where it differs near a locus (see `find_breakpoints` in the WebAssembly package).
+ * `locus` is a region `{ contig, start, end }`, or `gene` is a gene name that is looked up in `gff`. `assembly` is a FASTA file (plain or .gz).
+ */
+async function assemblyStep({ reference, assembly, gff, locus, gene, sample, preset }) {
+  postMessage({ step: 'assembly', type: 'status', text: 'Reading the reference and the assembly' });
+  const ref = await bytesOf('reference', reference);
+  const asm = await readAll(assembly);
+  let region = locus || null;
+  if (gene) region = JSON.parse(find_gene(await bytesOf('gff', gff), gene));
+  postMessage({ step: 'assembly', type: 'status', text: 'Aligning the assembly to the reference (this takes a while for a whole genome)' });
+  const json = find_breakpoints(ref, asm, sample, region.contig, region.start, region.end, preset);
+  postMessage({ step: 'assembly', type: 'done', result: json, locus: region });
+}
+
+const handlers = { run, confirm: confirmStep, breakpoints: breakpointStep, assembly: assemblyStep, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
 
 self.onmessage = async (event) => {
   const { step } = event.data;

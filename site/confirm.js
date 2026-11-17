@@ -68,7 +68,7 @@ function callWorker(message, onProgress) {
     w.onmessage = (event) => {
       const m = event.data;
       if (m.type === 'status' && message.step === 'confirm') show('confirm-status', m.text);
-      if (m.type === 'status' && message.step === 'breakpoints') show('bp-status', m.text);
+      if (m.type === 'status' && (message.step === 'breakpoints' || message.step === 'assembly')) show('bp-status', m.text);
       if (m.type === 'progress' && onProgress) onProgress(m);
       if (m.type === 'error') { finish(); reject(new Error(m.message)); }
       if (m.type === 'done') { finish(); resolve(m); }
@@ -405,8 +405,39 @@ function renderLocus(json, caption) {
   offer('locus-download-regions', 'insertion_regions.tsv', tsv(['name', 'region', 'region_dots'], data.regions.map((r) => [r.name, r.region, r.region_dots])), 'text/tab-separated-values');
 }
 
-// ---- Draw from a breakpoint table (no reads) --------------------------------------------------------------------------------------------------
+// ---- Draw from a breakpoint table or an assembly (no reads) ------------------------------------------------------------------------------------
 let breakpointTable = '';
+
+/** Fill the row menu from the table text. Chooses the first row that overlaps the locus. */
+async function loadRows(table) {
+  breakpointTable = table;
+  $('bp-row').replaceChildren();
+  $('bp-row').disabled = true;
+  $('bp-draw').disabled = true;
+  const m = await callWorker({ step: 'breakpoints', table });
+  const rows = JSON.parse(m.rows);
+  if (!rows.length) { show('bp-status', 'No gap between alignments was found in this table.'); return rows; }
+  $('bp-row').replaceChildren(...rows.map((r) => {
+    const option = el('option', `${r.sample || r.contig} · ${r.ref_scaffold}:${r.left}-${r.right} · ${r.query_gap_bp.toLocaleString()} bp in place of ${r.ref_gap_bp.toLocaleString()} bp${r.overlaps_locus ? ' · overlaps the locus' : ''}`);
+    option.value = String(r.index);
+    return option;
+  }));
+  const first = rows.find((r) => r.overlaps_locus) || rows[0];
+  $('bp-row').value = String(first.index);
+  $('bp-row').disabled = false;
+  $('bp-draw').disabled = false;
+  return rows;
+}
+
+async function drawRow() {
+  const gff = gffFile();
+  const m = await callWorker({ step: 'breakpoints', table: breakpointTable, row: Number($('bp-row').value), gff: gff || null, geneLink: GENE_LINK });
+  renderLocus(m.locus, gff
+    ? 'The row of the breakpoint table, drawn in the genes of the reference.'
+    : 'The row of the breakpoint table. No genes file was chosen (section 1), so no genes are drawn.');
+  $('locus-section').scrollIntoView({ block: 'nearest' });
+}
+
 $('bp-file').addEventListener('change', async () => {
   const file = $('bp-file').files[0];
   breakpointTable = '';
@@ -417,20 +448,8 @@ $('bp-file').addEventListener('change', async () => {
   if (!file) return;
   try {
     if (file.size > 50e6) throw new Error('the file is larger than 50 MB');
-    breakpointTable = await file.text();
-    const m = await callWorker({ step: 'breakpoints', table: breakpointTable });
-    const rows = JSON.parse(m.rows);
-    if (!rows.length) throw new Error('the table has no rows');
-    $('bp-row').replaceChildren(...rows.map((r) => {
-      const option = el('option', `${r.sample || r.contig} · ${r.ref_scaffold}:${r.left}-${r.right} · ${r.query_gap_bp.toLocaleString()} bp in place of ${r.ref_gap_bp.toLocaleString()} bp${r.overlaps_locus ? ' · overlaps the locus' : ''}`);
-      option.value = String(r.index);
-      return option;
-    }));
-    const first = rows.find((r) => r.overlaps_locus) || rows[0];
-    $('bp-row').value = String(first.index);
-    $('bp-row').disabled = false;
-    $('bp-draw').disabled = false;
-    show('bp-status', `${rows.length} row${rows.length === 1 ? '' : 's'} read.`);
+    const rows = await loadRows(await file.text());
+    if (rows.length) show('bp-status', `${rows.length} row${rows.length === 1 ? '' : 's'} read.`);
   } catch (error) {
     breakpointTable = '';
     show('bp-status', `Error: ${error.message}`);
@@ -439,16 +458,56 @@ $('bp-file').addEventListener('change', async () => {
 
 $('bp-draw').addEventListener('click', async () => {
   if (!breakpointTable || running || loading) { if (loading) show('bp-status', 'Wait until the genome has loaded.'); return; }
-  const gff = gffFile();
   show('bp-status', 'Drawing');
   try {
-    const m = await callWorker({ step: 'breakpoints', table: breakpointTable, row: Number($('bp-row').value), gff: gff || null, geneLink: GENE_LINK });
-    renderLocus(m.locus, gff
-      ? 'The row of the breakpoint table, drawn in the genes of the reference.'
-      : 'The row of the breakpoint table. No genes file was chosen (section 1), so no genes are drawn.');
+    await drawRow();
     show('bp-status', 'Done.');
-    $('locus-section').scrollIntoView({ block: 'nearest' });
   } catch (error) {
     show('bp-status', `Error: ${error.message}`);
+  }
+});
+
+/** The locus box: `SCAFFOLD:START-END` or `SCAFFOLD:START..END` is a region; anything else is a gene name. */
+function locusOfForm() {
+  const text = $('bp-locus').value.trim();
+  if (!text) throw new Error('Type the locus: a region such as scf_000011:282,234-285,136, or a gene name.');
+  const m = text.match(/^(\S+):([\d,]+)(?:-|\.\.)([\d,]+)$/);
+  if (!m) return { gene: text };
+  const [start, end] = [Number(m[2].replace(/,/g, '')), Number(m[3].replace(/,/g, ''))];
+  if (!(start >= 1 && end >= start)) throw new Error('Type a region whose start is 1 or more and not above its end.');
+  return { locus: { contig: m[1], start, end } };
+}
+
+$('bp-find').addEventListener('click', async () => {
+  if (running || loading) { show('bp-status', loading ? 'Wait until the genome has loaded.' : 'Wait until the other run is done.'); return; }
+  const assembly = $('bp-assembly').files[0];
+  const reference = refFile();
+  if (!reference) { show('bp-status', 'Choose the reference genome first (section 1).'); return; }
+  if (!assembly) { show('bp-status', 'Choose the assembly (a FASTA file).'); return; }
+  let wanted;
+  try { wanted = locusOfForm(); } catch (error) { show('bp-status', error.message); return; }
+  const gff = gffFile();
+  if (wanted.gene && !gff) { show('bp-status', 'Choose the GFF3 file that holds the gene (section 1), or type a region.'); return; }
+  running = true;
+  $('bp-find').disabled = true;
+  try {
+    const sample = assembly.name.replace(/\.gz$/, '').replace(/\.(fasta|fa|fna)$/, '').replace(/\.sorted$/, '') || 'assembly';
+    const m = await callWorker({ step: 'assembly', reference, assembly, gff: gff || null, sample, preset: $('bp-preset').value, ...wanted },
+      (p) => show('bp-status', p.text || ''));
+    const result = JSON.parse(m.result);
+    offer('bp-download-table', 'breakpoint_summary.tsv', result.table, 'text/tab-separated-values');
+    offer('bp-download-fasta', 'inserted_sequences.fasta', result.fasta, 'text/plain');
+    const where = `${m.locus.contig}:${m.locus.start.toLocaleString()}-${m.locus.end.toLocaleString()}`;
+    if (result.contigs_near_locus === 0) { show('bp-status', `No contig of the assembly aligns near ${where}: the assembly does not reach this locus (or it is too different; try a wider setting).`); return; }
+    const rows = await loadRows(result.table);
+    const hits = rows.filter((r) => r.overlaps_locus);
+    if (!hits.length) { show('bp-status', `${result.contigs_near_locus} contig(s) align near ${where}, but no insertion or deletion overlaps it. Other gaps nearby: ${rows.length}.`); return; }
+    await drawRow();
+    show('bp-status', `${hits.length} gap${hits.length === 1 ? '' : 's'} overlap${hits.length === 1 ? 's' : ''} ${where}.`);
+  } catch (error) {
+    show('bp-status', `Error: ${error.message}`);
+  } finally {
+    running = false;
+    $('bp-find').disabled = false;
   }
 });

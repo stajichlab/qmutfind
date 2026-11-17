@@ -503,7 +503,7 @@ pub fn find_gene<R: std::io::BufRead>(gff: R, name: &str) -> Result<Target, Stri
             continue;
         }
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || !matches!(f[2], "gene" | "pseudogene") {
+        if f.len() < 9 || !(matches!(f[2], "gene" | "pseudogene") || f[2].ends_with("_gene")) {
             continue;
         }
         let hit = f[8].split(';').filter_map(|kv| kv.trim().split_once('=')).any(|(k, v)| {

@@ -3572,3 +3572,62 @@ def test_a_confirmed_allele_also_draws_the_locus_and_the_cli_writes_the_same_reg
     assert "chrA:50001-51500" in (confirm_inputs / "loc.locus_genes.tsv").read_text()
     regions_tsv = (confirm_inputs / "loc.locus_regions.tsv").read_text()
     assert "removed reference bases\tchrA:50001-51500\tchrA:50001..51500" in regions_tsv
+
+
+def _wait_bp(driver, predicate, wait=120):
+    """Wait for a condition of the assembly section; on a timeout say what the status line shows."""
+    try:
+        WebDriverWait(driver, wait).until(predicate)
+    except Exception:
+        raise AssertionError("timed out; the status line says: " + driver.find_element(By.ID, "bp-status").text)
+
+
+def test_an_assembly_is_aligned_in_the_page_and_the_insertion_is_drawn_from_a_region_or_a_gene_name(driver, server, confirm_inputs):
+    cassette = _cassette()
+    (confirm_inputs / "asm.fa").write_text(f">ctg1\n{CHR_A[:50_000] + cassette + CHR_A[51_500:]}\n")
+    open_confirm(driver, server)
+    set_reference_mode(driver, "upload")
+    driver.find_element(By.ID, "reference").send_keys(str(confirm_inputs / "ref.fa"))
+    driver.find_element(By.ID, "gff").send_keys(str(confirm_inputs / _full_gff(confirm_inputs)))
+    driver.find_element(By.ID, "bp-assembly").send_keys(str(confirm_inputs / "asm.fa"))
+    driver.find_element(By.ID, "bp-locus").send_keys("chrA:50,001..51,500")  # the form that JBrowse and Ensembl write is accepted too
+    driver.find_element(By.ID, "bp-find").click()
+    _wait_bp(driver, lambda d: d.find_element(By.ID, "locus-section").is_displayed())
+
+    info = _locus_info(driver)
+    assert len(info["removed"]) == 1 and abs(int(info["removed"][0][0]) - 50_001) <= 8 and abs(int(info["removed"][0][1]) - 51_500) <= 8, info["removed"]
+    assert abs(int(info["insertion"][0]) - 2000) <= 8
+    assert info["genes"][0]["id"] == "G1" and info["genes"][0]["href"] == "https://fungidb.org/gene/G1"
+    status = driver.find_element(By.ID, "bp-status").text
+    assert "overlap" in status and "chrA:50,001-51,500" in status, status
+    table = driver.execute_script("return document.getElementById('bp-download-table').hidden;")
+    assert table is False
+    assert driver.execute_script("return document.getElementById('bp-download-fasta').download;") == "inserted_sequences.fasta"
+    assert len(driver.find_elements(By.CSS_SELECTOR, "#bp-row option")) == 1
+
+    # The same, by gene name.
+    driver.find_element(By.ID, "locus-section")
+    box = driver.find_element(By.ID, "bp-locus")
+    box.clear()
+    box.send_keys("G1")
+    driver.find_element(By.ID, "bp-find").click()
+    _wait_bp(driver, lambda d: "overlap" in d.find_element(By.ID, "bp-status").text)
+    assert _locus_info(driver)["genes"][0]["id"] == "G1"
+
+
+def test_an_assembly_that_does_not_reach_the_locus_or_a_missing_input_gives_a_clear_message(driver, server, confirm_inputs):
+    (confirm_inputs / "far.fa").write_text(f">ctg1\n{lcg_bases(7, 5_000)}\n")  # unrelated to the reference
+    open_confirm(driver, server)
+    driver.find_element(By.ID, "bp-find").click()
+    assert "Choose the reference genome first" in driver.find_element(By.ID, "bp-status").text
+    set_reference_mode(driver, "upload")
+    driver.find_element(By.ID, "reference").send_keys(str(confirm_inputs / "ref.fa"))
+    driver.find_element(By.ID, "bp-find").click()
+    assert "Choose the assembly" in driver.find_element(By.ID, "bp-status").text
+    driver.find_element(By.ID, "bp-assembly").send_keys(str(confirm_inputs / "far.fa"))
+    driver.find_element(By.ID, "bp-find").click()
+    assert "Type the locus" in driver.find_element(By.ID, "bp-status").text
+    driver.find_element(By.ID, "bp-locus").send_keys("chrA:50001-51500")
+    driver.find_element(By.ID, "bp-find").click()
+    _wait_bp(driver, lambda d: "does not reach this locus" in d.find_element(By.ID, "bp-status").text, 60)
+    assert driver.find_element(By.ID, "locus-section").is_displayed() is False
