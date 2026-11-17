@@ -1,7 +1,7 @@
 // A module worker: it runs qmutfind on the files the page gives it, in WebAssembly, off the main thread.
 // It answers four kinds of message: run, summarize, annotate and report. Every answer has the same `step`.
 // Build the package first with `pixi run build-wasm-web`.
-import init, { Session, Confirmation, find_gene, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
+import init, { Session, Confirmation, find_gene, breakpoint_rows, breakpoint_locus, annotate, stats, report, context as sequenceContext, genome_plot, depth_plot, combine_tables, version } from './pkg-web/qmutfind_wasm.js?v=__BUILD__';
 
 // fflate (MIT, vendor/fflate.LICENSE) reads gzip files with several members. The built-in
 // DecompressionStream stops with an error on them in Firefox, and tools such as parallel-fastq-dump write them.
@@ -147,7 +147,7 @@ async function fetchReads({ url, maxReads, maxKept, maxDownload, label }) {
  * Confirm an introduced allele: map the reads to the genome plus the construct and report where the construct joins the genome and whether it is intact
  * (see `Confirmation` in the WebAssembly package). `construct` is FASTA bytes; the target is a region `{ contig, start, end }`, or a gene name with the GFF3 file.
  */
-async function confirmStep({ reference, construct, reads, kind, target, gene, gff, options, maxReads }) {
+async function confirmStep({ reference, construct, reads, kind, target, gene, gff, options, maxReads, geneLink }) {
   const started = performance.now();
   postMessage({ step: 'confirm', type: 'status', text: 'Reading the reference and building the index' });
   const fasta = await bytesOf('reference', reference);
@@ -171,8 +171,11 @@ async function confirmStep({ reference, construct, reads, kind, target, gene, gf
       c.end_file();
       files.push({ name: file.name, cut });
     }
+    // The locus drawing needs the genes when there are any; without a GFF3 file it shows the replacement alone.
+    const gffForLocus = gff ? await bytesOf('gff', gff) : undefined;
     postMessage({
       step: 'confirm', type: 'done', text: c.report_text(), json: c.report_json(), junctions: c.junctions_tsv(), depth: c.depth_tsv(),
+      locus: c.locus_json(gffForLocus, geneLink || undefined),
       reads: c.read_count(), seconds: (performance.now() - started) / 1000, target: region, files,
     });
   } finally {
@@ -233,7 +236,19 @@ async function combineStep({ names, vcfs, beds, evidence, parent, minDepth }) {
   postMessage({ step: 'combine', type: 'done', table, summary, warnings, vcf });
 }
 
-const handlers = { run, confirm: confirmStep, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
+/**
+ * Draw an insertion from a table of assembly breakpoints (`breakpoint_summary.tsv`), without reads. With `row` the drawing of that row (1 is the first
+ * data line) comes back; without it, only the rows, for a menu. `gff` is the genes file (optional).
+ */
+async function breakpointStep({ table, row, gff, geneLink }) {
+  postMessage({ step: 'breakpoints', type: 'status', text: 'Reading the table' });
+  const rows = breakpoint_rows(table);
+  if (!row) { postMessage({ step: 'breakpoints', type: 'done', rows }); return; }
+  const gffBytes = gff ? await bytesOf('gff', gff) : undefined;
+  postMessage({ step: 'breakpoints', type: 'done', rows, locus: breakpoint_locus(table, row, gffBytes, geneLink || undefined) });
+}
+
+const handlers = { run, confirm: confirmStep, breakpoints: breakpointStep, fetchreads: fetchReads, summarize, annotate: annotateStep, report: reportStep, memory, combine: combineStep };
 
 self.onmessage = async (event) => {
   const { step } = event.data;

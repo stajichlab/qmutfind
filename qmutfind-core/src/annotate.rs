@@ -33,11 +33,11 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    fn start(&self) -> u64 {
+    pub(crate) fn start(&self) -> u64 {
         self.exons.iter().map(|e| e.0).min().unwrap_or(0)
     }
 
-    fn end(&self) -> u64 {
+    pub(crate) fn end(&self) -> u64 {
         self.exons.iter().map(|e| e.1).max().unwrap_or(0)
     }
 

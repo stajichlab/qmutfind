@@ -315,3 +315,9 @@ nav.pages a[aria-current="page"] { background: var(--accent); color: var(--accen
 .plot .axis { stroke: currentColor; stroke-width: 1; opacity: .6; }
 
 .notes { border: 2px solid var(--line); border-radius: var(--radius); padding: 4px 12px; margin: 8px 0; }
+
+/* The locus drawing of an insertion (confirm_allele.html) */
+#locus-svg svg { --fg: var(--panel-fg); --cassette: #E69F00; --removed: #D55E00; --flank: #8a8a8a; max-width: 1000px; }
+#locus-svg svg a.gene-link text { text-decoration: underline; fill: var(--link, #0b5cad); cursor: pointer; }
+code.region { user-select: all; word-break: break-all; }
+button.copy { margin-left: .5em; padding: 0 .5em; font-size: .8rem; }

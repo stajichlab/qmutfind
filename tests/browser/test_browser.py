@@ -3482,3 +3482,93 @@ def test_the_old_confirm_address_goes_to_the_new_page_and_keeps_the_address_opti
 
     assert "theme=mono" in driver.current_url
     assert driver.find_element(By.ID, "confirm-run").is_displayed()
+
+
+def _full_gff(inputs):
+    """Genes with a transcript, exons and a CDS: the drawing is built from transcripts, as in any GFF3 from FungiDB or NCBI."""
+    (inputs / "genes_full.gff3").write_text(
+        "##gff-version 3\n"
+        "chrA\ts\tgene\t50001\t51500\t.\t+\t.\tID=G1;Name=G1;locus_tag=G1\n"
+        "chrA\ts\tmRNA\t50001\t51500\t.\t+\t.\tID=G1-T;Parent=G1\n"
+        "chrA\ts\texon\t50001\t51500\t.\t+\t.\tID=G1-E;Parent=G1-T\n"
+        "chrA\ts\tCDS\t50101\t51400\t.\t+\t0\tID=G1-C;Parent=G1-T\n")
+    return "genes_full.gff3"
+
+
+def _locus_info(driver):
+    """What the locus section shows: the drawing's parts, the copy texts, the gene rows and their links."""
+    return driver.execute_script("""
+      const s = document.getElementById('locus-section');
+      const q = (sel) => Array.from(s.querySelectorAll(sel));
+      return {
+        hidden: s.hidden,
+        removed: q('svg rect.removed-span').map((r) => [r.dataset.start, r.dataset.end]),
+        insertion: q('svg rect.insertion').map((r) => r.dataset.bases),
+        svgLinks: q('svg a.gene-link').map((a) => a.getAttribute('href')),
+        regions: q('#locus-regions tbody tr').map((r) => Array.from(r.cells).map((c) => c.querySelector('code') ? c.querySelector('code').textContent : c.textContent)),
+        genes: q('#locus-genes tbody tr').map((r) => ({ id: r.cells[0].textContent, href: r.cells[0].querySelector('a').href, target: r.cells[0].querySelector('a').target,
+          rel: r.cells[0].querySelector('a').rel, region: r.cells[3].querySelector('code').textContent, removed: r.cells[5].textContent, coding: r.cells[6].textContent, effect: r.cells[7].textContent })),
+        genesHidden: document.getElementById('locus-genes').hidden,
+        note: document.getElementById('locus-genes-note').textContent,
+        scripts: q('svg script').length,
+      };
+    """)
+
+
+def test_a_breakpoint_table_draws_the_insertion_in_the_genes_with_copyable_regions_and_a_gene_link(driver, server, confirm_inputs):
+    table = confirm_inputs / "bp.tsv"
+    table.write_text(
+        "sample\tcontig\tstrand\tref_scaffold\tref_left_end\tref_right_start\tref_gap_bp\tquery_gap_bp\tcall\toverlaps_locus\n"
+        "mut\tctg1\t+\tchrA\t10000\t10070\t69\t66\treplacement\tno\n"
+        "mut\tctg1\t+\tchrA\t50000\t51501\t1500\t2000\treplacement\tyes\n")
+    open_confirm(driver, server)
+    set_reference_mode(driver, "upload")
+    driver.find_element(By.ID, "gff").send_keys(str(confirm_inputs / _full_gff(confirm_inputs)))
+    driver.find_element(By.ID, "bp-file").send_keys(str(table))
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "bp-draw").is_enabled())
+    assert driver.find_element(By.ID, "bp-row").get_attribute("value") == "2", "the row that overlaps the locus is chosen first"
+    driver.find_element(By.ID, "bp-draw").click()
+    WebDriverWait(driver, 30).until(lambda d: d.find_element(By.ID, "locus-section").is_displayed())
+
+    info = _locus_info(driver)
+    assert info["removed"] == [["50001", "51500"]] and info["insertion"] == ["2000"]
+    assert info["svgLinks"] == ["https://fungidb.org/gene/G1"]
+    assert info["scripts"] == 0
+    regions = {name: (a, b) for name, a, b in info["regions"]}
+    assert regions["removed reference bases"] == ("chrA:50001-51500", "chrA:50001..51500")
+    assert regions["breakpoints (last base before, first base after)"] == ("chrA:50000-51501", "chrA:50000..51501")
+    assert len(info["genes"]) == 1
+    gene = info["genes"][0]
+    assert gene["id"] == "G1" and gene["href"] == "https://fungidb.org/gene/G1" and gene["target"] == "_blank" and "noopener" in gene["rel"]
+    assert gene["region"] == "chrA:50001-51500" and gene["removed"] == "1,500 of 1,500"
+    assert gene["effect"] == "whole gene removed" and gene["coding"] == "1,300 of 1,300"
+    # The other row (the 66 base gap) hits no gene, so no gene row and no link are shown.
+    Select_row = driver.find_element(By.CSS_SELECTOR, "#bp-row option[value='1']")
+    Select_row.click()
+    driver.find_element(By.ID, "bp-draw").click()
+    WebDriverWait(driver, 30).until(lambda d: _locus_info(d)["genesHidden"])
+    info = _locus_info(driver)
+    assert info["genes"] == [] and info["svgLinks"] == [] and "No gene overlaps" in info["note"]
+
+
+def test_a_confirmed_allele_also_draws_the_locus_and_the_cli_writes_the_same_regions(driver, server, confirm_inputs):
+    open_confirm(driver, server)
+    confirm_fill(driver, confirm_inputs, reads="mutant.fq.gz", gff=_full_gff(confirm_inputs))
+    assert confirm_run(driver).startswith("Done")
+
+    info = _locus_info(driver)
+    assert not info["hidden"]
+    assert info["removed"] == [["50001", "51500"]] and info["insertion"] == ["2000"]
+    assert info["genes"] and info["genes"][0]["id"] == "G1"
+    regions = {name: a for name, a, _ in info["regions"]}
+    assert regions["removed reference bases"] == "chrA:50001-51500"
+    assert regions["target"] == "chrA:50001-51500"
+
+    run_cli("confirm", "--reference", "ref.fa", "--construct", "cassette.fa", "--reads", "mutant.fq", "--preset", "short", "--gff", "genes_full.gff3",
+            "--target", "chrA:50001-51500", "--out-prefix", "loc", "--always-exit-zero", cwd=confirm_inputs)
+    text = (confirm_inputs / "loc.confirm.txt").read_text()
+    assert "replaced region (copy): chrA:50001-51500   chrA:50001..51500" in text
+    assert (confirm_inputs / "loc.locus.svg").read_text().startswith("<svg")
+    assert "chrA:50001-51500" in (confirm_inputs / "loc.locus_genes.tsv").read_text()
+    regions_tsv = (confirm_inputs / "loc.locus_regions.tsv").read_text()
+    assert "removed reference bases\tchrA:50001-51500\tchrA:50001..51500" in regions_tsv

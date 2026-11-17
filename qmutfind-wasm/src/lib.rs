@@ -156,6 +156,30 @@ impl Confirmation {
     pub fn depth_tsv(&self) -> String {
         self.inner.report().depth_tsv()
     }
+
+    /// The locus drawing of the main insertion site as JSON (`{"svg":..,"genes":[..],"regions":[..]}`), or `null` when no cassette joins the genome.
+    /// `gff` holds the genes (plain bytes; `undefined` draws no genes). `gene_link` is the start of a gene page address; genes that the insertion hits link to it.
+    pub fn locus_json(&self, gff: Option<Vec<u8>>, gene_link: Option<String>) -> Result<String, JsError> {
+        match qmutfind_core::locus_input_from_report(&self.inner.report()) {
+            Some(input) => qmutfind_core::locus_view_gff(&input, gff.as_deref(), gene_link.as_deref()).map(|l| l.to_json()).map_err(|e| JsError::new(&e)),
+            None => Ok("null".to_string()),
+        }
+    }
+}
+
+/// The rows of a breakpoint table (`breakpoint_summary.tsv`) as JSON, for a menu.
+#[wasm_bindgen]
+pub fn breakpoint_rows(table: &str) -> Result<String, JsError> {
+    let rows = qmutfind_core::parse_breakpoint_table(table).map_err(|e| JsError::new(&e))?;
+    Ok(qmutfind_core::breakpoint_rows_json(&rows))
+}
+
+/// The locus drawing of one row (1 is the first data line) of a breakpoint table, as JSON (see `Confirmation.locus_json`).
+#[wasm_bindgen]
+pub fn breakpoint_locus(table: &str, row: u32, gff: Option<Vec<u8>>, gene_link: Option<String>) -> Result<String, JsError> {
+    let rows = qmutfind_core::parse_breakpoint_table(table).map_err(|e| JsError::new(&e))?;
+    let row = rows.get((row as usize).saturating_sub(1)).ok_or_else(|| JsError::new(&format!("the table has {} rows", rows.len())))?;
+    qmutfind_core::locus_view_gff(&row.locus_input(), gff.as_deref(), gene_link.as_deref()).map(|l| l.to_json()).map_err(|e| JsError::new(&e))
 }
 
 /// The region of a gene in a GFF3 file (plain bytes), found by its ID, Name, gene or locus_tag, as JSON: `{"contig":..,"start":..,"end":..}`.

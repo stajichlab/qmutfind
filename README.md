@@ -123,6 +123,23 @@ only the first reads of each file). The page shows a verdict, the junction table
 of the report, the JSON, the junction table and the depth table. Its text report is the same as the command line report (a test compares them). The files stay in the browser; nothing is sent to a server.
 A construct with homology arms is cut and the target is inferred there too; a note says what was done.
 
+**Drawing the insertion in the genes.** With `--gff`, `qmutfind confirm` also writes `PREFIX.locus.svg` (the drawing), `PREFIX.locus_genes.tsv` (the genes that the insertion hits) and `PREFIX.locus_regions.tsv`, and prints the regions and the genes.
+The drawing shows the reference with its genes on top and the allele below. The inserted sequence is drawn in place of the reference bases that it replaces, at the same scale as the reference, so the allele row is shorter or longer by the net change.
+`--gene-link URL_START` makes the name of each hit gene a link (for example `--gene-link https://fungidb.org/gene/`; the page uses that address). A gene that the insertion does not touch gets no link. The genes come from transcripts (exon or CDS lines), so a GFF3 with gene lines only draws no genes.
+Regions are given as `SCAFFOLD:START-END` and `SCAFFOLD:START..END`, ready to paste into a genome browser or into `--target`; the text report has them as `replaced region (copy)` and `flanks (copy)`.
+An assembly gives the same view without reads: `qmutfind locus --breakpoints breakpoint_summary.tsv --gff genes.gff3 --out-prefix P [--row N]` draws one row of a table of breakpoints (columns `ref_scaffold`, `ref_left_end` and `ref_right_start`: the last reference base before and the first after the insertion; `ref_gap_bp`; `query_gap_bp`: the inserted bases; optional `sample`, `call`, `overlaps_locus`). Without `--row` it draws the first row that overlaps the locus.
+In `confirm_allele.html` the section "Draw an insertion from an assembly (no reads)" does this, and the section "The insertion in the genome" shows the drawing after a read-based run too, with the regions (each with a Copy button) and the table of genes.
+
+**Where `find_breakpoints.py` fits.** `qmutfind confirm` starts from reads and a cassette sequence that you give. When you have an assembly of the strain instead, and you do not have the cassette sequence or want to see what the assembly holds,
+`scripts/find_breakpoints.py` finds the insertion. It runs minimap2 (in the pixi environment) on one or more assemblies against the reference, keeps the alignment blocks near a locus (`--locus SCAFFOLD:START-END`, or `--gff GFF3 --gene ID`), and reports each gap between two blocks:
+the last reference base before it, the first after it, the bases removed from the reference, the bases inserted, and a call (insertion, deletion or replacement). It writes `breakpoint_summary.tsv` and `inserted_sequences.fasta` (the inserted sequence of each gap, on the reference strand). The table is what `qmutfind locus` and the assembly section of `confirm_allele.html` read.
+The inserted sequence is the cassette sequence that you can then give to `qmutfind confirm --construct` to check it with reads. The script finds gaps by alignment only: it does not say what the inserted sequence is, and it does not use reads.
+
+```bash
+pixi run python scripts/find_breakpoints.py --ref genome.fa.gz --gff genes.gff3.gz --gene AFUB_101460 --outdir breakpoints assembly1.fasta.gz assembly2.fasta.gz
+pixi run cargo run --release -p qmutfind-cli -- locus --breakpoints breakpoints/breakpoint_summary.tsv --gff genes.gff3.gz --out-prefix locus
+```
+
 **What was tested.** Simulated 30x short reads from a 120 kb genome with a 2 kb cassette: an intact replacement (24 random genomes, both orientations, replaced lengths 300 to 2,800 bases: the flanks were
 exact and the verdict *confirmed* every time), a reversed cassette, a point change and a deletion inside the cassette, a missing stretch inside the cassette, a second copy elsewhere, a half wild-type
 population, an insertion away from the target, no insertion, and 2x coverage (inconclusive). Donors with homology arms of 60 to 800 bases in both orientations (16 random genomes): the arms were cut off, the target was inferred and

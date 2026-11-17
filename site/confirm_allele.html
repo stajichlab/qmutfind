@@ -112,6 +112,20 @@
   <div class="source" id="source-gff" role="status"></div>
 </section>
 
+<section class="panel" id="breakpoint-section">
+  <h2>Draw an insertion from an assembly (no reads)</h2>
+  <p class="hint">If you assembled the strain and aligned the assembly to the reference, give the table of breakpoints (<code>breakpoint_summary.tsv</code>, one row per gap between two alignments).
+  The page draws the row you choose in the genes of the reference (section 1; the genes file is optional). The table needs the columns <code>ref_scaffold</code>, <code>ref_left_end</code>, <code>ref_right_start</code>, <code>ref_gap_bp</code> and <code>query_gap_bp</code>.</p>
+  <div class="form">
+    <label for="bp-file">Breakpoint table (TSV)</label>
+    <input id="bp-file" type="file" accept=".tsv,.txt,.csv,text/tab-separated-values,text/plain">
+    <label for="bp-row">Row to draw</label>
+    <select id="bp-row" disabled aria-label="Rows of the breakpoint table"></select>
+    <p><button id="bp-draw" type="button" class="primary" disabled>Draw the insertion</button></p>
+  </div>
+  <div id="bp-status" class="readout" role="status"></div>
+</section>
+
 <section class="panel" id="confirm-target-section">
   <h2><span class="num">2</span> The cassette and where it should be</h2>
   <div class="form">
@@ -164,6 +178,22 @@
     <button id="confirm-cancel" type="button" hidden>Cancel</button></p>
   </div>
   <div id="confirm-status" class="readout" role="status"></div>
+</section>
+
+<section class="panel" id="locus-section" hidden>
+  <h2>The insertion in the genome</h2>
+  <p class="hint" id="locus-caption"></p>
+  <div id="locus-svg" class="plot" role="img" aria-label="The insertion drawn in the genes of the reference"></div>
+  <h3 class="sub">Regions (copy)</h3>
+  <div class="table-wrap"><table id="locus-regions" class="grid"><thead><tr><th>What</th><th>SCAFFOLD:START-END</th><th>SCAFFOLD:START..END</th></tr></thead><tbody></tbody></table></div>
+  <h3 class="sub">Genes hit by the insertion</h3>
+  <p class="hint" id="locus-genes-note"></p>
+  <div class="table-wrap"><table id="locus-genes" class="grid" hidden><thead><tr><th>Gene</th><th>Name</th><th>Product</th><th>Region</th><th>Strand</th><th>Bases removed</th><th>Coding bases removed</th><th>What happens</th></tr></thead><tbody></tbody></table></div>
+  <p class="downloads">
+    <a id="locus-download-svg" hidden>Download the drawing (SVG)</a>
+    <a id="locus-download-genes" hidden>Download the genes (TSV)</a>
+    <a id="locus-download-regions" hidden>Download the regions (TSV)</a>
+  </p>
 </section>
 
 <section class="panel" id="confirm-result" hidden>

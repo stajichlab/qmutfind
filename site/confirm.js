@@ -8,6 +8,9 @@ const show = (id, text) => { $(id).textContent = text; };
 // How far a file may unpack when it is loaded whole into memory. `?limit_mb=N` can lower it (the tests use that). The download limit is MAX_DOWNLOAD (reference-panel.js).
 const LIMIT_BYTES = Math.min(parseFloat(new URLSearchParams(location.search).get('limit_mb')) || 1024, 1024) * 1e6;
 
+// A gene that the insertion hits links to its FungiDB gene page. The link works for gene IDs that FungiDB uses.
+const GENE_LINK = 'https://fungidb.org/gene/';
+
 let activeWorker = null;
 let activeAbort = null;
 let running = false;
@@ -65,6 +68,7 @@ function callWorker(message, onProgress) {
     w.onmessage = (event) => {
       const m = event.data;
       if (m.type === 'status' && message.step === 'confirm') show('confirm-status', m.text);
+      if (m.type === 'status' && message.step === 'breakpoints') show('bp-status', m.text);
       if (m.type === 'progress' && onProgress) onProgress(m);
       if (m.type === 'error') { finish(); reject(new Error(m.message)); }
       if (m.type === 'done') { finish(); resolve(m); }
@@ -155,6 +159,7 @@ $('confirm-run').addEventListener('click', async () => {
   $('confirm-run').disabled = true;
   $('confirm-cancel').hidden = false;
   $('confirm-result').hidden = true;
+  $('locus-section').hidden = true;
   activeAbort = new AbortController();
   try {
     const budget = { left: MAX_DOWNLOAD };
@@ -169,10 +174,11 @@ $('confirm-run').addEventListener('click', async () => {
     show('confirm-status', 'Starting');
     const m = await callWorker({
       step: 'confirm', reference, construct: new TextEncoder().encode(construct), reads, kind: $('confirm-kind').value, gff: gff || null,
-      ...wanted, maxReads,
+      ...wanted, maxReads, geneLink: GENE_LINK,
       options: { minReads: Math.max(1, Math.round(number('confirm-min-reads', 3))), minDepth: number('confirm-min-depth', 10), tolerance: $('confirm-tolerance').value === '' ? -1 : Math.round(number('confirm-tolerance', 20)) },
     }, (p) => show('confirm-status', `Mapping: ${p.reads.toLocaleString()} reads`));
     render(m);
+    renderLocus(m.locus, 'The main insertion site found from the reads.');
     show('confirm-status', `Done: ${m.reads.toLocaleString()} reads in ${m.seconds.toFixed(1)} s.`);
   } catch (error) {
     show('confirm-status', cancelled || error.name === 'AbortError' ? 'Cancelled.' : `Error: ${error.message}`);
@@ -327,3 +333,122 @@ function render(m) {
   offer('confirm-download-depth', 'cassette_depth.tsv', m.depth, 'text/tab-separated-values');
   $('confirm-result').scrollIntoView({ block: 'nearest' });
 }
+
+// ---- The locus drawing: from the reads (above) or from a breakpoint table -------------------------------------------------------------------
+/** Put `text` on the clipboard. Falls back to selecting nothing when the browser refuses (the text is shown in the page anyway). */
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch (error) {
+    button.textContent = 'Select and copy';
+  }
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+}
+
+/** A cell with a region as selectable text and a Copy button. */
+function regionCell(row, text) {
+  const cell = row.insertCell();
+  cell.appendChild(el('code', text, 'region'));
+  const button = el('button', 'Copy', 'copy');
+  button.type = 'button';
+  button.setAttribute('aria-label', `Copy ${text}`);
+  button.addEventListener('click', () => copyText(text, button));
+  cell.appendChild(button);
+}
+
+/** Draw the result of `locus_json` (a JSON text, or "null"). */
+function renderLocus(json, caption) {
+  const section = $('locus-section');
+  const data = json ? JSON.parse(json) : null;
+  if (!data) { section.hidden = true; return; }
+  section.hidden = false;
+  show('locus-caption', caption);
+  // The drawing comes from the WebAssembly package as SVG text; it is parsed as SVG, so no script can run in it.
+  const doc = new DOMParser().parseFromString(data.svg, 'image/svg+xml');
+  $('locus-svg').replaceChildren(document.importNode(doc.documentElement, true));
+  const regions = $('locus-regions').tBodies[0];
+  regions.replaceChildren();
+  for (const r of data.regions) {
+    const row = regions.insertRow();
+    row.insertCell().textContent = r.name;
+    regionCell(row, r.region);
+    regionCell(row, r.region_dots);
+  }
+  const genes = $('locus-genes');
+  const body = genes.tBodies[0];
+  body.replaceChildren();
+  genes.hidden = !data.genes.length;
+  show('locus-genes-note', data.genes.length
+    ? `The links go to fungidb.org. They work for gene IDs that FungiDB uses (the gene IDs of a FungiDB genome); for other genomes FungiDB shows its not-found page.`
+    : 'No gene overlaps the replaced bases, so there is no gene to link.');
+  for (const g of data.genes) {
+    const row = body.insertRow();
+    const cell = row.insertCell();
+    const a = el('a', g.id);
+    a.href = `${GENE_LINK}${encodeURIComponent(g.id)}`;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    cell.appendChild(a);
+    row.insertCell().textContent = g.name || '';
+    row.insertCell().textContent = g.product || '';
+    regionCell(row, g.region);
+    row.insertCell().textContent = g.strand;
+    row.insertCell().textContent = `${g.removed_bases.toLocaleString()} of ${g.gene_bases.toLocaleString()}`;
+    row.insertCell().textContent = `${g.coding_removed.toLocaleString()} of ${g.coding_bases.toLocaleString()}`;
+    row.insertCell().textContent = g.effect;
+  }
+  const tsv = (header, rows) => `${header.join('\t')}\n${rows.map((r) => r.join('\t')).join('\n')}\n`;
+  offer('locus-download-svg', 'insertion_locus.svg', data.svg, 'image/svg+xml');
+  offer('locus-download-genes', 'insertion_genes.tsv', tsv(['gene', 'name', 'product', 'region', 'strand', 'gene_bases', 'removed_bases', 'coding_bases', 'coding_removed', 'effect'],
+    data.genes.map((g) => [g.id, g.name || '', g.product || '', g.region, g.strand, g.gene_bases, g.removed_bases, g.coding_bases, g.coding_removed, g.effect])), 'text/tab-separated-values');
+  offer('locus-download-regions', 'insertion_regions.tsv', tsv(['name', 'region', 'region_dots'], data.regions.map((r) => [r.name, r.region, r.region_dots])), 'text/tab-separated-values');
+}
+
+// ---- Draw from a breakpoint table (no reads) --------------------------------------------------------------------------------------------------
+let breakpointTable = '';
+$('bp-file').addEventListener('change', async () => {
+  const file = $('bp-file').files[0];
+  breakpointTable = '';
+  $('bp-row').replaceChildren();
+  $('bp-row').disabled = true;
+  $('bp-draw').disabled = true;
+  show('bp-status', '');
+  if (!file) return;
+  try {
+    if (file.size > 50e6) throw new Error('the file is larger than 50 MB');
+    breakpointTable = await file.text();
+    const m = await callWorker({ step: 'breakpoints', table: breakpointTable });
+    const rows = JSON.parse(m.rows);
+    if (!rows.length) throw new Error('the table has no rows');
+    $('bp-row').replaceChildren(...rows.map((r) => {
+      const option = el('option', `${r.sample || r.contig} · ${r.ref_scaffold}:${r.left}-${r.right} · ${r.query_gap_bp.toLocaleString()} bp in place of ${r.ref_gap_bp.toLocaleString()} bp${r.overlaps_locus ? ' · overlaps the locus' : ''}`);
+      option.value = String(r.index);
+      return option;
+    }));
+    const first = rows.find((r) => r.overlaps_locus) || rows[0];
+    $('bp-row').value = String(first.index);
+    $('bp-row').disabled = false;
+    $('bp-draw').disabled = false;
+    show('bp-status', `${rows.length} row${rows.length === 1 ? '' : 's'} read.`);
+  } catch (error) {
+    breakpointTable = '';
+    show('bp-status', `Error: ${error.message}`);
+  }
+});
+
+$('bp-draw').addEventListener('click', async () => {
+  if (!breakpointTable || running || loading) { if (loading) show('bp-status', 'Wait until the genome has loaded.'); return; }
+  const gff = gffFile();
+  show('bp-status', 'Drawing');
+  try {
+    const m = await callWorker({ step: 'breakpoints', table: breakpointTable, row: Number($('bp-row').value), gff: gff || null, geneLink: GENE_LINK });
+    renderLocus(m.locus, gff
+      ? 'The row of the breakpoint table, drawn in the genes of the reference.'
+      : 'The row of the breakpoint table. No genes file was chosen (section 1), so no genes are drawn.');
+    show('bp-status', 'Done.');
+    $('locus-section').scrollIntoView({ block: 'nearest' });
+  } catch (error) {
+    show('bp-status', `Error: ${error.message}`);
+  }
+});
